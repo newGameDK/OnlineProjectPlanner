@@ -92,6 +92,9 @@ async function api(method, url, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
+  if (!res.headers.get('content-type')?.includes('application/json')) {
+    throw new Error('The server did not return a valid response. Make sure the Node.js backend is running.');
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'API error');
   return data;

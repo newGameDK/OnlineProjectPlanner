@@ -255,6 +255,11 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// Health check – used by the client to verify the API is reachable
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
 // ---------------------------------------------------------------------------
 // Auth routes
 // ---------------------------------------------------------------------------
