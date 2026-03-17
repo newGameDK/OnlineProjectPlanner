@@ -126,6 +126,12 @@
           <button class="view-tab" data-view="todo">Todo List</button>
         </div>
 
+        <!-- Dependency connecting mode banner -->
+        <div id="connectingBanner" class="connecting-banner hidden">
+          <span>🔗 Click the <strong>input node</strong> (◀) on another entry to create a dependency</span>
+          <button id="cancelConnecting" class="btn btn-secondary btn-sm">Cancel (Esc)</button>
+        </div>
+
         <!-- Gantt Panel -->
         <div id="ganttPanel" class="panel-content">
           <div class="gantt-container" id="ganttContainer">
@@ -137,6 +143,7 @@
               <div class="gantt-timeline-header" id="intensityBarWrapper">
                 <canvas id="intensityBarCanvas"></canvas>
               </div>
+              <div class="gantt-hours-header" id="ganttHoursHeader">Total h</div>
             </div>
             <!-- Gantt chart body -->
             <div class="gantt-body" id="ganttBody">
@@ -145,6 +152,7 @@
                 <div class="gantt-timeline-ruler" id="ganttRuler"></div>
                 <div class="gantt-timeline-rows" id="ganttRows"></div>
               </div>
+              <div class="gantt-hours-panel" id="ganttHoursPanel"></div>
             </div>
           </div>
           <div class="gantt-breadcrumb" id="ganttBreadcrumb"></div>

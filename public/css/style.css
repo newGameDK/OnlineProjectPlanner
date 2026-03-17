@@ -427,7 +427,91 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   border-radius: 3px; margin-left: 4px; pointer-events: none;
 }
 
-/* Scrollbar styling */
+/* =====================================================================
+   Folder link – task row icon and bar icon
+   ===================================================================== */
+.gantt-folder-link {
+  flex-shrink: 0; font-size: 14px; text-decoration: none; line-height: 1;
+  opacity: 0.75; transition: opacity .15s, transform .15s;
+  cursor: pointer;
+}
+.gantt-folder-link:hover { opacity: 1; transform: scale(1.2); }
+
+.gantt-bar-folder-btn {
+  font-size: 11px; text-decoration: none; flex-shrink: 0;
+  opacity: 0.8; margin-left: 4px; line-height: 1;
+  cursor: pointer; transition: opacity .15s, transform .15s;
+  pointer-events: all;
+}
+.gantt-bar-folder-btn:hover { opacity: 1; transform: scale(1.25); }
+
+/* =====================================================================
+   Total-Hours Right Panel
+   ===================================================================== */
+.gantt-hours-header {
+  width: 72px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-muted); border-left: 1px solid var(--border);
+  background: var(--surface2);
+}
+.gantt-hours-panel {
+  width: 72px; flex-shrink: 0; border-left: 1px solid var(--border);
+  background: var(--surface); overflow-y: auto; overflow-x: hidden;
+}
+.gantt-hours-row {
+  height: var(--row-h); display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 8px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  white-space: nowrap;
+}
+.gantt-hours-row.has-hours { color: var(--primary); }
+.gantt-hours-row.overloaded { color: var(--danger); }
+
+/* =====================================================================
+   Dependency Nodes (input / output circles on bars)
+   ===================================================================== */
+.dep-node {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.9);
+  cursor: crosshair; z-index: 20; opacity: 0;
+  transition: opacity .15s, transform .15s;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 8px; color: #fff; font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0,0,0,.35);
+}
+.gantt-bar:hover .dep-node,
+.dep-node.always-visible { opacity: 1; }
+.dep-node.input-node  { left: -7px;  background: #1565C0; }
+.dep-node.output-node { right: -7px; background: #2e7d32; }
+.dep-node:hover { transform: translateY(-50%) scale(1.3); }
+.dep-node.connecting-target { animation: depPulse .6s infinite alternate; }
+@keyframes depPulse { from { box-shadow: 0 0 0 2px rgba(33,150,243,.4); } to { box-shadow: 0 0 0 6px rgba(33,150,243,.1); } }
+
+/* =====================================================================
+   Dependency SVG arrows
+   ===================================================================== */
+#depArrowsSvg { pointer-events: none; }
+#depArrowsSvg path.dep-arrow {
+  pointer-events: stroke; cursor: pointer;
+  transition: stroke .15s;
+}
+#depArrowsSvg path.dep-arrow:hover { stroke: var(--danger) !important; }
+
+/* =====================================================================
+   Connecting mode banner
+   ===================================================================== */
+.connecting-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 14px; background: #e8f5e9; border-bottom: 2px solid var(--success);
+  font-size: 13px; color: #1b5e20; flex-shrink: 0;
+}
+.connecting-banner strong { font-weight: 700; }
+
+/* =====================================================================
+   Scrollbar styling
+   ===================================================================== */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }

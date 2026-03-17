@@ -78,6 +78,7 @@ const state = {
   currentProject: null,
   ganttEntries: [],   // current project's entries
   todos: [],          // current project's todos
+  dependencies: [],   // current project's gantt dependencies
   lastSync: 0,
   selectedGanttIds: new Set(),
   undoStack: [],
@@ -164,6 +165,20 @@ function handleWSMessage(msg) {
         window.todoModule?.render();
       }
       break;
+    case 'dep_created':
+      if (msg.dep && msg.dep.project_id === state.currentProject?.id) {
+        if (!state.dependencies.some(d => d.id === msg.dep.id)) {
+          state.dependencies.push(msg.dep);
+        }
+        window.ganttModule?.render();
+      }
+      break;
+    case 'dep_deleted':
+      if (msg.project_id === state.currentProject?.id) {
+        state.dependencies = state.dependencies.filter(d => d.id !== msg.dep_id);
+        window.ganttModule?.render();
+      }
+      break;
     case 'project_created':
     case 'project_updated': {
       const teamId = msg.project.team_id;
@@ -239,6 +254,12 @@ function startSync() {
         if (idx !== -1) state.todos[idx] = todo;
         else state.todos.push(todo);
         changed = true;
+      }
+      for (const dep of (data.dependencies || [])) {
+        if (!state.dependencies.some(d => d.id === dep.id)) {
+          state.dependencies.push(dep);
+          changed = true;
+        }
       }
       if (changed) {
         window.ganttModule?.render();
@@ -392,13 +413,15 @@ async function selectProject(project) {
   document.getElementById('welcomeScreen').classList.add('hidden');
   document.getElementById('projectView').classList.remove('hidden');
 
-  // Load gantt + todos
-  const [gdata, tdata] = await Promise.all([
+  // Load gantt + todos + dependencies
+  const [gdata, tdata, ddata] = await Promise.all([
     api('GET', `/api/gantt/${project.id}`),
-    api('GET', `/api/todos/${project.id}`)
+    api('GET', `/api/todos/${project.id}`),
+    api('GET', `/api/dependencies/${project.id}`),
   ]);
   state.ganttEntries = gdata.entries;
   state.todos = tdata.todos;
+  state.dependencies = ddata.dependencies;
   state.lastSync = Date.now();
 
   // Init WS with project context

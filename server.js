@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS gantt_entries (
   user_id TEXT NOT NULL,
   position INTEGER NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
+  folder_url TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -119,7 +120,24 @@ CREATE TABLE IF NOT EXISTS undo_history (
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS gantt_dependencies (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  UNIQUE(source_id, target_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_id) REFERENCES gantt_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_id) REFERENCES gantt_entries(id) ON DELETE CASCADE
+);
 `);
+
+// Migration: add folder_url to existing databases that pre-date this column
+try {
+  db.exec(`ALTER TABLE gantt_entries ADD COLUMN folder_url TEXT NOT NULL DEFAULT ''`);
+} catch (_) { /* column already exists – ignore */ }
 
 // ---------------------------------------------------------------------------
 // Prepared statements
@@ -165,11 +183,11 @@ const stmts = {
   deleteProject: db.prepare(`DELETE FROM projects WHERE id=?`),
 
   // Gantt
-  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)`),
+  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`),
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
-  updateGantt: db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,updated_at=? WHERE id=?`),
+  updateGantt: db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,updated_at=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
@@ -185,6 +203,13 @@ const stmts = {
   addUndo: db.prepare(`INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)`),
   getUndoForUser: db.prepare(`SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 50`),
   deleteUndo: db.prepare(`DELETE FROM undo_history WHERE id=?`),
+
+  // Dependencies
+  createDep: db.prepare(`INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)`),
+  getDep: db.prepare(`SELECT * FROM gantt_dependencies WHERE id=?`),
+  getProjectDeps: db.prepare(`SELECT * FROM gantt_dependencies WHERE project_id=?`),
+  deleteDep: db.prepare(`DELETE FROM gantt_dependencies WHERE id=?`),
+  getDepsAfter: db.prepare(`SELECT * FROM gantt_dependencies WHERE project_id=? AND created_at>?`),
 };
 
 // ---------------------------------------------------------------------------
@@ -440,13 +465,13 @@ app.get('/api/gantt/:projectId', requireAuth, (req, res) => {
 });
 
 app.post('/api/gantt', requireAuth, (req, res) => {
-  const { project_id, parent_id, title, start_date, end_date, hours_estimate, color_variation, position, notes } = req.body;
+  const { project_id, parent_id, title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
   if (!project_id || !title || !start_date || !end_date) return res.status(400).json({ error: 'Missing required fields' });
   if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
   const id = uuidv4();
   stmts.createGantt.run(id, project_id, parent_id || null, title, start_date, end_date,
-    hours_estimate || 0, color_variation || 0, req.session.userId, position || 0, notes || '');
+    hours_estimate || 0, color_variation || 0, req.session.userId, position || 0, notes || '', folder_url || '');
 
   const entry = stmts.getGantt.get(id);
   const teamId = projectTeamId(project_id);
@@ -466,7 +491,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
   // Save undo action before update
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
 
-  const { title, start_date, end_date, hours_estimate, color_variation, position, notes } = req.body;
+  const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
   stmts.updateGantt.run(
     title ?? existing.title,
     start_date ?? existing.start_date,
@@ -475,6 +500,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
     color_variation ?? existing.color_variation,
     position ?? existing.position,
     notes ?? existing.notes,
+    folder_url !== undefined ? folder_url : existing.folder_url,
     now(),
     existing.id
   );
@@ -503,8 +529,43 @@ app.get('/api/sync/:projectId', requireAuth, (req, res) => {
   if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
   const since = parseInt(req.query.since) || 0;
   const ganttUpdates = stmts.getGanttUpdatedAfter.all(req.params.projectId, since);
-  const todoUpdates = stmts.getTodoUpdatedAfter.all(req.params.projectId, since);
-  res.json({ gantt: ganttUpdates, todos: todoUpdates, server_time: now() });
+  const todoUpdates  = stmts.getTodoUpdatedAfter.all(req.params.projectId, since);
+  const depUpdates   = stmts.getDepsAfter.all(req.params.projectId, since);
+  res.json({ gantt: ganttUpdates, todos: todoUpdates, dependencies: depUpdates, server_time: now() });
+});
+
+// ---------------------------------------------------------------------------
+// Dependency routes
+// ---------------------------------------------------------------------------
+
+app.get('/api/dependencies/:projectId', requireAuth, (req, res) => {
+  if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const dependencies = stmts.getProjectDeps.all(req.params.projectId);
+  res.json({ dependencies });
+});
+
+app.post('/api/dependencies', requireAuth, (req, res) => {
+  const { project_id, source_id, target_id } = req.body;
+  if (!project_id || !source_id || !target_id) return res.status(400).json({ error: 'Missing fields' });
+  if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  if (source_id === target_id) return res.status(400).json({ error: 'Cannot depend on itself' });
+
+  const id = uuidv4();
+  stmts.createDep.run(id, project_id, source_id, target_id);
+  const dep = stmts.getDep.get(id);
+  const teamId = projectTeamId(project_id);
+  broadcastToTeam(teamId, { type: 'dep_created', dep });
+  res.json({ dep });
+});
+
+app.delete('/api/dependencies/:id', requireAuth, (req, res) => {
+  const dep = stmts.getDep.get(req.params.id);
+  if (!dep) return res.status(404).json({ error: 'Not found' });
+  if (!canAccessProject(dep.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  stmts.deleteDep.run(dep.id);
+  const teamId = projectTeamId(dep.project_id);
+  broadcastToTeam(teamId, { type: 'dep_deleted', dep_id: dep.id, project_id: dep.project_id });
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -588,8 +649,8 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
   } else if (action.action_type === 'update_gantt') {
     // Undo update = restore previous state
     const e = data.entry;
-    db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,updated_at=? WHERE id=?`)
-      .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, now(), e.id);
+    db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,updated_at=? WHERE id=?`)
+      .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', now(), e.id);
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
@@ -599,7 +660,7 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     const e = data.entry;
     try {
       stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes);
+        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
     } catch (_) { /* already exists */ }
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
