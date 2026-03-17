@@ -4,6 +4,18 @@
 // Auth page logic
 // --------------------------------------------------------------------------
 
+// Detect file:// protocol – the app must be served by the Node server
+if (location.protocol === 'file:') {
+  document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
+    '<div class="file-protocol-warning">' +
+    '<strong>⚠ Cannot connect to server</strong><br>' +
+    'You opened this file directly. Start the server first, then visit ' +
+    '<code>http://localhost:3000</code>' +
+    '<code>npm install &amp;&amp; npm start</code>' +
+    '</div>'
+  );
+}
+
 const tabs = document.querySelectorAll('.auth-tab');
 const forms = document.querySelectorAll('.auth-form');
 
@@ -34,7 +46,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     if (!res.ok) { errEl.textContent = data.error || 'Login failed'; return; }
     window.location.href = '/app.html';
   } catch {
-    errEl.textContent = 'Network error';
+    errEl.textContent = location.protocol === 'file:'
+      ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
+      : 'Network error – is the server running?';
   }
 });
 
@@ -57,7 +71,9 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     if (!res.ok) { errEl.textContent = data.error || 'Registration failed'; return; }
     window.location.href = '/app.html';
   } catch {
-    errEl.textContent = 'Network error';
+    errEl.textContent = location.protocol === 'file:'
+      ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
+      : 'Network error – is the server running?';
   }
 });
 
@@ -75,7 +91,9 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
     msgEl.textContent = 'Joined team: ' + (data.team ? data.team.name : '');
     setTimeout(() => { window.location.href = '/app.html'; }, 1000);
   } catch {
-    msgEl.textContent = 'Network error';
+    msgEl.textContent = location.protocol === 'file:'
+      ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
+      : 'Network error – is the server running?';
   }
 });
 

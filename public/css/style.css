@@ -92,6 +92,14 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .auth-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 .auth-form { display: none; }
 .auth-form.active { display: block; }
+.file-protocol-warning {
+  background: #FFF3E0; border: 1px solid var(--warning); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 16px; color: #E65100; text-align: center;
+}
+.file-protocol-warning code {
+  display: block; background: #FFF8E1; padding: 8px; border-radius: var(--radius-sm);
+  color: var(--text); margin-top: 8px;
+}
 .join-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .join-section p { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
 .join-row { display: flex; gap: 8px; }
