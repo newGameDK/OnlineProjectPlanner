@@ -16,6 +16,28 @@ if (location.protocol === 'file:') {
   );
 }
 
+// Probe the Node.js API to detect static-only hosting (e.g. a web hotel
+// that serves the HTML/CSS/JS files but does not run the Node backend).
+if (location.protocol !== 'file:') {
+  (async () => {
+    try {
+      const res = await fetch('/api/health');
+      const data = res.ok ? await res.json() : null;
+      if (!data || !data.ok) throw new Error();
+    } catch {
+      document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
+        '<div class="file-protocol-warning">' +
+        '<strong>⚠ Cannot reach the backend API</strong><br>' +
+        'The HTML page loaded, but the Node.js server is not responding. ' +
+        'This app needs a running Node.js server – it cannot work on ' +
+        'static-only hosting (e.g. a web hotel).<br>' +
+        '<code>npm install &amp;&amp; npm start</code>' +
+        '</div>'
+      );
+    }
+  })();
+}
+
 const tabs = document.querySelectorAll('.auth-tab');
 const forms = document.querySelectorAll('.auth-form');
 
@@ -42,13 +64,17 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password })
     });
+    if (!res.headers.get('content-type')?.includes('application/json')) {
+      errEl.textContent = 'The server did not return a valid response. Make sure the Node.js backend is running.';
+      return;
+    }
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || 'Login failed'; return; }
     window.location.href = '/app.html';
   } catch {
     errEl.textContent = location.protocol === 'file:'
       ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
-      : 'Network error – is the server running?';
+      : 'Cannot reach the backend API – make sure the Node.js server is running (npm start).';
   }
 });
 
@@ -67,13 +93,17 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, email, password })
     });
+    if (!res.headers.get('content-type')?.includes('application/json')) {
+      errEl.textContent = 'The server did not return a valid response. Make sure the Node.js backend is running.';
+      return;
+    }
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || 'Registration failed'; return; }
     window.location.href = '/app.html';
   } catch {
     errEl.textContent = location.protocol === 'file:'
       ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
-      : 'Network error – is the server running?';
+      : 'Cannot reach the backend API – make sure the Node.js server is running (npm start).';
   }
 });
 
@@ -86,6 +116,10 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
 
   try {
     const res = await fetch('/api/teams/join/' + encodeURIComponent(token), { method: 'POST' });
+    if (!res.headers.get('content-type')?.includes('application/json')) {
+      msgEl.textContent = 'The server did not return a valid response. Make sure the Node.js backend is running.';
+      return;
+    }
     const data = await res.json();
     if (!res.ok) { msgEl.textContent = data.error || 'Failed'; return; }
     msgEl.textContent = 'Joined team: ' + (data.team ? data.team.name : '');
@@ -93,7 +127,7 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
   } catch {
     msgEl.textContent = location.protocol === 'file:'
       ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
-      : 'Network error – is the server running?';
+      : 'Cannot reach the backend API – make sure the Node.js server is running (npm start).';
   }
 });
 
