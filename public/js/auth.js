@@ -22,7 +22,8 @@ if (location.protocol !== 'file:') {
   (async () => {
     try {
       const res = await fetch('/api/health');
-      if (!res.ok || !(await res.json()).ok) throw new Error();
+      const data = res.ok ? await res.json() : null;
+      if (!data || !data.ok) throw new Error();
     } catch {
       document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
         '<div class="file-protocol-warning">' +
