@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OnlineProjectPlanner</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="app-page">
+
+  <!-- Top Navigation -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button id="sidebarToggle" class="icon-btn" title="Toggle sidebar">☰</button>
+      <div class="topbar-logo">
+        <svg width="28" height="28" viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#2196F3"/><rect x="8" y="14" width="20" height="4" rx="2" fill="white"/><rect x="8" y="22" width="28" height="4" rx="2" fill="white" opacity="0.8"/><rect x="8" y="30" width="16" height="4" rx="2" fill="white" opacity="0.6"/></svg>
+        <span>ProjectPlanner</span>
+      </div>
+      <div class="breadcrumb" id="breadcrumb">
+        <span id="breadcrumbTeam">—</span>
+        <span class="breadcrumb-sep">›</span>
+        <span id="breadcrumbProject">—</span>
+        <span class="breadcrumb-sep" id="breadcrumbSubSep" style="display:none">›</span>
+        <span id="breadcrumbSub" style="display:none"></span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="sync-indicator" id="syncIndicator" title="Sync status">
+        <span class="sync-dot"></span>
+        <span class="sync-label">Synced</span>
+      </div>
+      <div class="user-avatar" id="userAvatarBtn" title="Account settings">
+        <span id="userInitial">?</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- User Settings Panel -->
+  <div id="userPanel" class="user-panel hidden">
+    <div class="user-panel-header">
+      <strong id="panelUsername"></strong>
+      <span id="panelEmail" class="text-muted"></span>
+    </div>
+    <div class="form-group">
+      <label>Base Color</label>
+      <div class="color-picker-row" id="baseColorPicker"></div>
+    </div>
+    <button id="logoutBtn" class="btn btn-danger btn-full">Logout</button>
+  </div>
+
+  <div class="app-layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-title">
+          <span>Teams</span>
+          <button id="newTeamBtn" class="icon-btn" title="New team">+</button>
+        </div>
+        <div id="teamsList" class="sidebar-list"></div>
+      </div>
+
+      <div class="sidebar-section" id="projectSection" style="display:none">
+        <div class="sidebar-title">
+          <span id="teamNameLabel">Projects</span>
+          <button id="newProjectBtn" class="icon-btn" title="New project">+</button>
+        </div>
+        <div id="projectsList" class="sidebar-list"></div>
+      </div>
+
+      <div class="sidebar-section" id="memberSection" style="display:none">
+        <div class="sidebar-title">
+          <span>Team Members</span>
+          <button id="inviteBtn" class="icon-btn" title="Invite member">+</button>
+        </div>
+        <div id="membersList" class="sidebar-list"></div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" id="mainContent">
+
+      <!-- Welcome screen -->
+      <div id="welcomeScreen" class="welcome-screen">
+        <svg width="80" height="80" viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#e3f2fd"/><rect x="8" y="14" width="20" height="4" rx="2" fill="#2196F3"/><rect x="8" y="22" width="28" height="4" rx="2" fill="#2196F3" opacity="0.6"/><rect x="8" y="30" width="16" height="4" rx="2" fill="#2196F3" opacity="0.4"/></svg>
+        <h2>Welcome to ProjectPlanner</h2>
+        <p>Select or create a team, then open a project to start planning.</p>
+      </div>
+
+      <!-- Project View -->
+      <div id="projectView" class="project-view hidden">
+
+        <!-- Toolbar -->
+        <div class="project-toolbar">
+          <div class="toolbar-group">
+            <button id="addGanttBtn" class="btn btn-primary btn-sm">+ Task</button>
+            <button id="undoBtn" class="btn btn-secondary btn-sm" title="Undo (Ctrl+Z)">↩ Undo</button>
+            <button id="deleteSelectedBtn" class="btn btn-danger btn-sm hidden">🗑 Delete Selected</button>
+          </div>
+          <div class="toolbar-group">
+            <label class="toolbar-label">View:</label>
+            <select id="viewScale" class="toolbar-select">
+              <option value="day">Day</option>
+              <option value="week" selected>Week</option>
+              <option value="month">Month</option>
+            </select>
+            <button id="zoomInBtn" class="btn btn-secondary btn-sm" title="Zoom in">+</button>
+            <button id="zoomOutBtn" class="btn btn-secondary btn-sm" title="Zoom out">−</button>
+          </div>
+          <div class="toolbar-group">
+            <label class="toolbar-label">Start:</label>
+            <input type="date" id="chartStartDate" class="toolbar-input">
+            <label class="toolbar-label">End:</label>
+            <input type="date" id="chartEndDate" class="toolbar-input">
+          </div>
+          <div class="toolbar-group">
+            <label class="toolbar-label">Capacity:</label>
+            <input type="number" id="capacityInput" class="toolbar-input" style="width:70px" min="1" max="999">
+            <span class="toolbar-label">h/month</span>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="view-tabs">
+          <button class="view-tab active" data-view="gantt">Gantt Chart</button>
+          <button class="view-tab" data-view="todo">Todo List</button>
+        </div>
+
+        <!-- Dependency connecting mode banner -->
+        <div id="connectingBanner" class="connecting-banner hidden">
+          <span>🔗 Click the <strong>input node</strong> (◀) on another entry to create a dependency</span>
+          <button id="cancelConnecting" class="btn btn-secondary btn-sm">Cancel (Esc)</button>
+        </div>
+
+        <!-- Gantt Panel -->
+        <div id="ganttPanel" class="panel-content">
+          <div class="gantt-container" id="ganttContainer">
+            <!-- Intensity bar -->
+            <div class="intensity-bar-container" id="intensityBarContainer">
+              <div class="gantt-tasks-header">
+                <span>Task</span>
+              </div>
+              <div class="gantt-timeline-header" id="intensityBarWrapper">
+                <canvas id="intensityBarCanvas"></canvas>
+              </div>
+              <div class="gantt-hours-header" id="ganttHoursHeader">Total h</div>
+            </div>
+            <!-- Gantt chart body -->
+            <div class="gantt-body" id="ganttBody">
+              <div class="gantt-tasks" id="ganttTaskList"></div>
+              <div class="gantt-timeline" id="ganttTimeline">
+                <div class="gantt-timeline-ruler" id="ganttRuler"></div>
+                <div class="gantt-timeline-rows" id="ganttRows"></div>
+              </div>
+              <div class="gantt-hours-panel" id="ganttHoursPanel"></div>
+            </div>
+          </div>
+          <div class="gantt-breadcrumb" id="ganttBreadcrumb"></div>
+        </div>
+
+        <!-- Todo Panel -->
+        <div id="todoPanel" class="panel-content hidden">
+          <div class="todo-toolbar">
+            <button id="addTodoBtn" class="btn btn-primary btn-sm">+ Todo</button>
+            <div class="todo-filters">
+              <button class="todo-filter active" data-status="all">All</button>
+              <button class="todo-filter" data-status="todo">To Do</button>
+              <button class="todo-filter" data-status="in_progress">In Progress</button>
+              <button class="todo-filter" data-status="done">Done</button>
+            </div>
+          </div>
+          <div id="todoColumns" class="todo-columns">
+            <div class="todo-column" data-status="todo">
+              <div class="todo-column-header">To Do</div>
+              <div class="todo-list" id="todoListTodo"></div>
+            </div>
+            <div class="todo-column" data-status="in_progress">
+              <div class="todo-column-header">In Progress</div>
+              <div class="todo-list" id="todoListInProgress"></div>
+            </div>
+            <div class="todo-column" data-status="done">
+              <div class="todo-column-header">Done</div>
+              <div class="todo-list" id="todoListDone"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal overlay -->
+  <div id="modalOverlay" class="modal-overlay hidden">
+    <div id="modal" class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Modal</h3>
+        <button id="modalClose" class="icon-btn">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer" id="modalFooter">
+        <button id="modalCancel" class="btn btn-secondary">Cancel</button>
+        <button id="modalOk" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context menu -->
+  <div id="contextMenu" class="context-menu hidden">
+    <ul id="contextMenuList"></ul>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/gantt.js"></script>
+  <script src="js/todo.js"></script>
+</body>
+</html>

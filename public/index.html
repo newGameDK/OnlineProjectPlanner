@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OnlineProjectPlanner – Login</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="auth-page">
+  <div class="auth-container">
+    <div class="auth-logo">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="48" height="48" rx="12" fill="#2196F3"/>
+        <rect x="8" y="14" width="20" height="4" rx="2" fill="white"/>
+        <rect x="8" y="22" width="28" height="4" rx="2" fill="white" opacity="0.8"/>
+        <rect x="8" y="30" width="16" height="4" rx="2" fill="white" opacity="0.6"/>
+      </svg>
+      <h1>ProjectPlanner</h1>
+    </div>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">Login</button>
+      <button class="auth-tab" data-tab="register">Register</button>
+    </div>
+
+    <!-- Login Form -->
+    <form id="loginForm" class="auth-form active">
+      <div class="form-group">
+        <label for="loginUsername">Username</label>
+        <input type="text" id="loginUsername" placeholder="Enter username" required autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="loginPassword">Password</label>
+        <input type="password" id="loginPassword" placeholder="Enter password" required autocomplete="current-password">
+      </div>
+      <div id="loginError" class="error-msg"></div>
+      <button type="submit" class="btn btn-primary btn-full">Login</button>
+    </form>
+
+    <!-- Register Form -->
+    <form id="registerForm" class="auth-form">
+      <div class="form-group">
+        <label for="regUsername">Username</label>
+        <input type="text" id="regUsername" placeholder="Choose a username" required autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="regEmail">Email</label>
+        <input type="email" id="regEmail" placeholder="Enter email" required autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label for="regPassword">Password</label>
+        <input type="password" id="regPassword" placeholder="Min. 6 characters" required autocomplete="new-password">
+      </div>
+      <div id="registerError" class="error-msg"></div>
+      <button type="submit" class="btn btn-primary btn-full">Create Account</button>
+    </form>
+
+    <div id="joinSection" class="join-section">
+      <p>Have an invitation token?</p>
+      <div class="join-row">
+        <input type="text" id="inviteToken" placeholder="Paste token here">
+        <button type="button" id="joinBtn" class="btn btn-secondary">Join Team</button>
+      </div>
+      <div id="joinMsg" class="info-msg"></div>
+    </div>
+  </div>
+
+  <script src="js/auth.js"></script>
+</body>
+</html>
