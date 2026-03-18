@@ -5,7 +5,7 @@
 
 $DATA_DIR = __DIR__ . '/data';
 if (!is_dir($DATA_DIR)) {
-    mkdir($DATA_DIR, 0755, true);
+    mkdir($DATA_DIR, 0750, true);
 }
 
 $db = new PDO('sqlite:' . $DATA_DIR . '/planner.db');

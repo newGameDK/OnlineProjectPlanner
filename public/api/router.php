@@ -752,7 +752,7 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         try {
             $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
             $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '']);
-        } catch (Exception $ex) { /* already exists */ }
+        } catch (Exception $ex) { /* entry already exists – ignore duplicate */ }
 
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);
