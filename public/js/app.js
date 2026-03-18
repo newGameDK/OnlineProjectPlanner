@@ -89,9 +89,9 @@ const state = {
 // ==========================================================================
 
 async function api(method, url, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(url, opts);
+  const res = await fetch(API_BASE + url, opts);
   if (!res.headers.get('content-type')?.includes('application/json')) {
     throw new Error('The server did not return a valid response. Make sure the Node.js backend is running.');
   }
@@ -109,8 +109,17 @@ let wsReconnectTimer = null;
 
 function connectWS() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  let wsUrl;
+  if (API_BASE) {
+    // Derive WebSocket URL from the configured API_BASE
+    const url = new URL(API_BASE);
+    const proto = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsUrl = `${proto}//${url.host}/ws`;
+  } else {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsUrl = `${proto}//${location.host}/ws`;
+  }
+  ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
     setSyncStatus('synced');
@@ -295,7 +304,7 @@ async function init() {
     const data = await api('GET', '/api/auth/me');
     state.user = data.user;
   } catch {
-    window.location.href = '/';
+    window.location.href = 'index.html';
     return;
   }
 
@@ -465,7 +474,7 @@ function setupEventListeners() {
   // Logout
   document.getElementById('logoutBtn').addEventListener('click', async () => {
     await api('POST', '/api/auth/logout');
-    window.location.href = '/';
+    window.location.href = 'index.html';
   });
 
   // New team

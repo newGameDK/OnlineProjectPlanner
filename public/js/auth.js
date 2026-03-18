@@ -21,17 +21,20 @@ if (location.protocol === 'file:') {
 if (location.protocol !== 'file:') {
   (async () => {
     try {
-      const res = await fetch('/api/health');
+      const res = await fetch(API_BASE + '/api/health', { credentials: 'include' });
       const data = res.ok ? await res.json() : null;
       if (!data || !data.ok) throw new Error();
     } catch {
+      const hint = API_BASE
+        ? 'Check that the backend server at <code>' + API_BASE + '</code> is running.'
+        : 'This app needs a running Node.js server – it cannot work on ' +
+          'static-only hosting (e.g.&nbsp;a&nbsp;web&nbsp;hotel).<br>' +
+          'Either run <code>npm install &amp;&amp; npm start</code> or set ' +
+          '<code>API_BASE</code> in <code>js/config.js</code> to the URL of your backend.';
       document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
         '<div class="file-protocol-warning">' +
         '<strong>⚠ Cannot reach the backend API</strong><br>' +
-        'The HTML page loaded, but the Node.js server is not responding. ' +
-        'This app needs a running Node.js server – it cannot work on ' +
-        'static-only hosting (e.g. a web hotel).<br>' +
-        '<code>npm install &amp;&amp; npm start</code>' +
+        hint +
         '</div>'
       );
     }
@@ -59,9 +62,10 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   errEl.textContent = '';
 
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch(API_BASE + '/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ username, password })
     });
     if (!res.headers.get('content-type')?.includes('application/json')) {
@@ -70,7 +74,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     }
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || 'Login failed'; return; }
-    window.location.href = '/app.html';
+    window.location.href = 'app.html';
   } catch {
     errEl.textContent = location.protocol === 'file:'
       ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
@@ -88,9 +92,10 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
   errEl.textContent = '';
 
   try {
-    const res = await fetch('/api/auth/register', {
+    const res = await fetch(API_BASE + '/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ username, email, password })
     });
     if (!res.headers.get('content-type')?.includes('application/json')) {
@@ -99,7 +104,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     }
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || 'Registration failed'; return; }
-    window.location.href = '/app.html';
+    window.location.href = 'app.html';
   } catch {
     errEl.textContent = location.protocol === 'file:'
       ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
@@ -115,7 +120,7 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
   if (!token) { msgEl.textContent = 'Please enter a token'; return; }
 
   try {
-    const res = await fetch('/api/teams/join/' + encodeURIComponent(token), { method: 'POST' });
+    const res = await fetch(API_BASE + '/api/teams/join/' + encodeURIComponent(token), { method: 'POST', credentials: 'include' });
     if (!res.headers.get('content-type')?.includes('application/json')) {
       msgEl.textContent = 'The server did not return a valid response. Make sure the Node.js backend is running.';
       return;
@@ -123,7 +128,7 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) { msgEl.textContent = data.error || 'Failed'; return; }
     msgEl.textContent = 'Joined team: ' + (data.team ? data.team.name : '');
-    setTimeout(() => { window.location.href = '/app.html'; }, 1000);
+    setTimeout(() => { window.location.href = 'app.html'; }, 1000);
   } catch {
     msgEl.textContent = location.protocol === 'file:'
       ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
@@ -134,7 +139,7 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
 // Check if already logged in
 (async () => {
   try {
-    const res = await fetch('/api/auth/me');
-    if (res.ok) window.location.href = '/app.html';
+    const res = await fetch(API_BASE + '/api/auth/me', { credentials: 'include' });
+    if (res.ok) window.location.href = 'app.html';
   } catch {}
 })();
