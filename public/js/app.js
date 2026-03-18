@@ -839,11 +839,11 @@ async function showShareModal() {
           copyBtn.textContent = '✓ Copied!';
           setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 2000);
         }).catch(() => {
-          // Fallback: select the input
+          // Clipboard API unavailable – prompt user to copy manually
           const inp = document.getElementById('shareUrlInput');
-          if (inp) { inp.select(); document.execCommand('copy'); }
-          copyBtn.textContent = '✓ Copied!';
-          setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 2000);
+          if (inp) { inp.focus(); inp.select(); }
+          copyBtn.textContent = '⚠ Copy manually';
+          setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 3000);
         });
       });
     }

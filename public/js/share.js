@@ -244,7 +244,7 @@ function renderTaskList(entries) {
     }
     row.appendChild(exp);
 
-    // Colour dot
+    // Color dot
     const dot = document.createElement('span');
     dot.className        = 'gantt-task-color-dot';
     dot.style.background = color;
