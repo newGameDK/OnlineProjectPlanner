@@ -4,14 +4,16 @@
 // OnlineProjectPlanner – Frontend Configuration
 // ==========================================================================
 //
-// If you host the static files (HTML/CSS/JS) separately from the Node.js
-// backend, set API_BASE to the full URL of the backend server.
+// API_BASE controls where the frontend sends API requests.
 //
-// Examples:
-//   const API_BASE = 'https://my-server.example.com';
-//   const API_BASE = 'http://localhost:3000';
+// '.'  → (default) Relative to the current page – works on both PHP shared
+//         hosting (web hotel) and local Node.js development.
 //
-// Leave empty when the frontend is served by the same Node.js server.
+// ''   → Absolute from domain root (/api/...) – only works when the app is
+//         served from the domain root by Node.js.
+//
+// 'https://my-server.example.com'
+//       → Full URL of a remote backend server (split deployment).
 // ==========================================================================
 
-const API_BASE = '';
+const API_BASE = '.';

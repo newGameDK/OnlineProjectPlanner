@@ -4,20 +4,19 @@
 // Auth page logic
 // --------------------------------------------------------------------------
 
-// Detect file:// protocol – the app must be served by the Node server
+// Detect file:// protocol – the app must be served by a web server
 if (location.protocol === 'file:') {
   document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
     '<div class="file-protocol-warning">' +
     '<strong>⚠ Cannot connect to server</strong><br>' +
-    'You opened this file directly. Start the server first, then visit ' +
-    '<code>http://localhost:3000</code>' +
-    '<code>npm install &amp;&amp; npm start</code>' +
+    'You opened this file directly. Upload the folder to a web server ' +
+    '(or run <code>npm start</code> / <code>php -S localhost:8000</code> locally) ' +
+    'and open it from there.' +
     '</div>'
   );
 }
 
-// Probe the Node.js API to detect static-only hosting (e.g. a web hotel
-// that serves the HTML/CSS/JS files but does not run the Node backend).
+// Probe the API to detect hosting without a working backend.
 if (location.protocol !== 'file:') {
   (async () => {
     try {
@@ -26,12 +25,10 @@ if (location.protocol !== 'file:') {
       if (!data || !data.ok) throw new Error();
     } catch {
       const safeBase = API_BASE.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      const hint = API_BASE
+      const hint = API_BASE && API_BASE !== '.'
         ? 'Check that the backend server at <code>' + safeBase + '</code> is running.'
-        : 'This app needs a running Node.js server – it cannot work on ' +
-          'static-only hosting (e.g.&nbsp;a&nbsp;web&nbsp;hotel).<br>' +
-          'Either run <code>npm install &amp;&amp; npm start</code> or set ' +
-          '<code>API_BASE</code> in <code>js/config.js</code> to the URL of your backend.';
+        : 'The page loaded, but the API is not responding. ' +
+          'Make sure the <code>api/</code> folder was uploaded and that PHP is enabled on your hosting.';
       document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
         '<div class="file-protocol-warning">' +
         '<strong>⚠ Cannot reach the backend API</strong><br>' +
@@ -70,7 +67,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
       body: JSON.stringify({ username, password })
     });
     if (!res.headers.get('content-type')?.includes('application/json')) {
-      errEl.textContent = 'The server did not return a valid response. Make sure the Node.js backend is running.';
+      errEl.textContent = 'The server did not return a valid response. Check that the api/ folder is uploaded and PHP is enabled.';
       return;
     }
     const data = await res.json();
@@ -78,8 +75,8 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     window.location.href = 'app.html';
   } catch {
     errEl.textContent = location.protocol === 'file:'
-      ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
-      : 'Cannot reach the backend API – make sure the Node.js server is running (npm start).';
+      ? 'Cannot reach server – upload the folder to a web server or run it locally.'
+      : 'Cannot reach the backend API. Check that the api/ folder is uploaded and PHP is enabled.';
   }
 });
 
@@ -100,7 +97,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
       body: JSON.stringify({ username, email, password })
     });
     if (!res.headers.get('content-type')?.includes('application/json')) {
-      errEl.textContent = 'The server did not return a valid response. Make sure the Node.js backend is running.';
+      errEl.textContent = 'The server did not return a valid response. Check that the api/ folder is uploaded and PHP is enabled.';
       return;
     }
     const data = await res.json();
@@ -108,8 +105,8 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     window.location.href = 'app.html';
   } catch {
     errEl.textContent = location.protocol === 'file:'
-      ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
-      : 'Cannot reach the backend API – make sure the Node.js server is running (npm start).';
+      ? 'Cannot reach server – upload the folder to a web server or run it locally.'
+      : 'Cannot reach the backend API. Check that the api/ folder is uploaded and PHP is enabled.';
   }
 });
 
@@ -123,7 +120,7 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
   try {
     const res = await fetch(API_BASE + '/api/teams/join/' + encodeURIComponent(token), { method: 'POST', credentials: 'include' });
     if (!res.headers.get('content-type')?.includes('application/json')) {
-      msgEl.textContent = 'The server did not return a valid response. Make sure the Node.js backend is running.';
+      msgEl.textContent = 'The server did not return a valid response. Check that the api/ folder is uploaded and PHP is enabled.';
       return;
     }
     const data = await res.json();
@@ -132,8 +129,8 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
     setTimeout(() => { window.location.href = 'app.html'; }, 1000);
   } catch {
     msgEl.textContent = location.protocol === 'file:'
-      ? 'Cannot reach server – please run "npm start" and open http://localhost:3000'
-      : 'Cannot reach the backend API – make sure the Node.js server is running (npm start).';
+      ? 'Cannot reach server – upload the folder to a web server or run it locally.'
+      : 'Cannot reach the backend API. Check that the api/ folder is uploaded and PHP is enabled.';
   }
 });
 
