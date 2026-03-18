@@ -120,7 +120,7 @@ async function init() {
   }
 
   try {
-    const res  = await fetch(API_BASE + '/api/share/' + encodeURIComponent(token), { credentials: 'include' });
+    const res  = await fetch(apiUrl('/api/share/' + encodeURIComponent(token)), { credentials: 'include' });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       showError('Link not found', err.error || 'This share link is invalid or has been revoked.');
