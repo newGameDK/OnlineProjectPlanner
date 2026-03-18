@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProjectPlanner – Shared View</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="share-page">
+
+  <!-- Top bar -->
+  <header class="share-topbar">
+    <div class="share-topbar-left">
+      <div class="topbar-logo">
+        <svg width="28" height="28" viewBox="0 0 48 48" fill="none">
+          <rect width="48" height="48" rx="12" fill="#2196F3"/>
+          <rect x="8" y="14" width="20" height="4" rx="2" fill="white"/>
+          <rect x="8" y="22" width="28" height="4" rx="2" fill="white" opacity="0.8"/>
+          <rect x="8" y="30" width="16" height="4" rx="2" fill="white" opacity="0.6"/>
+        </svg>
+        <span>ProjectPlanner</span>
+      </div>
+      <span id="shareProjectName" class="share-project-name"></span>
+      <span class="share-badge">View Only</span>
+    </div>
+    <div class="share-topbar-right">
+      <a href="/" class="btn btn-primary btn-sm">Sign In</a>
+    </div>
+  </header>
+
+  <!-- Toolbar -->
+  <div class="share-toolbar" id="shareToolbar" style="display:none">
+    <div class="toolbar-group">
+      <label class="toolbar-label">View:</label>
+      <select id="shareViewScale" class="toolbar-select">
+        <option value="day">Day</option>
+        <option value="week" selected>Week</option>
+        <option value="month">Month</option>
+      </select>
+      <button id="shareZoomIn"  class="btn btn-secondary btn-sm" title="Zoom in">+</button>
+      <button id="shareZoomOut" class="btn btn-secondary btn-sm" title="Zoom out">−</button>
+    </div>
+    <div class="toolbar-group">
+      <label class="toolbar-label">Start:</label>
+      <input type="date" id="shareStartDate" class="toolbar-input">
+      <label class="toolbar-label">End:</label>
+      <input type="date" id="shareEndDate" class="toolbar-input">
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="share-main" id="shareMain">
+
+    <!-- Error state -->
+    <div id="shareError" class="share-error" style="display:none">
+      <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
+        <rect width="48" height="48" rx="12" fill="#ffebee"/>
+        <path d="M24 14 L24 28" stroke="#F44336" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="24" cy="34" r="2" fill="#F44336"/>
+      </svg>
+      <h2 id="shareErrorTitle">Link not found</h2>
+      <p id="shareErrorMsg">This share link is invalid or has been revoked.</p>
+    </div>
+
+    <!-- Loading state -->
+    <div id="shareLoading" class="welcome-screen">
+      <p style="color:var(--text-muted)">Loading plan…</p>
+    </div>
+
+    <!-- Gantt panel (same structure as app.html) -->
+    <div id="shareGanttPanel" class="panel-content" style="display:none">
+      <div class="gantt-container" id="ganttContainer">
+        <!-- Intensity bar -->
+        <div class="intensity-bar-container" id="intensityBarContainer">
+          <div class="gantt-tasks-header"><span>Task</span></div>
+          <div class="gantt-timeline-header" id="intensityBarWrapper">
+            <canvas id="intensityBarCanvas"></canvas>
+          </div>
+          <div class="gantt-hours-header" id="ganttHoursHeader">Total h</div>
+        </div>
+        <!-- Gantt body -->
+        <div class="gantt-body" id="ganttBody">
+          <div class="gantt-tasks"    id="ganttTaskList"></div>
+          <div class="gantt-timeline" id="ganttTimeline">
+            <div class="gantt-timeline-ruler" id="ganttRuler"></div>
+            <div class="gantt-timeline-rows"  id="ganttRows"></div>
+          </div>
+          <div class="gantt-hours-panel" id="ganttHoursPanel"></div>
+        </div>
+      </div>
+      <div class="gantt-breadcrumb" id="ganttBreadcrumb"></div>
+    </div>
+
+  </div>
+
+  <script src="js/share.js"></script>
+</body>
+</html>

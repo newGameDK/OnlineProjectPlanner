@@ -573,6 +573,15 @@ function setupEventListeners() {
     window.todoModule?.showAddModal();
   });
 
+  // Export CSV
+  document.getElementById('exportCsvBtn').addEventListener('click', (e) => { e.stopPropagation(); exportCSV(); });
+
+  // Export PDF (print)
+  document.getElementById('exportPdfBtn').addEventListener('click', (e) => { e.stopPropagation(); exportPDF(); });
+
+  // Share with link
+  document.getElementById('shareBtn').addEventListener('click', (e) => { e.stopPropagation(); showShareModal(); });
+
   // Todo filters
   document.querySelectorAll('.todo-filter').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -688,6 +697,172 @@ function getUserColor(userId, variation) {
   const baseColor = member?.base_color || state.user?.base_color || '#2196F3';
   const vars = generateColorVariations(baseColor);
   return vars[Math.min(variation || 0, vars.length - 1)];
+}
+
+// ==========================================================================
+// Export: CSV
+// ==========================================================================
+
+function exportCSV() {
+  if (!state.currentProject) return alert('Open a project first.');
+
+  const members = Object.values(state.members).flat();
+  const rows = [['Title', 'Parent', 'Start Date', 'End Date', 'Hours Estimate', 'Assignee', 'Notes', 'Folder URL']];
+
+  // Build a quick title lookup for parent display
+  const titleById = {};
+  state.ganttEntries.forEach(e => { titleById[e.id] = e.title; });
+
+  state.ganttEntries.forEach(e => {
+    const member = members.find(m => m.id === e.user_id);
+    rows.push([
+      e.title,
+      e.parent_id ? (titleById[e.parent_id] || e.parent_id) : '',
+      e.start_date,
+      e.end_date,
+      e.hours_estimate || 0,
+      member ? member.username : '',
+      e.notes || '',
+      e.folder_url || '',
+    ]);
+  });
+
+  const csv = rows.map(row =>
+    row.map(cell => '"' + String(cell).replace(/"/g, '""') + '"').join(',')
+  ).join('\r\n');
+
+  // UTF-8 BOM so Excel opens it with correct encoding
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = (state.currentProject.name || 'project').replace(/[^a-z0-9_\-]/gi, '_') + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ==========================================================================
+// Export: PDF via browser print (A4, multi-page)
+// ==========================================================================
+
+function exportPDF() {
+  if (!state.currentProject) return alert('Open a project first.');
+
+  // Temporarily remove overflow restrictions so the full chart prints
+  const ids = ['ganttTimeline', 'ganttTaskList', 'ganttHoursPanel'];
+  const saved = ids.map(id => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const s = { el, overflow: el.style.overflow, height: el.style.height, maxHeight: el.style.maxHeight };
+    el.style.overflow  = 'visible';
+    el.style.height    = 'auto';
+    el.style.maxHeight = 'none';
+    return s;
+  }).filter(Boolean);
+
+  const body = document.querySelector('.gantt-body');
+  const savedBodyOverflow = body ? body.style.overflow : '';
+  if (body) body.style.overflow = 'visible';
+
+  document.body.classList.add('print-gantt');
+
+  const afterPrint = () => {
+    document.body.classList.remove('print-gantt');
+    saved.forEach(s => {
+      s.el.style.overflow  = s.overflow;
+      s.el.style.height    = s.height;
+      s.el.style.maxHeight = s.maxHeight;
+    });
+    if (body) body.style.overflow = savedBodyOverflow;
+    window.removeEventListener('afterprint', afterPrint);
+  };
+
+  window.addEventListener('afterprint', afterPrint);
+  window.print();
+}
+
+// ==========================================================================
+// Share with link
+// ==========================================================================
+
+async function showShareModal() {
+  if (!state.currentProject) return alert('Open a project first.');
+
+  const project   = state.currentProject;
+  const token     = project.share_token || null;
+  const shareUrl  = token ? `${location.origin}/share.html?token=${token}` : null;
+
+  const bodyHtml = token
+    ? `<div class="form-group">
+        <label>Share Link</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="shareUrlInput" value="${escHtml(shareUrl)}" readonly
+            style="flex:1;font-size:12px;background:var(--surface2)">
+          <button type="button" id="copyShareBtn" class="btn btn-secondary btn-sm">📋 Copy</button>
+        </div>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">
+          Anyone with this link can view the plan (read-only, no login required).
+          <a href="${escHtml(shareUrl)}" target="_blank" rel="noopener noreferrer">Open ↗</a>
+        </small>
+      </div>
+      <button type="button" id="revokeShareBtn" class="btn btn-danger btn-sm">Revoke Link</button>`
+    : `<p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+        Create a read-only link that anyone can use to view this plan — no login required.
+       </p>`;
+
+  const okLabel = token ? 'Close' : 'Generate Link';
+
+  openModal('Share with Link 🔗', bodyHtml, async () => {
+    if (!token) {
+      // Generate a new share token
+      try {
+        const data = await api('POST', `/api/projects/${project.id}/share`);
+        project.share_token = data.token;
+        closeModal();
+        showShareModal(); // Reopen with new token
+      } catch (e) {
+        alert('Could not generate share link: ' + e.message);
+      }
+    } else {
+      closeModal();
+    }
+  }, okLabel);
+
+  // Attach copy / revoke button handlers after the modal DOM is created
+  setTimeout(() => {
+    const copyBtn = document.getElementById('copyShareBtn');
+    if (copyBtn && shareUrl) {
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard?.writeText(shareUrl).then(() => {
+          copyBtn.textContent = '✓ Copied!';
+          setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 2000);
+        }).catch(() => {
+          // Clipboard API unavailable – prompt user to copy manually
+          const inp = document.getElementById('shareUrlInput');
+          if (inp) { inp.focus(); inp.select(); }
+          copyBtn.textContent = '⚠ Copy manually';
+          setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 3000);
+        });
+      });
+    }
+
+    const revokeBtn = document.getElementById('revokeShareBtn');
+    if (revokeBtn) {
+      revokeBtn.addEventListener('click', async () => {
+        if (!confirm('Revoke share link?\nAnyone with the current link will lose access immediately.')) return;
+        try {
+          await api('DELETE', `/api/projects/${project.id}/share`);
+          project.share_token = null;
+          closeModal();
+          showShareModal(); // Reopen showing "no link" state
+        } catch (e) {
+          alert('Could not revoke link: ' + e.message);
+        }
+      });
+    }
+  }, 80);
 }
 
 // Expose globally for cross-module use
