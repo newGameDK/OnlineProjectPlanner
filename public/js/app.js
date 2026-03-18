@@ -89,11 +89,11 @@ const state = {
 // ==========================================================================
 
 async function api(method, url, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(url, opts);
+  const res = await fetch(API_BASE + url, opts);
   if (!res.headers.get('content-type')?.includes('application/json')) {
-    throw new Error('The server did not return a valid response. Make sure the Node.js backend is running.');
+    throw new Error('The server did not return a valid response. Check that the api/ folder is uploaded and PHP is enabled.');
   }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'API error');
@@ -106,13 +106,30 @@ async function api(method, url, body) {
 
 let ws = null;
 let wsReconnectTimer = null;
+let wsFailCount = 0;
+const WS_MAX_RETRIES = 3; // Stop trying after a few failures (e.g. PHP hosting)
 
 function connectWS() {
+  if (wsFailCount >= WS_MAX_RETRIES) return; // Give up – rely on polling
   if (ws && ws.readyState === WebSocket.OPEN) return;
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  let wsUrl;
+  if (API_BASE && API_BASE !== '.') {
+    // Derive WebSocket URL from the configured API_BASE
+    try {
+      const url = new URL(API_BASE);
+      const proto = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${proto}//${url.host}/ws`;
+    } catch { return; } // Invalid API_BASE for WS
+  } else {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsUrl = `${proto}//${location.host}/ws`;
+  }
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch { wsFailCount++; return; }
 
   ws.onopen = () => {
+    wsFailCount = 0;
     setSyncStatus('synced');
     if (state.user) ws.send(JSON.stringify({ type: 'auth', userId: state.user.id, projectId: state.currentProject?.id }));
   };
@@ -122,8 +139,14 @@ function connectWS() {
   };
 
   ws.onclose = () => {
-    setSyncStatus('error');
-    wsReconnectTimer = setTimeout(connectWS, 3000);
+    wsFailCount++;
+    if (wsFailCount < WS_MAX_RETRIES) {
+      setSyncStatus('error');
+      wsReconnectTimer = setTimeout(connectWS, 3000);
+    } else {
+      // WS unavailable (e.g. PHP hosting) – polling handles sync
+      setSyncStatus('synced');
+    }
   };
 
   ws.onerror = () => { ws.close(); };
@@ -240,7 +263,8 @@ function startSync() {
   stopSync();
   syncTimer = setInterval(async () => {
     if (!state.currentProject) return;
-    if (ws && ws.readyState === WebSocket.OPEN) return; // WS is fine, no need to poll
+    // Skip polling if WebSocket is active and connected
+    if (ws && ws.readyState === WebSocket.OPEN && wsFailCount === 0) return;
     try {
       setSyncStatus('syncing');
       const data = await api('GET', `/api/sync/${state.currentProject.id}?since=${state.lastSync}`);
@@ -295,7 +319,7 @@ async function init() {
     const data = await api('GET', '/api/auth/me');
     state.user = data.user;
   } catch {
-    window.location.href = '/';
+    window.location.href = 'index.html';
     return;
   }
 
@@ -465,7 +489,7 @@ function setupEventListeners() {
   // Logout
   document.getElementById('logoutBtn').addEventListener('click', async () => {
     await api('POST', '/api/auth/logout');
-    window.location.href = '/';
+    window.location.href = 'index.html';
   });
 
   // New team

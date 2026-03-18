@@ -247,14 +247,37 @@ function canAccessProject(projectId, userId) {
 
 const app = express();
 
+// CORS – allow the frontend to be hosted on a different origin.
+// Set CORS_ORIGIN to the URL of the static frontend, e.g.
+//   CORS_ORIGIN=https://undervisningsfysik.dk
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
+if (CORS_ORIGIN) {
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', CORS_ORIGIN);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+}
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-app.use(session({
+
+const sessionOpts = {
   secret: process.env.SESSION_SECRET || 'planner-secret-change-in-prod',
   resave: false,
   saveUninitialized: false,
   cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 }
-}));
+};
+// When the frontend is on a different origin the session cookie must be
+// sent cross-site, which requires SameSite=None and Secure (HTTPS).
+if (CORS_ORIGIN) {
+  sessionOpts.cookie.sameSite = 'none';
+  sessionOpts.cookie.secure   = true;
+}
+app.use(session(sessionOpts));
 app.use(express.static(path.join(__dirname, 'public')));
 
 function requireAuth(req, res, next) {
