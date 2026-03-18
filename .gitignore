@@ -1,4 +1,5 @@
 node_modules/
 data/
-public/api/data/
+public/api/data/*
+!public/api/data/.htaccess
 *.log

@@ -143,8 +143,10 @@ function connectWS() {
     if (wsFailCount < WS_MAX_RETRIES) {
       setSyncStatus('error');
       wsReconnectTimer = setTimeout(connectWS, 3000);
+    } else {
+      // WS unavailable (e.g. PHP hosting) – polling handles sync
+      setSyncStatus('synced');
     }
-    // If max retries exceeded, stop reconnecting – polling handles sync
   };
 
   ws.onerror = () => { ws.close(); };
