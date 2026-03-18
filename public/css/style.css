@@ -19,8 +19,8 @@
   --warning: #FF9800;
   --danger: #F44336;
   --danger-light: #ffebee;
-  --radius: 8px;
-  --radius-sm: 4px;
+  --radius: 10px;
+  --radius-sm: 6px;
   --shadow: 0 2px 8px rgba(0,0,0,.1);
   --shadow-md: 0 4px 16px rgba(0,0,0,.15);
   --topbar-h: 52px;
@@ -283,7 +283,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 /* Gantt bars */
 .gantt-bar-container { position: absolute; top: 4px; height: calc(var(--row-h) - 8px); }
 .gantt-bar {
-  height: 100%; border-radius: 4px; position: relative; cursor: pointer;
+  height: 100%; border-radius: var(--radius-sm); position: relative; cursor: pointer;
   display: flex; align-items: center; padding: 0 6px; overflow: hidden;
   font-size: 11px; font-weight: 600; color: rgba(0,0,0,.7);
   box-shadow: 0 1px 3px rgba(0,0,0,.2);
@@ -297,8 +297,8 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   background: rgba(0,0,0,.15); opacity: 0;
   transition: opacity .15s;
 }
-.gantt-bar-handle.left { left: 0; border-radius: 4px 0 0 4px; }
-.gantt-bar-handle.right { right: 0; border-radius: 0 4px 4px 0; }
+.gantt-bar-handle.left { left: 0; border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.gantt-bar-handle.right { right: 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .gantt-bar:hover .gantt-bar-handle { opacity: 1; }
 .gantt-bar-drilldown {
   position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
@@ -530,3 +530,64 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   :root { --sidebar-w: 200px; --task-col-w: 200px; }
   .toolbar-group { flex-wrap: wrap; }
 }
+
+/* =====================================================================
+   Print / PDF Export
+   ===================================================================== */
+@media print {
+  @page { size: A4 landscape; margin: 8mm; }
+
+  body.print-gantt .topbar,
+  body.print-gantt .sidebar,
+  body.print-gantt .project-toolbar,
+  body.print-gantt .view-tabs,
+  body.print-gantt .connecting-banner,
+  body.print-gantt #todoPanel,
+  body.print-gantt #welcomeScreen,
+  body.print-gantt .gantt-task-actions,
+  body.print-gantt .dep-node,
+  body.print-gantt .gantt-bar-handle { display: none !important; }
+
+  body.print-gantt { overflow: visible !important; }
+  body.print-gantt .app-layout,
+  body.print-gantt .main-content,
+  body.print-gantt .project-view,
+  body.print-gantt .panel-content,
+  body.print-gantt .gantt-container,
+  body.print-gantt .gantt-body,
+  body.print-gantt .gantt-timeline,
+  body.print-gantt .gantt-tasks,
+  body.print-gantt .gantt-hours-panel { overflow: visible !important; height: auto !important; max-height: none !important; }
+
+  body.print-gantt .gantt-row-bg { page-break-inside: avoid; }
+}
+
+/* =====================================================================
+   Share / Read-only view
+   ===================================================================== */
+.share-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--bg); }
+
+.share-topbar {
+  height: var(--topbar-h); background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+  flex-shrink: 0; box-shadow: var(--shadow);
+}
+.share-topbar-left { display: flex; align-items: center; gap: 12px; }
+.share-topbar-right { display: flex; align-items: center; gap: 10px; }
+.share-project-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.share-badge {
+  font-size: 11px; padding: 2px 8px; background: var(--primary-light);
+  color: var(--primary); border-radius: 10px; font-weight: 600;
+}
+
+.share-toolbar {
+  display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
+}
+
+.share-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.share-error {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  flex: 1; gap: 16px; color: var(--text-muted);
+}
+.share-error h2 { font-size: 18px; color: var(--danger); }

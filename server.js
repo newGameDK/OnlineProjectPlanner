@@ -139,6 +139,11 @@ try {
   db.exec(`ALTER TABLE gantt_entries ADD COLUMN folder_url TEXT NOT NULL DEFAULT ''`);
 } catch (_) { /* column already exists – ignore */ }
 
+// Migration: add share_token to projects
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN share_token TEXT`);
+} catch (_) { /* column already exists – ignore */ }
+
 // ---------------------------------------------------------------------------
 // Prepared statements
 // ---------------------------------------------------------------------------
@@ -181,6 +186,8 @@ const stmts = {
   getTeamProjects: db.prepare(`SELECT * FROM projects WHERE team_id=? ORDER BY created_at ASC`),
   updateProject: db.prepare(`UPDATE projects SET name=?,description=?,updated_at=? WHERE id=?`),
   deleteProject: db.prepare(`DELETE FROM projects WHERE id=?`),
+  setShareToken: db.prepare(`UPDATE projects SET share_token=? WHERE id=?`),
+  getProjectByShareToken: db.prepare(`SELECT * FROM projects WHERE share_token=?`),
 
   // Gantt
   createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`),
@@ -457,6 +464,50 @@ app.delete('/api/projects/:id', requireAuth, (req, res) => {
   stmts.deleteProject.run(project.id);
   broadcastToTeam(project.team_id, { type: 'project_deleted', project_id: project.id });
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Share routes (read-only public access)
+// ---------------------------------------------------------------------------
+
+app.post('/api/projects/:id/share', requireAuth, (req, res) => {
+  const project = stmts.getProject.get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+  if (!assertMember(project.team_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+  const token = uuidv4();
+  stmts.setShareToken.run(token, project.id);
+  // Return token to caller so the UI can build the link
+  res.json({ token });
+});
+
+app.delete('/api/projects/:id/share', requireAuth, (req, res) => {
+  const project = stmts.getProject.get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+  if (!assertMember(project.team_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+  stmts.setShareToken.run(null, project.id);
+  res.json({ ok: true });
+});
+
+// Public endpoint – no authentication required
+app.get('/api/share/:token', (req, res) => {
+  const project = stmts.getProjectByShareToken.get(req.params.token);
+  if (!project) return res.status(404).json({ error: 'Invalid or expired share link' });
+
+  const entries      = stmts.getProjectGantt.all(project.id);
+  const todos        = stmts.getProjectTodos.all(project.id);
+  const dependencies = stmts.getProjectDeps.all(project.id);
+  const members      = stmts.getTeamMembers.all(project.team_id)
+    .map(m => ({ id: m.id, username: m.username, base_color: m.base_color }));
+
+  res.json({
+    project: { id: project.id, name: project.name, description: project.description },
+    entries,
+    todos,
+    dependencies,
+    members,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -745,6 +796,6 @@ function broadcast(message, teamId, excludeUserId) {
 // ---------------------------------------------------------------------------
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`OnlineProjectPlanner running on http://localhost:${PORT}`);
 });
