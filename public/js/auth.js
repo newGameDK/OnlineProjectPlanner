@@ -25,8 +25,9 @@ if (location.protocol !== 'file:') {
       const data = res.ok ? await res.json() : null;
       if (!data || !data.ok) throw new Error();
     } catch {
+      const safeBase = API_BASE.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
       const hint = API_BASE
-        ? 'Check that the backend server at <code>' + API_BASE + '</code> is running.'
+        ? 'Check that the backend server at <code>' + safeBase + '</code> is running.'
         : 'This app needs a running Node.js server – it cannot work on ' +
           'static-only hosting (e.g.&nbsp;a&nbsp;web&nbsp;hotel).<br>' +
           'Either run <code>npm install &amp;&amp; npm start</code> or set ' +
