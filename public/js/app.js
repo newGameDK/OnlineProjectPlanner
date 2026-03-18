@@ -91,7 +91,7 @@ const state = {
 async function api(method, url, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(API_BASE + url, opts);
+  const res = await fetch(apiUrl(url), opts);
   if (!res.headers.get('content-type')?.includes('application/json')) {
     throw new Error('The server did not return a valid response. Check that the api/ folder is uploaded and PHP is enabled.');
   }

@@ -20,7 +20,7 @@ if (location.protocol === 'file:') {
 if (location.protocol !== 'file:') {
   (async () => {
     try {
-      const res = await fetch(API_BASE + '/api/health', { credentials: 'include' });
+      const res = await fetch(apiUrl('/api/health'), { credentials: 'include' });
       const data = res.ok ? await res.json() : null;
       if (!data || !data.ok) throw new Error();
     } catch {
@@ -60,7 +60,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   errEl.textContent = '';
 
   try {
-    const res = await fetch(API_BASE + '/api/auth/login', {
+    const res = await fetch(apiUrl('/api/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -90,7 +90,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
   errEl.textContent = '';
 
   try {
-    const res = await fetch(API_BASE + '/api/auth/register', {
+    const res = await fetch(apiUrl('/api/auth/register'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -118,7 +118,7 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
   if (!token) { msgEl.textContent = 'Please enter a token'; return; }
 
   try {
-    const res = await fetch(API_BASE + '/api/teams/join/' + encodeURIComponent(token), { method: 'POST', credentials: 'include' });
+    const res = await fetch(apiUrl('/api/teams/join/' + encodeURIComponent(token)), { method: 'POST', credentials: 'include' });
     if (!res.headers.get('content-type')?.includes('application/json')) {
       msgEl.textContent = 'The server did not return a valid response. Check that the api/ folder is uploaded and PHP is enabled.';
       return;
@@ -137,7 +137,7 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
 // Check if already logged in
 (async () => {
   try {
-    const res = await fetch(API_BASE + '/api/auth/me', { credentials: 'include' });
+    const res = await fetch(apiUrl('/api/auth/me'), { credentials: 'include' });
     if (res.ok) window.location.href = 'app.html';
   } catch {}
 })();
