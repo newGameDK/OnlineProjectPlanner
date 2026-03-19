@@ -208,7 +208,7 @@
       const name = document.createElement('span');
       name.className = 'gantt-task-name';
       name.textContent = entry.title;
-      name.title = entry.title;
+      name.title = entry.title + (entry.notes ? '\n\n' + entry.notes : '');
       row.appendChild(name);
 
       // Persistent folder-link icon (always visible when URL is set)
@@ -363,8 +363,12 @@
     bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '');
     bar.style.background = color;
     bar.style.width      = '100%';
+    if (U().isColorDark(color)) {
+      bar.style.color = '#fff';
+    }
     bar.title = entry.title + '\n' + entry.start_date + ' \u2192 ' + entry.end_date +
-                (entry.hours_estimate ? '\n' + entry.hours_estimate + 'h estimated' : '');
+                (entry.hours_estimate ? '\n' + entry.hours_estimate + 'h estimated' : '') +
+                (entry.notes ? '\n\n' + entry.notes : '');
 
     // Label
     const label = document.createElement('span');
@@ -842,6 +846,18 @@
     ganttBreadcrumb.innerHTML = '';
     if (!parentStack.length) return;
 
+    // ← Back button to go one level up
+    const backBtn = document.createElement('button');
+    backBtn.className = 'gantt-bc-back';
+    backBtn.textContent = '\u2190 Back';
+    backBtn.title = 'Go one level up';
+    backBtn.addEventListener('click', () => {
+      parentStack.pop();
+      currentParentId = parentStack.length ? parentStack[parentStack.length - 1].entry.id : null;
+      render();
+    });
+    ganttBreadcrumb.appendChild(backBtn);
+
     const root = document.createElement('span');
     root.className  = 'gantt-bc-item';
     root.textContent = (S().currentProject && S().currentProject.name) || 'Project';
@@ -905,6 +921,11 @@
       S().ganttEntries.push(data.entry);
       render();
       U().closeModal();
+
+      // Ask if the new entry should also be added to the todo list
+      if (confirm('Add "' + data.entry.title + '" to the Todo list as well?')) {
+        addToTodo(data.entry);
+      }
     });
   }
 

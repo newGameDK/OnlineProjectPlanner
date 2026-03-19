@@ -565,7 +565,7 @@ function setupEventListeners() {
   // Add gantt entry
   document.getElementById('addGanttBtn').addEventListener('click', () => {
     if (!state.currentProject) return;
-    window.ganttModule?.showAddEntryModal(null);
+    window.ganttModule?.showAddEntryModal();
   });
 
   // Undo
@@ -721,6 +721,17 @@ function getUserColor(userId, variation) {
   const baseColor = member?.base_color || state.user?.base_color || '#2196F3';
   const vars = generateColorVariations(baseColor);
   return vars[Math.min(variation || 0, vars.length - 1)];
+}
+
+/**
+ * Returns true if the given hex colour is "dark" (relative luminance < 0.45).
+ * Used to decide whether overlaid text should be white.
+ */
+function isColorDark(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  // Relative luminance (sRGB)
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum < 0.45;
 }
 
 // ==========================================================================
@@ -892,7 +903,7 @@ async function showShareModal() {
 // Expose globally for cross-module use
 window.appState = state;
 window.appAPI = api;
-window.appUtils = { escHtml, formatDate, getUserColor, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn };
+window.appUtils = { escHtml, formatDate, getUserColor, isColorDark, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn };
 
 // Start app
 init();
