@@ -892,27 +892,41 @@ if ($seg1 === 'update' && $method === 'POST') {
     }
 
     $uploadedFile = $_FILES['zipfile']['tmp_name'];
+    $result = apply_zip_update($uploadedFile);
+
+    // Clean up uploaded file
+    if (file_exists($uploadedFile)) unlink($uploadedFile);
+
+    if (isset($result['error'])) {
+        json_out($result, 500);
+    }
+
+    $result['message'] = 'Update applied successfully. ' . $result['extracted'] . ' files updated, ' . $result['skipped'] . ' protected files skipped.';
+    json_out($result);
+}
+
+// =========================================================================
+// SHARED HELPER – Apply a ZIP update to the public/ directory
+// =========================================================================
+
+function apply_zip_update($zipFile) {
     $publicDir = dirname(__DIR__); // The public/ directory
 
-    // Open and validate the ZIP
     $zip = new ZipArchive();
-    $openResult = $zip->open($uploadedFile);
+    $openResult = $zip->open($zipFile);
     if ($openResult !== true) {
-        json_out(['error' => 'Failed to open ZIP file (code: ' . $openResult . ')'], 400);
+        return ['error' => 'Failed to open ZIP file (code: ' . $openResult . ')'];
     }
 
     // Find the root of the application inside the ZIP.
-    // Look for version.json or index.html to determine the base path.
     $zipBase = '';
     for ($i = 0; $i < $zip->numFiles; $i++) {
         $name = $zip->getNameIndex($i);
-        // Check for version.json at various depths
         if (preg_match('#^((?:[^/]+/)*)version\.json$#', $name, $m)) {
             $zipBase = $m[1];
             break;
         }
     }
-    // Fallback: look for index.html
     if ($zipBase === '') {
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $name = $zip->getNameIndex($i);
@@ -931,43 +945,27 @@ if ($seg1 === 'update' && $method === 'POST') {
         if (isset($vData['version'])) $newVersion = $vData['version'];
     }
 
-    // Protected paths that must NOT be overwritten (relative to public/)
     $protectedPaths = ['api/data/'];
-
-    // Extract files, skipping protected paths
     $extracted = 0;
     $skipped   = 0;
+
     for ($i = 0; $i < $zip->numFiles; $i++) {
         $entryName = $zip->getNameIndex($i);
-
-        // Skip entries outside our detected base
         if ($zipBase !== '' && strpos($entryName, $zipBase) !== 0) continue;
-
-        // Get the relative path within the application
         $relativePath = substr($entryName, strlen($zipBase));
         if ($relativePath === '' || $relativePath === false) continue;
 
-        // Path traversal protection: reject paths with ..
         if (strpos($relativePath, '..') !== false) { $skipped++; continue; }
 
-        // Check if this path is protected
         $isProtected = false;
         foreach ($protectedPaths as $pp) {
-            if (strpos($relativePath, $pp) === 0) {
-                $isProtected = true;
-                break;
-            }
+            if (strpos($relativePath, $pp) === 0) { $isProtected = true; break; }
         }
         if ($isProtected) { $skipped++; continue; }
 
         $targetPath = $publicDir . '/' . $relativePath;
-
-        // Verify resolved path is within publicDir (defense in depth)
-        // Ensure parent directory exists first so realpath() can resolve it
         $parentDir = dirname($targetPath);
-        if (!is_dir($parentDir)) {
-            mkdir($parentDir, 0755, true);
-        }
+        if (!is_dir($parentDir)) mkdir($parentDir, 0755, true);
         $resolvedTarget = realpath($parentDir);
         $resolvedPublic = realpath($publicDir);
         if ($resolvedTarget === false || $resolvedPublic === false ||
@@ -976,12 +974,8 @@ if ($seg1 === 'update' && $method === 'POST') {
             continue;
         }
 
-        // If entry is a directory, create it
-        if (substr($entryName, -1) === '/') {
-            continue; // Already created above
-        }
+        if (substr($entryName, -1) === '/') continue;
 
-        // Extract file content and write it
         $content = $zip->getFromIndex($i);
         if ($content !== false) {
             file_put_contents($targetPath, $content);
@@ -990,19 +984,155 @@ if ($seg1 === 'update' && $method === 'POST') {
     }
 
     $zip->close();
+    return ['ok' => true, 'version' => $newVersion, 'extracted' => $extracted, 'skipped' => $skipped];
+}
 
-    // Clean up uploaded file
-    if (file_exists($uploadedFile)) {
-        unlink($uploadedFile);
+// =========================================================================
+// SHARED HELPER – Read GitHub repository from version.json
+// =========================================================================
+
+function get_github_repo() {
+    $versionFile = dirname(__DIR__) . '/version.json';
+    if (file_exists($versionFile)) {
+        $data = json_decode(file_get_contents($versionFile), true);
+        if (isset($data['repository'])) return $data['repository'];
+    }
+    return 'newGameDK/OnlineProjectPlanner';
+}
+
+// =========================================================================
+// SHARED HELPER – HTTP GET with redirect following (for GitHub API)
+// =========================================================================
+
+function github_http_get($url, $binary = false) {
+    $opts = [
+        'http' => [
+            'method'          => 'GET',
+            'header'          => "User-Agent: OnlineProjectPlanner\r\nAccept: application/vnd.github.v3+json\r\n",
+            'follow_location' => 1,
+            'max_redirects'   => 5,
+            'timeout'         => 30,
+        ],
+        'ssl' => [
+            'verify_peer'      => true,
+            'verify_peer_name' => true,
+        ]
+    ];
+    $ctx = stream_context_create($opts);
+    $data = @file_get_contents($url, false, $ctx);
+    if ($data === false) {
+        // Fallback to cURL if file_get_contents fails (allow_url_fopen may be off)
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS      => 5,
+                CURLOPT_TIMEOUT        => 30,
+                CURLOPT_USERAGENT      => 'OnlineProjectPlanner',
+                CURLOPT_HTTPHEADER     => ['Accept: application/vnd.github.v3+json'],
+            ]);
+            $data = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $err = curl_error($ch);
+            curl_close($ch);
+            if ($data === false || $httpCode >= 400) {
+                throw new \RuntimeException('GitHub API request failed' . ($err ? ': ' . $err : ' (HTTP ' . $httpCode . ')'));
+            }
+        } else {
+            throw new \RuntimeException('Cannot reach GitHub API. Enable allow_url_fopen or install cURL.');
+        }
+    }
+    return $data;
+}
+
+// =========================================================================
+// GITHUB RELEASES – list available versions from GitHub
+// =========================================================================
+
+if ($seg1 === 'github-releases' && $method === 'GET') {
+    require_auth();
+
+    try {
+        $repo = get_github_repo();
+        $releasesRaw = github_http_get('https://api.github.com/repos/' . $repo . '/releases');
+        $tagsRaw     = github_http_get('https://api.github.com/repos/' . $repo . '/tags');
+
+        $releasesData = json_decode($releasesRaw, true) ?: [];
+        $tagsData     = json_decode($tagsRaw, true) ?: [];
+
+        $releases = [];
+        $releaseTags = [];
+        foreach ($releasesData as $r) {
+            $releases[] = [
+                'tag'        => $r['tag_name'],
+                'name'       => $r['name'] ?: $r['tag_name'],
+                'body'       => $r['body'] ?? '',
+                'date'       => $r['published_at'] ?? '',
+                'prerelease' => $r['prerelease'] ?? false,
+                'type'       => 'release'
+            ];
+            $releaseTags[$r['tag_name']] = true;
+        }
+
+        $tags = [];
+        foreach ($tagsData as $t) {
+            if (!isset($releaseTags[$t['name']])) {
+                $tags[] = ['tag' => $t['name'], 'name' => $t['name'], 'type' => 'tag'];
+            }
+        }
+
+        json_out(['releases' => $releases, 'tags' => $tags, 'repository' => $repo]);
+    } catch (\Exception $e) {
+        json_out(['error' => 'Failed to fetch from GitHub: ' . $e->getMessage()], 502);
+    }
+}
+
+// =========================================================================
+// UPDATE FROM GITHUB – download a specific version and apply it
+// =========================================================================
+
+if ($seg1 === 'update-from-github' && $method === 'POST') {
+    require_auth();
+
+    if (!class_exists('ZipArchive')) {
+        json_out(['error' => 'PHP zip extension is not installed on this server'], 500);
     }
 
-    json_out([
-        'ok'        => true,
-        'version'   => $newVersion,
-        'extracted' => $extracted,
-        'skipped'   => $skipped,
-        'message'   => 'Update applied successfully. ' . $extracted . ' files updated, ' . $skipped . ' protected files skipped.'
-    ]);
+    $tag = isset($body['tag']) ? trim($body['tag']) : '';
+    if ($tag === '') {
+        json_out(['error' => 'No version tag specified'], 400);
+    }
+    if (!preg_match('#^[a-zA-Z0-9._\-/]+$#', $tag) || strpos($tag, '..') !== false) {
+        json_out(['error' => 'Invalid version tag format'], 400);
+    }
+
+    try {
+        $repo = get_github_repo();
+        $zipUrl = 'https://api.github.com/repos/' . $repo . '/zipball/' . rawurlencode($tag);
+        $zipData = github_http_get($zipUrl, true);
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'opp_gh_');
+        if ($tmpFile === false) {
+            json_out(['error' => 'Could not create temporary file'], 500);
+        }
+        file_put_contents($tmpFile, $zipData);
+
+        $result = apply_zip_update($tmpFile);
+
+        if (file_exists($tmpFile)) unlink($tmpFile);
+
+        if (isset($result['error'])) {
+            json_out($result, 500);
+        }
+
+        $result['message'] = 'Update applied from GitHub (' . $tag . '). ' .
+            $result['extracted'] . ' files updated, ' . $result['skipped'] . ' protected files skipped.';
+        json_out($result);
+    } catch (\Exception $e) {
+        if (isset($tmpFile) && file_exists($tmpFile)) unlink($tmpFile);
+        json_out(['error' => 'GitHub update failed: ' . $e->getMessage()], 500);
+    }
 }
 
 // =========================================================================

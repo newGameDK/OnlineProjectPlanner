@@ -526,68 +526,193 @@ function setupEventListeners() {
   // Update app
   document.getElementById('updateBtn').addEventListener('click', () => {
     openModal('Update Application', `
-      <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
-        Upload a ZIP file containing the new version of the <strong>public</strong> folder.
-        Your database and all user data will be preserved.
-      </p>
-      <div class="form-group">
-        <label>Select update ZIP file</label>
-        <input type="file" id="updateZipFile" accept=".zip" style="font-size:13px">
+      <div style="display:flex;gap:0;margin-bottom:12px;border-bottom:2px solid var(--border)">
+        <button type="button" id="updateTabGithub" class="btn btn-secondary" style="border-radius:6px 6px 0 0;border-bottom:2px solid var(--primary);font-size:13px;padding:6px 16px">From GitHub</button>
+        <button type="button" id="updateTabUpload" class="btn btn-secondary" style="border-radius:6px 6px 0 0;border-bottom:2px solid transparent;font-size:13px;padding:6px 16px;opacity:.6">Upload ZIP</button>
+      </div>
+      <div id="updatePanelGithub">
+        <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
+          Select a version from the GitHub repository to download and install.
+          Your database and all user data will be preserved.
+        </p>
+        <div class="form-group">
+          <label>Available versions</label>
+          <select id="ghVersionSelect" style="width:100%;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text)">
+            <option value="">Loading…</option>
+          </select>
+        </div>
+        <div id="ghReleaseNotes" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:10px;max-height:100px;overflow:auto;padding:6px 8px;background:var(--bg-secondary);border-radius:4px;white-space:pre-wrap"></div>
+      </div>
+      <div id="updatePanelUpload" style="display:none">
+        <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
+          Upload a ZIP file containing the new version of the <strong>public</strong> folder.
+          Your database and all user data will be preserved.
+        </p>
+        <div class="form-group">
+          <label>Select update ZIP file</label>
+          <input type="file" id="updateZipFile" accept=".zip" style="font-size:13px">
+        </div>
       </div>
       <div id="updateProgress" class="update-progress" style="display:none">
         <div class="progress-bar"><div class="progress-bar-fill" id="updateProgressBar" style="width:0%"></div></div>
         <div class="update-status" id="updateStatus">Uploading…</div>
       </div>
     `, async () => {
-      const fileInput = document.getElementById('updateZipFile');
-      if (!fileInput.files.length) { alert('Please select a ZIP file'); return; }
-
-      const file = fileInput.files[0];
-      if (!file.name.toLowerCase().endsWith('.zip')) { alert('Please select a .zip file'); return; }
-
       const progressDiv = document.getElementById('updateProgress');
       const progressBar = document.getElementById('updateProgressBar');
       const statusEl = document.getElementById('updateStatus');
-      progressDiv.style.display = '';
-      statusEl.textContent = 'Uploading…';
-      statusEl.className = 'update-status';
-      progressBar.style.width = '30%';
 
+      // Determine which tab is active
+      const isGithubTab = document.getElementById('updatePanelGithub').style.display !== 'none';
+
+      if (isGithubTab) {
+        // --- GitHub download flow ---
+        const select = document.getElementById('ghVersionSelect');
+        if (!select.value) { alert('Please select a version'); return; }
+
+        progressDiv.style.display = '';
+        statusEl.textContent = 'Downloading from GitHub…';
+        statusEl.className = 'update-status';
+        progressBar.style.width = '20%';
+        progressBar.style.background = '';
+
+        try {
+          progressBar.style.width = '40%';
+          const res = await fetch(apiUrl('/api/update-from-github'), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag: select.value })
+          });
+
+          progressBar.style.width = '80%';
+
+          if (!res.headers.get('content-type')?.includes('application/json')) {
+            throw new Error('Server did not return a valid response.');
+          }
+
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Update failed');
+
+          progressBar.style.width = '100%';
+          statusEl.textContent = 'Update complete! Version: v' + (data.version || 'unknown') + '. Reloading…';
+          statusEl.className = 'update-status success';
+          document.getElementById('modalOk').style.display = 'none';
+          setTimeout(() => { window.location.reload(true); }, 2000);
+        } catch (e) {
+          progressBar.style.width = '100%';
+          progressBar.style.background = 'var(--danger)';
+          statusEl.textContent = 'Update failed: ' + e.message;
+          statusEl.className = 'update-status error';
+        }
+      } else {
+        // --- Manual ZIP upload flow ---
+        const fileInput = document.getElementById('updateZipFile');
+        if (!fileInput.files.length) { alert('Please select a ZIP file'); return; }
+
+        const file = fileInput.files[0];
+        if (!file.name.toLowerCase().endsWith('.zip')) { alert('Please select a .zip file'); return; }
+
+        progressDiv.style.display = '';
+        statusEl.textContent = 'Uploading…';
+        statusEl.className = 'update-status';
+        progressBar.style.width = '30%';
+        progressBar.style.background = '';
+
+        try {
+          const formData = new FormData();
+          formData.append('zipfile', file);
+
+          const res = await fetch(apiUrl('/api/update'), {
+            method: 'POST',
+            credentials: 'include',
+            body: formData
+          });
+
+          progressBar.style.width = '80%';
+
+          if (!res.headers.get('content-type')?.includes('application/json')) {
+            throw new Error('Server did not return a valid response. Check that PHP zip extension is enabled.');
+          }
+
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Update failed');
+
+          progressBar.style.width = '100%';
+          statusEl.textContent = 'Update complete! New version: v' + (data.version || 'unknown') + '. Reloading…';
+          statusEl.className = 'update-status success';
+          document.getElementById('modalOk').style.display = 'none';
+          setTimeout(() => { window.location.reload(true); }, 2000);
+        } catch (e) {
+          progressBar.style.width = '100%';
+          progressBar.style.background = 'var(--danger)';
+          statusEl.textContent = 'Update failed: ' + e.message;
+          statusEl.className = 'update-status error';
+        }
+      }
+    }, 'Update');
+
+    // --- Tab switching logic ---
+    const tabGh = document.getElementById('updateTabGithub');
+    const tabUp = document.getElementById('updateTabUpload');
+    const panelGh = document.getElementById('updatePanelGithub');
+    const panelUp = document.getElementById('updatePanelUpload');
+
+    tabGh.addEventListener('click', () => {
+      panelGh.style.display = ''; panelUp.style.display = 'none';
+      tabGh.style.borderBottomColor = 'var(--primary)'; tabGh.style.opacity = '1';
+      tabUp.style.borderBottomColor = 'transparent';    tabUp.style.opacity = '.6';
+    });
+    tabUp.addEventListener('click', () => {
+      panelUp.style.display = ''; panelGh.style.display = 'none';
+      tabUp.style.borderBottomColor = 'var(--primary)'; tabUp.style.opacity = '1';
+      tabGh.style.borderBottomColor = 'transparent';    tabGh.style.opacity = '.6';
+    });
+
+    // --- Fetch GitHub releases ---
+    const select = document.getElementById('ghVersionSelect');
+    const notesDiv = document.getElementById('ghReleaseNotes');
+    let ghData = null;
+
+    (async () => {
       try {
-        const formData = new FormData();
-        formData.append('zipfile', file);
+        const res = await fetch(apiUrl('/api/github-releases'), { credentials: 'include' });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'HTTP ' + res.status); }
+        ghData = await res.json();
 
-        const res = await fetch(apiUrl('/api/update'), {
-          method: 'POST',
-          credentials: 'include',
-          body: formData
-        });
-
-        progressBar.style.width = '80%';
-
-        if (!res.headers.get('content-type')?.includes('application/json')) {
-          throw new Error('Server did not return a valid response. Check that PHP zip extension is enabled.');
+        select.innerHTML = '';
+        const allVersions = [...(ghData.releases || []), ...(ghData.tags || [])];
+        if (allVersions.length === 0) {
+          select.innerHTML = '<option value="">No versions found</option>';
+          return;
         }
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Update failed');
+        allVersions.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v.tag;
+          let label = v.name || v.tag;
+          if (v.type === 'release' && v.date) label += ' (' + new Date(v.date).toLocaleDateString() + ')';
+          if (v.prerelease) label += ' [pre-release]';
+          if (v.type === 'tag') label += ' [tag]';
+          opt.textContent = label;
+          select.appendChild(opt);
+        });
 
-        progressBar.style.width = '100%';
-        statusEl.textContent = 'Update complete! New version: v' + (data.version || 'unknown') + '. Reloading…';
-        statusEl.className = 'update-status success';
-
-        // Hide the OK button after success
-        document.getElementById('modalOk').style.display = 'none';
-
-        // Reload after brief delay so user sees success message
-        setTimeout(() => { window.location.reload(true); }, 2000);
+        // Show release notes for selected version
+        select.addEventListener('change', () => {
+          const ver = allVersions.find(v => v.tag === select.value);
+          if (ver && ver.body) {
+            notesDiv.textContent = ver.body;
+            notesDiv.style.display = '';
+          } else {
+            notesDiv.style.display = 'none';
+          }
+        });
+        select.dispatchEvent(new Event('change'));
       } catch (e) {
-        progressBar.style.width = '100%';
-        progressBar.style.background = 'var(--danger)';
-        statusEl.textContent = 'Update failed: ' + e.message;
-        statusEl.className = 'update-status error';
+        select.innerHTML = '<option value="">Error: ' + e.message + '</option>';
       }
-    }, 'Upload & Update');
+    })();
   });
 
   // New team
