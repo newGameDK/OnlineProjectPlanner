@@ -639,7 +639,7 @@ function setupEventListeners() {
           if (!res.ok) throw new Error(data.error || 'Update failed');
 
           progressBar.style.width = '100%';
-          statusEl.textContent = 'Update complete! New version: v' + (data.version || 'unknown') + '. Reloading…';
+          statusEl.textContent = 'Update complete! Version: v' + (data.version || 'unknown') + '. Reloading…';
           statusEl.className = 'update-status success';
           document.getElementById('modalOk').style.display = 'none';
           setTimeout(() => { window.location.reload(true); }, 2000);
