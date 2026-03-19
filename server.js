@@ -786,6 +786,142 @@ app.get('/api/backup', requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Version route
+// ---------------------------------------------------------------------------
+
+app.get('/api/version', (_req, res) => {
+  const versionFile = path.join(__dirname, 'public', 'version.json');
+  if (fs.existsSync(versionFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(versionFile, 'utf8'));
+      return res.json(data);
+    } catch { /* fall through */ }
+  }
+  res.json({ version: 'unknown' });
+});
+
+// ---------------------------------------------------------------------------
+// Update route – Upload a ZIP to update the application
+// ---------------------------------------------------------------------------
+
+const multerImported = (() => { try { return require('multer'); } catch { return null; } })();
+
+app.post('/api/update', requireAuth, (req, res) => {
+  // For Node.js deployment, we need multer for file uploads.
+  // If multer is not installed, we return a helpful error.
+  if (!multerImported) {
+    return res.status(501).json({
+      error: 'File upload is not supported on this Node.js deployment. ' +
+             'Install multer (npm install multer) or use the PHP deployment for in-app updates.'
+    });
+  }
+
+  const uploadDir = path.join(DATA_DIR, 'tmp_uploads');
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  const upload = multerImported({ dest: uploadDir }).single('zipfile');
+  upload(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: 'Upload failed: ' + err.message });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    let AdmZip;
+    try { AdmZip = require('adm-zip'); } catch {
+      // Clean up uploaded file
+      fs.unlinkSync(req.file.path);
+      return res.status(501).json({
+        error: 'ZIP handling not available. Install adm-zip (npm install adm-zip) for Node.js updates.'
+      });
+    }
+
+    try {
+      const zip = new AdmZip(req.file.path);
+      const entries = zip.getEntries();
+      const publicDir = path.join(__dirname, 'public');
+
+      // Find the root of the application inside the ZIP
+      let zipBase = '';
+      for (const entry of entries) {
+        const name = entry.entryName;
+        const match = name.match(/^((?:[^/]+\/)*)version\.json$/);
+        if (match) { zipBase = match[1]; break; }
+      }
+      if (!zipBase) {
+        for (const entry of entries) {
+          const name = entry.entryName;
+          const match = name.match(/^((?:[^/]+\/)*)index\.html$/);
+          if (match) { zipBase = match[1]; break; }
+        }
+      }
+
+      // Read new version
+      let newVersion = 'unknown';
+      const versionEntry = zip.getEntry(zipBase + 'version.json');
+      if (versionEntry) {
+        try {
+          const vData = JSON.parse(versionEntry.getData().toString('utf8'));
+          if (vData.version) newVersion = vData.version;
+        } catch { /* ignore */ }
+      }
+
+      const protectedPaths = ['api/data/'];
+      let extracted = 0;
+      let skipped = 0;
+
+      for (const entry of entries) {
+        if (zipBase && !entry.entryName.startsWith(zipBase)) continue;
+        const relativePath = entry.entryName.substring(zipBase.length);
+        if (!relativePath) continue;
+
+        // Path traversal protection: reject paths with ..
+        if (relativePath.includes('..')) { skipped++; continue; }
+
+        // Check protected paths
+        let isProtected = false;
+        for (const pp of protectedPaths) {
+          if (relativePath.startsWith(pp)) { isProtected = true; break; }
+        }
+        if (isProtected) { skipped++; continue; }
+
+        const targetPath = path.join(publicDir, relativePath);
+
+        // Verify resolved path is within publicDir (defense in depth)
+        const resolvedPublic = path.resolve(publicDir);
+        const resolvedTarget = path.resolve(targetPath);
+        if (!resolvedTarget.startsWith(resolvedPublic + path.sep)) {
+          skipped++;
+          continue;
+        }
+
+        if (entry.isDirectory) {
+          if (!fs.existsSync(targetPath)) fs.mkdirSync(targetPath, { recursive: true });
+          continue;
+        }
+
+        const parentDir = path.dirname(targetPath);
+        if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+        fs.writeFileSync(targetPath, entry.getData());
+        extracted++;
+      }
+
+      // Clean up
+      fs.unlinkSync(req.file.path);
+
+      res.json({
+        ok: true,
+        version: newVersion,
+        extracted,
+        skipped,
+        message: `Update applied successfully. ${extracted} files updated, ${skipped} protected files skipped.`
+      });
+    } catch (e) {
+      // Clean up on error
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      res.status(500).json({ error: 'Update failed: ' + e.message });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WebSocket server
 // ---------------------------------------------------------------------------
 

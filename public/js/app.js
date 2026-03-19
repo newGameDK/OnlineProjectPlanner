@@ -511,6 +511,85 @@ function setupEventListeners() {
     }
   });
 
+  // Show version in user panel
+  (async () => {
+    try {
+      const res = await fetch('version.json', { cache: 'no-cache' });
+      if (res.ok) {
+        const data = await res.json();
+        const el = document.getElementById('appVersion');
+        if (el) el.textContent = 'v' + data.version;
+      }
+    } catch {}
+  })();
+
+  // Update app
+  document.getElementById('updateBtn').addEventListener('click', () => {
+    openModal('Update Application', `
+      <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
+        Upload a ZIP file containing the new version of the <strong>public</strong> folder.
+        Your database and all user data will be preserved.
+      </p>
+      <div class="form-group">
+        <label>Select update ZIP file</label>
+        <input type="file" id="updateZipFile" accept=".zip" style="font-size:13px">
+      </div>
+      <div id="updateProgress" class="update-progress" style="display:none">
+        <div class="progress-bar"><div class="progress-bar-fill" id="updateProgressBar" style="width:0%"></div></div>
+        <div class="update-status" id="updateStatus">Uploading…</div>
+      </div>
+    `, async () => {
+      const fileInput = document.getElementById('updateZipFile');
+      if (!fileInput.files.length) { alert('Please select a ZIP file'); return; }
+
+      const file = fileInput.files[0];
+      if (!file.name.toLowerCase().endsWith('.zip')) { alert('Please select a .zip file'); return; }
+
+      const progressDiv = document.getElementById('updateProgress');
+      const progressBar = document.getElementById('updateProgressBar');
+      const statusEl = document.getElementById('updateStatus');
+      progressDiv.style.display = '';
+      statusEl.textContent = 'Uploading…';
+      statusEl.className = 'update-status';
+      progressBar.style.width = '30%';
+
+      try {
+        const formData = new FormData();
+        formData.append('zipfile', file);
+
+        const res = await fetch(apiUrl('/api/update'), {
+          method: 'POST',
+          credentials: 'include',
+          body: formData
+        });
+
+        progressBar.style.width = '80%';
+
+        if (!res.headers.get('content-type')?.includes('application/json')) {
+          throw new Error('Server did not return a valid response. Check that PHP zip extension is enabled.');
+        }
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Update failed');
+
+        progressBar.style.width = '100%';
+        statusEl.textContent = 'Update complete! New version: v' + (data.version || 'unknown') + '. Reloading…';
+        statusEl.className = 'update-status success';
+
+        // Hide the OK button after success
+        document.getElementById('modalOk').style.display = 'none';
+
+        // Reload after brief delay so user sees success message
+        setTimeout(() => { window.location.reload(true); }, 2000);
+      } catch (e) {
+        progressBar.style.width = '100%';
+        progressBar.style.background = 'var(--danger)';
+        statusEl.textContent = 'Update failed: ' + e.message;
+        statusEl.className = 'update-status error';
+      }
+    }, 'Upload & Update');
+  });
+
   // New team
   document.getElementById('newTeamBtn').addEventListener('click', () => {
     openModal('New Team', `
