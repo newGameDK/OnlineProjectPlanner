@@ -801,6 +801,138 @@ app.get('/api/version', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Shared helpers for update routes
+// ---------------------------------------------------------------------------
+
+/**
+ * Make an HTTPS GET request, following redirects (up to 5 hops).
+ * Returns a Promise that resolves to a Buffer (binary) or string.
+ */
+function httpsGet(url, options = {}, _redirectCount = 0) {
+  const https = require('https');
+  const http  = require('http');
+  return new Promise((resolve, reject) => {
+    if (_redirectCount > 5) return reject(new Error('Too many redirects'));
+    const parsedUrl = new URL(url);
+    const transport = parsedUrl.protocol === 'https:' ? https : http;
+    const reqOptions = {
+      hostname: parsedUrl.hostname,
+      path:     parsedUrl.pathname + parsedUrl.search,
+      headers:  { 'User-Agent': 'OnlineProjectPlanner', 'Accept': 'application/vnd.github.v3+json', ...options.headers }
+    };
+    transport.get(reqOptions, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        return httpsGet(response.headers.location, options, _redirectCount + 1).then(resolve).catch(reject);
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        return reject(new Error('GitHub API returned HTTP ' + response.statusCode));
+      }
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        resolve(options.encoding === 'binary' ? buf : buf.toString('utf8'));
+      });
+      response.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+/**
+ * Read the GitHub repository identifier from public/version.json.
+ */
+function getGitHubRepo() {
+  const versionFile = path.join(__dirname, 'public', 'version.json');
+  if (fs.existsSync(versionFile)) {
+    try {
+      const vData = JSON.parse(fs.readFileSync(versionFile, 'utf8'));
+      if (vData.repository) return vData.repository;
+    } catch { /* ignore */ }
+  }
+  return 'newGameDK/OnlineProjectPlanner';
+}
+
+/**
+ * Extract a ZIP file into the public/ directory, protecting api/data/.
+ * Returns { ok, version, extracted, skipped, message }.
+ */
+function applyZipUpdate(zipFilePath) {
+  const AdmZip = require('adm-zip');  // caller must guard availability
+  const zip     = new AdmZip(zipFilePath);
+  const entries = zip.getEntries();
+  const publicDir = path.join(__dirname, 'public');
+
+  // Find the root of the application inside the ZIP
+  let zipBase = '';
+  for (const entry of entries) {
+    const name = entry.entryName;
+    const match = name.match(/^((?:[^/]+\/)*)version\.json$/);
+    if (match) { zipBase = match[1]; break; }
+  }
+  if (!zipBase) {
+    for (const entry of entries) {
+      const name = entry.entryName;
+      const match = name.match(/^((?:[^/]+\/)*)index\.html$/);
+      if (match) { zipBase = match[1]; break; }
+    }
+  }
+
+  // Read new version
+  let newVersion = 'unknown';
+  const versionEntry = zip.getEntry(zipBase + 'version.json');
+  if (versionEntry) {
+    try {
+      const vData = JSON.parse(versionEntry.getData().toString('utf8'));
+      if (vData.version) newVersion = vData.version;
+    } catch { /* ignore */ }
+  }
+
+  const protectedPaths = ['api/data/'];
+  let extracted = 0;
+  let skipped = 0;
+
+  for (const entry of entries) {
+    if (zipBase && !entry.entryName.startsWith(zipBase)) continue;
+    const relativePath = entry.entryName.substring(zipBase.length);
+    if (!relativePath) continue;
+
+    // Path traversal protection: reject paths with ..
+    if (relativePath.includes('..')) { skipped++; continue; }
+
+    // Check protected paths
+    let isProtected = false;
+    for (const pp of protectedPaths) {
+      if (relativePath.startsWith(pp)) { isProtected = true; break; }
+    }
+    if (isProtected) { skipped++; continue; }
+
+    const targetPath = path.join(publicDir, relativePath);
+
+    // Verify resolved path is within publicDir (defense in depth)
+    const resolvedPublic = path.resolve(publicDir);
+    const resolvedTarget = path.resolve(targetPath);
+    if (!resolvedTarget.startsWith(resolvedPublic + path.sep)) {
+      skipped++;
+      continue;
+    }
+
+    if (entry.isDirectory) {
+      if (!fs.existsSync(targetPath)) fs.mkdirSync(targetPath, { recursive: true });
+      continue;
+    }
+
+    const parentDir = path.dirname(targetPath);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+    fs.writeFileSync(targetPath, entry.getData());
+    extracted++;
+  }
+
+  return { ok: true, version: newVersion, extracted, skipped };
+}
+
+// ---------------------------------------------------------------------------
 // Update route – Upload a ZIP to update the application
 // ---------------------------------------------------------------------------
 
@@ -823,9 +955,7 @@ app.post('/api/update', requireAuth, (req, res) => {
     if (err) return res.status(400).json({ error: 'Upload failed: ' + err.message });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    let AdmZip;
-    try { AdmZip = require('adm-zip'); } catch {
-      // Clean up uploaded file
+    try { require('adm-zip'); } catch {
       fs.unlinkSync(req.file.path);
       return res.status(501).json({
         error: 'ZIP handling not available. Install adm-zip (npm install adm-zip) for Node.js updates.'
@@ -833,92 +963,96 @@ app.post('/api/update', requireAuth, (req, res) => {
     }
 
     try {
-      const zip = new AdmZip(req.file.path);
-      const entries = zip.getEntries();
-      const publicDir = path.join(__dirname, 'public');
-
-      // Find the root of the application inside the ZIP
-      let zipBase = '';
-      for (const entry of entries) {
-        const name = entry.entryName;
-        const match = name.match(/^((?:[^/]+\/)*)version\.json$/);
-        if (match) { zipBase = match[1]; break; }
-      }
-      if (!zipBase) {
-        for (const entry of entries) {
-          const name = entry.entryName;
-          const match = name.match(/^((?:[^/]+\/)*)index\.html$/);
-          if (match) { zipBase = match[1]; break; }
-        }
-      }
-
-      // Read new version
-      let newVersion = 'unknown';
-      const versionEntry = zip.getEntry(zipBase + 'version.json');
-      if (versionEntry) {
-        try {
-          const vData = JSON.parse(versionEntry.getData().toString('utf8'));
-          if (vData.version) newVersion = vData.version;
-        } catch { /* ignore */ }
-      }
-
-      const protectedPaths = ['api/data/'];
-      let extracted = 0;
-      let skipped = 0;
-
-      for (const entry of entries) {
-        if (zipBase && !entry.entryName.startsWith(zipBase)) continue;
-        const relativePath = entry.entryName.substring(zipBase.length);
-        if (!relativePath) continue;
-
-        // Path traversal protection: reject paths with ..
-        if (relativePath.includes('..')) { skipped++; continue; }
-
-        // Check protected paths
-        let isProtected = false;
-        for (const pp of protectedPaths) {
-          if (relativePath.startsWith(pp)) { isProtected = true; break; }
-        }
-        if (isProtected) { skipped++; continue; }
-
-        const targetPath = path.join(publicDir, relativePath);
-
-        // Verify resolved path is within publicDir (defense in depth)
-        const resolvedPublic = path.resolve(publicDir);
-        const resolvedTarget = path.resolve(targetPath);
-        if (!resolvedTarget.startsWith(resolvedPublic + path.sep)) {
-          skipped++;
-          continue;
-        }
-
-        if (entry.isDirectory) {
-          if (!fs.existsSync(targetPath)) fs.mkdirSync(targetPath, { recursive: true });
-          continue;
-        }
-
-        const parentDir = path.dirname(targetPath);
-        if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
-
-        fs.writeFileSync(targetPath, entry.getData());
-        extracted++;
-      }
-
-      // Clean up
+      const result = applyZipUpdate(req.file.path);
       fs.unlinkSync(req.file.path);
-
       res.json({
-        ok: true,
-        version: newVersion,
-        extracted,
-        skipped,
-        message: `Update applied successfully. ${extracted} files updated, ${skipped} protected files skipped.`
+        ...result,
+        message: `Update applied successfully. ${result.extracted} files updated, ${result.skipped} protected files skipped.`
       });
     } catch (e) {
-      // Clean up on error
       if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       res.status(500).json({ error: 'Update failed: ' + e.message });
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// GitHub releases – list available versions from GitHub
+// ---------------------------------------------------------------------------
+
+app.get('/api/github-releases', requireAuth, async (_req, res) => {
+  try {
+    const repo = getGitHubRepo();
+    const [releasesRaw, tagsRaw] = await Promise.all([
+      httpsGet('https://api.github.com/repos/' + repo + '/releases'),
+      httpsGet('https://api.github.com/repos/' + repo + '/tags')
+    ]);
+
+    const releases = JSON.parse(releasesRaw).map(r => ({
+      tag:        r.tag_name,
+      name:       r.name || r.tag_name,
+      body:       r.body || '',
+      date:       r.published_at,
+      prerelease: r.prerelease,
+      type:       'release'
+    }));
+
+    const releaseTags = new Set(releases.map(r => r.tag));
+    const tags = JSON.parse(tagsRaw)
+      .filter(t => !releaseTags.has(t.name))
+      .map(t => ({ tag: t.name, name: t.name, type: 'tag' }));
+
+    res.json({ releases, tags, repository: repo });
+  } catch (e) {
+    res.status(502).json({ error: 'Failed to fetch from GitHub: ' + e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Update from GitHub – download a specific version and apply it
+// ---------------------------------------------------------------------------
+
+app.post('/api/update-from-github', requireAuth, express.json(), async (req, res) => {
+  try {
+    const tag = req.body && req.body.tag;
+    if (!tag || typeof tag !== 'string') {
+      return res.status(400).json({ error: 'No version tag specified' });
+    }
+    // Allow typical tag/branch chars: alphanumeric, dots, dashes, underscores, slashes
+    if (!/^[a-zA-Z0-9._\-\/]+$/.test(tag) || tag.includes('..')) {
+      return res.status(400).json({ error: 'Invalid version tag format' });
+    }
+
+    try { require('adm-zip'); } catch {
+      return res.status(501).json({
+        error: 'ZIP handling not available. Install adm-zip (npm install adm-zip) for GitHub updates.'
+      });
+    }
+
+    const repo = getGitHubRepo();
+    const zipUrl = 'https://api.github.com/repos/' + repo + '/zipball/' + encodeURIComponent(tag);
+    const zipBuffer = await httpsGet(zipUrl, { encoding: 'binary' });
+
+    // Save to a temp file so adm-zip can read it
+    const tmpDir = path.join(DATA_DIR, 'tmp_uploads');
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    const tmpFile = path.join(tmpDir, 'github-update-' + Date.now() + '.zip');
+    fs.writeFileSync(tmpFile, zipBuffer);
+
+    try {
+      const result = applyZipUpdate(tmpFile);
+      fs.unlinkSync(tmpFile);
+      res.json({
+        ...result,
+        message: 'Update applied from GitHub (' + tag + '). ' + result.extracted + ' files updated, ' + result.skipped + ' protected files skipped.'
+      });
+    } catch (e) {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      throw e;
+    }
+  } catch (e) {
+    res.status(500).json({ error: 'GitHub update failed: ' + e.message });
+  }
 });
 
 // ---------------------------------------------------------------------------
