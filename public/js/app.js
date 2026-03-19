@@ -744,11 +744,10 @@ function getUserColor(userId, variation) {
 
 /**
  * Returns true if the given hex colour is "dark" (relative luminance < 0.45).
- * Used to decide whether overlaid text should be white.
+ * Uses ITU-R BT.601 luma coefficients for perceived brightness.
  */
 function isColorDark(hex) {
   const [r, g, b] = hexToRgb(hex);
-  // Relative luminance (sRGB)
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return lum < 0.45;
 }
