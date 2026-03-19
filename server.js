@@ -751,6 +751,41 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Backup route – export all user data as JSON
+// ---------------------------------------------------------------------------
+
+app.get('/api/backup', requireAuth, (req, res) => {
+  const userId = req.session.userId;
+  const user = stmts.getUserById.get(userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const teams = stmts.getUserTeams.all(userId);
+  const backup = {
+    version: 1,
+    exported_at: new Date().toISOString(),
+    user: sanitizeUser(user),
+    teams: teams.map(team => {
+      const members = stmts.getTeamMembers.all(team.id);
+      const projects = stmts.getTeamProjects.all(team.id);
+
+      return {
+        ...team,
+        members: members.map(m => ({ id: m.id, username: m.username, email: m.email, base_color: m.base_color, role: m.role })),
+        projects: projects.map(proj => {
+          const entries      = stmts.getProjectGantt.all(proj.id);
+          const todos        = stmts.getProjectTodos.all(proj.id);
+          const dependencies = stmts.getProjectDeps.all(proj.id);
+          return { ...proj, entries, todos, dependencies };
+        }),
+      };
+    }),
+  };
+
+  res.setHeader('Content-Disposition', 'attachment; filename="planner_backup_' + new Date().toISOString().slice(0,10) + '.json"');
+  res.json(backup);
+});
+
+// ---------------------------------------------------------------------------
 // WebSocket server
 // ---------------------------------------------------------------------------
 

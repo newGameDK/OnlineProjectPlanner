@@ -492,6 +492,25 @@ function setupEventListeners() {
     window.location.href = 'index.html';
   });
 
+  // Backup
+  document.getElementById('backupBtn').addEventListener('click', async () => {
+    try {
+      const res = await fetch(apiUrl('/api/backup'), { credentials: 'include' });
+      if (!res.ok) throw new Error('Backup failed');
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'planner_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Backup failed: ' + e.message);
+    }
+  });
+
   // New team
   document.getElementById('newTeamBtn').addEventListener('click', () => {
     openModal('New Team', `
@@ -735,43 +754,176 @@ function isColorDark(hex) {
 }
 
 // ==========================================================================
-// Export: CSV
+// Export: Excel (XLSX) with visual Gantt chart
 // ==========================================================================
 
-function exportCSV() {
+async function exportCSV() {
   if (!state.currentProject) return alert('Open a project first.');
+  if (typeof ExcelJS === 'undefined') return alert('ExcelJS library not loaded. Check your internet connection.');
 
   const members = Object.values(state.members).flat();
-  const rows = [['Title', 'Parent', 'Start Date', 'End Date', 'Hours Estimate', 'Assignee', 'Notes', 'Folder URL']];
-
-  // Build a quick title lookup for parent display
   const titleById = {};
   state.ganttEntries.forEach(e => { titleById[e.id] = e.title; });
 
-  state.ganttEntries.forEach(e => {
-    const member = members.find(m => m.id === e.user_id);
-    rows.push([
-      e.title,
-      e.parent_id ? (titleById[e.parent_id] || e.parent_id) : '',
-      e.start_date,
-      e.end_date,
-      e.hours_estimate || 0,
+  // Build a flat list with hierarchy: parents first, then children indented below
+  const flatRows = [];
+  function collectEntries(parentId, depth) {
+    const children = state.ganttEntries.filter(e => (e.parent_id || null) === parentId);
+    children.forEach(e => {
+      flatRows.push({ entry: e, depth });
+      collectEntries(e.id, depth + 1);
+    });
+  }
+  collectEntries(null, 0);
+
+  if (!flatRows.length) return alert('No entries to export.');
+
+  // Determine chart date range
+  let earliest = null, latest = null;
+  flatRows.forEach(({ entry }) => {
+    const s = new Date(entry.start_date + 'T00:00:00');
+    const e = new Date(entry.end_date + 'T00:00:00');
+    if (!earliest || s < earliest) earliest = s;
+    if (!latest || e > latest) latest = e;
+  });
+  // Add padding
+  earliest.setDate(earliest.getDate() - 1);
+  latest.setDate(latest.getDate() + 1);
+
+  // Generate date columns
+  const dateCols = [];
+  const cur = new Date(earliest);
+  while (cur <= latest) {
+    dateCols.push(new Date(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const DATA_COLS = 6; // Title, Parent, Start, End, Hours, Assignee
+  const CHART_START_COL = DATA_COLS + 1; // 1-indexed
+
+  const workbook = new ExcelJS.Workbook();
+  const ws = workbook.addWorksheet('Gantt Chart');
+
+  // --- Header Row ---
+  const headerRow = ['Title', 'Parent', 'Start Date', 'End Date', 'Hours', 'Assignee'];
+  dateCols.forEach(d => {
+    const dayStr = String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0');
+    headerRow.push(dayStr);
+  });
+  ws.addRow(headerRow);
+
+  // Style header
+  const hRow = ws.getRow(1);
+  hRow.font = { bold: true, size: 10 };
+  hRow.alignment = { horizontal: 'center', vertical: 'middle' };
+  hRow.height = 22;
+  for (let c = 1; c <= headerRow.length; c++) {
+    const cell = hRow.getCell(c);
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
+    cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FF000000' } } };
+  }
+
+  // Set column widths
+  ws.getColumn(1).width = 30; // Title
+  ws.getColumn(2).width = 18; // Parent
+  ws.getColumn(3).width = 12; // Start
+  ws.getColumn(4).width = 12; // End
+  ws.getColumn(5).width = 8;  // Hours
+  ws.getColumn(6).width = 14; // Assignee
+  for (let i = 0; i < dateCols.length; i++) {
+    ws.getColumn(CHART_START_COL + i).width = 3.5;
+  }
+
+  // --- Data Rows with Gantt bars ---
+  flatRows.forEach(({ entry, depth }) => {
+    const member = members.find(m => m.id === entry.user_id);
+    const parentTitle = entry.parent_id ? (titleById[entry.parent_id] || '') : '';
+    const indent = depth > 0 ? '  '.repeat(depth) : '';
+
+    const rowData = [
+      indent + entry.title,
+      parentTitle,
+      entry.start_date,
+      entry.end_date,
+      entry.hours_estimate || 0,
       member ? member.username : '',
-      e.notes || '',
-      e.folder_url || '',
-    ]);
+    ];
+
+    // Fill date columns with empty strings
+    dateCols.forEach(() => rowData.push(''));
+
+    ws.addRow(rowData);
+    const excelRow = ws.getRow(ws.rowCount);
+    excelRow.height = 20;
+
+    // Get bar color
+    const color = getUserColor(entry.user_id, entry.color_variation);
+    const argbColor = 'FF' + color.replace('#', '');
+    const fontColor = isColorDark(color) ? 'FFFFFFFF' : 'FF000000';
+
+    // Style depth with indentation and font
+    if (depth > 0) {
+      excelRow.getCell(1).font = { size: 10, italic: depth > 1 };
+    } else {
+      excelRow.getCell(1).font = { bold: true, size: 10 };
+    }
+
+    // Color the Gantt bar cells
+    const startDate = new Date(entry.start_date + 'T00:00:00');
+    const endDate = new Date(entry.end_date + 'T00:00:00');
+
+    dateCols.forEach((d, i) => {
+      const colIdx = CHART_START_COL + i;
+      const cell = excelRow.getCell(colIdx);
+
+      if (d >= startDate && d <= endDate) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argbColor } };
+        // Show title on the first day of the bar
+        if (d.getTime() === startDate.getTime()) {
+          cell.value = entry.title;
+          cell.font = { size: 8, color: { argb: fontColor } };
+        }
+      }
+    });
+
+    // Add notes as comment on title cell if present
+    if (entry.notes) {
+      excelRow.getCell(1).note = entry.notes;
+    }
+
+    // Light alternating row background for data columns
+    if (ws.rowCount % 2 === 0) {
+      for (let c = 1; c <= DATA_COLS; c++) {
+        const cell = excelRow.getCell(c);
+        if (!cell.fill || !cell.fill.fgColor) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        }
+      }
+    }
   });
 
-  const csv = rows.map(row =>
-    row.map(cell => '"' + String(cell).replace(/"/g, '""') + '"').join(',')
-  ).join('\r\n');
+  // Add borders to data section
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r);
+    for (let c = 1; c <= DATA_COLS; c++) {
+      row.getCell(c).border = {
+        right: c === DATA_COLS ? { style: 'medium', color: { argb: 'FF000000' } } : { style: 'thin', color: { argb: 'FFE0E0E0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+      };
+    }
+  }
 
-  // UTF-8 BOM so Excel opens it with correct encoding
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  // Freeze panes: freeze header row and data columns
+  ws.views = [{ state: 'frozen', xSplit: DATA_COLS, ySplit: 1 }];
+
+  // --- Generate and download ---
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
-  a.download = (state.currentProject.name || 'project').replace(/[^a-z0-9_\-]/gi, '_') + '.csv';
+  a.download = (state.currentProject.name || 'project').replace(/[^a-z0-9_\-]/gi, '_') + '.xlsx';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

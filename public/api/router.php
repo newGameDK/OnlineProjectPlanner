@@ -799,6 +799,68 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
 }
 
 // =========================================================================
+// BACKUP ROUTE
+// =========================================================================
+
+if ($seg1 === 'backup' && $method === 'GET') {
+    require_auth();
+    $userId = $_SESSION['user_id'];
+
+    $s = $db->prepare('SELECT * FROM users WHERE id=?');
+    $s->execute([$userId]);
+    $user = $s->fetch();
+    if (!$user) json_out(['error' => 'User not found'], 404);
+
+    $s = $db->prepare('SELECT t.*, tm.role FROM teams t JOIN team_members tm ON t.id=tm.team_id WHERE tm.user_id=? ORDER BY t.created_at ASC');
+    $s->execute([$userId]);
+    $teams = $s->fetchAll();
+
+    $result = [
+        'version'     => 1,
+        'exported_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        'user'        => sanitize_user($user),
+        'teams'       => [],
+    ];
+
+    foreach ($teams as $team) {
+        $s = $db->prepare('SELECT u.id, u.username, u.email, u.base_color, tm.role FROM team_members tm JOIN users u ON tm.user_id=u.id WHERE tm.team_id=?');
+        $s->execute([$team['id']]);
+        $members = $s->fetchAll();
+
+        $s = $db->prepare('SELECT * FROM projects WHERE team_id=? ORDER BY created_at ASC');
+        $s->execute([$team['id']]);
+        $projects = $s->fetchAll();
+
+        $projectsOut = [];
+        foreach ($projects as $proj) {
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC');
+            $s->execute([$proj['id']]);
+            $entries = $s->fetchAll();
+
+            $s = $db->prepare('SELECT * FROM todo_items WHERE project_id=? ORDER BY position ASC, created_at ASC');
+            $s->execute([$proj['id']]);
+            $todos = $s->fetchAll();
+
+            $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE project_id=?');
+            $s->execute([$proj['id']]);
+            $deps = $s->fetchAll();
+
+            $proj['entries']      = $entries;
+            $proj['todos']        = $todos;
+            $proj['dependencies'] = $deps;
+            $projectsOut[]        = $proj;
+        }
+
+        $team['members']  = $members;
+        $team['projects'] = $projectsOut;
+        $result['teams'][] = $team;
+    }
+
+    header('Content-Disposition: attachment; filename="planner_backup_' . date('Y-m-d') . '.json"');
+    json_out($result);
+}
+
+// =========================================================================
 // 404 – No route matched
 // =========================================================================
 
