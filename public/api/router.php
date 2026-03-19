@@ -861,6 +861,160 @@ if ($seg1 === 'backup' && $method === 'GET') {
 }
 
 // =========================================================================
+// VERSION ROUTE
+// =========================================================================
+
+if ($seg1 === 'version' && $method === 'GET') {
+    $versionFile = dirname(__DIR__) . '/version.json';
+    if (file_exists($versionFile)) {
+        $data = json_decode(file_get_contents($versionFile), true);
+        json_out($data ?: ['version' => 'unknown']);
+    }
+    json_out(['version' => 'unknown']);
+}
+
+// =========================================================================
+// UPDATE ROUTE – Upload a ZIP to update the application
+// =========================================================================
+
+if ($seg1 === 'update' && $method === 'POST') {
+    require_auth();
+
+    // Check that the PHP zip extension is available
+    if (!class_exists('ZipArchive')) {
+        json_out(['error' => 'PHP zip extension is not installed on this server'], 500);
+    }
+
+    // Validate uploaded file
+    if (empty($_FILES['zipfile']) || $_FILES['zipfile']['error'] !== UPLOAD_ERR_OK) {
+        $code = isset($_FILES['zipfile']) ? $_FILES['zipfile']['error'] : -1;
+        json_out(['error' => 'No file uploaded or upload error (code: ' . $code . ')'], 400);
+    }
+
+    $uploadedFile = $_FILES['zipfile']['tmp_name'];
+    $publicDir = dirname(__DIR__); // The public/ directory
+
+    // Open and validate the ZIP
+    $zip = new ZipArchive();
+    $openResult = $zip->open($uploadedFile);
+    if ($openResult !== true) {
+        json_out(['error' => 'Failed to open ZIP file (code: ' . $openResult . ')'], 400);
+    }
+
+    // Find the root of the application inside the ZIP.
+    // Look for version.json or index.html to determine the base path.
+    $zipBase = '';
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = $zip->getNameIndex($i);
+        // Check for version.json at various depths
+        if (preg_match('#^((?:[^/]+/)*)version\.json$#', $name, $m)) {
+            $zipBase = $m[1];
+            break;
+        }
+    }
+    // Fallback: look for index.html
+    if ($zipBase === '') {
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if (preg_match('#^((?:[^/]+/)*)index\.html$#', $name, $m)) {
+                $zipBase = $m[1];
+                break;
+            }
+        }
+    }
+
+    // Read new version from the ZIP
+    $newVersion = 'unknown';
+    $versionContent = $zip->getFromName($zipBase . 'version.json');
+    if ($versionContent !== false) {
+        $vData = json_decode($versionContent, true);
+        if (isset($vData['version'])) $newVersion = $vData['version'];
+    }
+
+    // Protected paths that must NOT be overwritten (relative to public/)
+    $protectedPaths = ['api/data/'];
+
+    // Extract files, skipping protected paths
+    $extracted = 0;
+    $skipped   = 0;
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $entryName = $zip->getNameIndex($i);
+
+        // Skip entries outside our detected base
+        if ($zipBase !== '' && strpos($entryName, $zipBase) !== 0) continue;
+
+        // Get the relative path within the application
+        $relativePath = substr($entryName, strlen($zipBase));
+        if ($relativePath === '' || $relativePath === false) continue;
+
+        // Path traversal protection: reject paths with ..
+        if (strpos($relativePath, '..') !== false) { $skipped++; continue; }
+
+        // Check if this path is protected
+        $isProtected = false;
+        foreach ($protectedPaths as $pp) {
+            if (strpos($relativePath, $pp) === 0) {
+                $isProtected = true;
+                break;
+            }
+        }
+        if ($isProtected) { $skipped++; continue; }
+
+        $targetPath = $publicDir . '/' . $relativePath;
+
+        // Verify resolved path is within publicDir (defense in depth)
+        $resolvedTarget = realpath(dirname($targetPath));
+        if ($resolvedTarget === false) {
+            // Parent dir doesn't exist yet – check the path string
+            $normalized = str_replace('\\', '/', $targetPath);
+            if (strpos($normalized, str_replace('\\', '/', $publicDir)) !== 0) {
+                $skipped++;
+                continue;
+            }
+        } elseif (strpos($resolvedTarget, realpath($publicDir)) !== 0) {
+            $skipped++;
+            continue;
+        }
+
+        // If entry is a directory, create it
+        if (substr($entryName, -1) === '/') {
+            if (!is_dir($targetPath)) {
+                mkdir($targetPath, 0755, true);
+            }
+            continue;
+        }
+
+        // Ensure parent directory exists
+        $parentDir = dirname($targetPath);
+        if (!is_dir($parentDir)) {
+            mkdir($parentDir, 0755, true);
+        }
+
+        // Extract file content and write it
+        $content = $zip->getFromIndex($i);
+        if ($content !== false) {
+            file_put_contents($targetPath, $content);
+            $extracted++;
+        }
+    }
+
+    $zip->close();
+
+    // Clean up uploaded file
+    if (file_exists($uploadedFile)) {
+        unlink($uploadedFile);
+    }
+
+    json_out([
+        'ok'        => true,
+        'version'   => $newVersion,
+        'extracted' => $extracted,
+        'skipped'   => $skipped,
+        'message'   => 'Update applied successfully. ' . $extracted . ' files updated, ' . $skipped . ' protected files skipped.'
+    ]);
+}
+
+// =========================================================================
 // 404 – No route matched
 // =========================================================================
 
