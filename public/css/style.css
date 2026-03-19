@@ -326,6 +326,12 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   min-height: 32px;
 }
 .gantt-breadcrumb:empty { display: none; }
+.gantt-bc-back {
+  background: var(--primary); color: #fff; border: none; border-radius: var(--radius-sm);
+  padding: 2px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+  margin-right: 6px; transition: filter .15s;
+}
+.gantt-bc-back:hover { filter: brightness(0.85); }
 .gantt-bc-item { cursor: pointer; color: var(--primary); font-weight: 600; }
 .gantt-bc-item:hover { text-decoration: underline; }
 .gantt-bc-sep { color: var(--text-muted); }
@@ -560,6 +566,13 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   body.print-gantt .gantt-hours-panel { overflow: visible !important; height: auto !important; max-height: none !important; }
 
   body.print-gantt .gantt-row-bg { page-break-inside: avoid; }
+
+  /* Preserve background colors and images when printing */
+  body.print-gantt * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
 }
 
 /* =====================================================================

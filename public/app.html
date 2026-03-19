@@ -45,6 +45,7 @@
       <label>Base Color</label>
       <div class="color-picker-row" id="baseColorPicker"></div>
     </div>
+    <button id="backupBtn" class="btn btn-secondary btn-full" style="margin-bottom:8px">💾 Backup</button>
     <button id="logoutBtn" class="btn btn-danger btn-full">Logout</button>
   </div>
 
@@ -119,7 +120,7 @@
             <span class="toolbar-label">h/month</span>
           </div>
           <div class="toolbar-group" style="margin-left:auto">
-            <button id="exportCsvBtn" class="btn btn-secondary btn-sm" title="Export to Excel-compatible CSV">📊 Export</button>
+            <button id="exportCsvBtn" class="btn btn-secondary btn-sm" title="Export to Excel with visual Gantt chart">📊 Export Excel</button>
             <button id="exportPdfBtn" class="btn btn-secondary btn-sm" title="Print / Save as PDF (A4)">🖨 Print PDF</button>
             <button id="shareBtn" class="btn btn-secondary btn-sm" title="Share plan with a read-only link">🔗 Share</button>
           </div>
@@ -214,6 +215,9 @@
     <ul id="contextMenuList"></ul>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"
+          integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb"
+          crossorigin="anonymous"></script>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
   <script src="js/gantt.js"></script>
