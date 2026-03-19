@@ -963,31 +963,22 @@ if ($seg1 === 'update' && $method === 'POST') {
         $targetPath = $publicDir . '/' . $relativePath;
 
         // Verify resolved path is within publicDir (defense in depth)
-        $resolvedTarget = realpath(dirname($targetPath));
-        if ($resolvedTarget === false) {
-            // Parent dir doesn't exist yet – check the path string
-            $normalized = str_replace('\\', '/', $targetPath);
-            if (strpos($normalized, str_replace('\\', '/', $publicDir)) !== 0) {
-                $skipped++;
-                continue;
-            }
-        } elseif (strpos($resolvedTarget, realpath($publicDir)) !== 0) {
+        // Ensure parent directory exists first so realpath() can resolve it
+        $parentDir = dirname($targetPath);
+        if (!is_dir($parentDir)) {
+            mkdir($parentDir, 0755, true);
+        }
+        $resolvedTarget = realpath($parentDir);
+        $resolvedPublic = realpath($publicDir);
+        if ($resolvedTarget === false || $resolvedPublic === false ||
+            (strpos($resolvedTarget, $resolvedPublic . DIRECTORY_SEPARATOR) !== 0 && $resolvedTarget !== $resolvedPublic)) {
             $skipped++;
             continue;
         }
 
         // If entry is a directory, create it
         if (substr($entryName, -1) === '/') {
-            if (!is_dir($targetPath)) {
-                mkdir($targetPath, 0755, true);
-            }
-            continue;
-        }
-
-        // Ensure parent directory exists
-        $parentDir = dirname($targetPath);
-        if (!is_dir($parentDir)) {
-            mkdir($parentDir, 0755, true);
+            continue; // Already created above
         }
 
         // Extract file content and write it

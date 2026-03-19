@@ -816,7 +816,9 @@ app.post('/api/update', requireAuth, (req, res) => {
     });
   }
 
-  const upload = multerImported({ dest: path.join(DATA_DIR, 'tmp_uploads') }).single('zipfile');
+  const uploadDir = path.join(DATA_DIR, 'tmp_uploads');
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  const upload = multerImported({ dest: uploadDir }).single('zipfile');
   upload(req, res, async (err) => {
     if (err) return res.status(400).json({ error: 'Upload failed: ' + err.message });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -884,7 +886,7 @@ app.post('/api/update', requireAuth, (req, res) => {
         // Verify resolved path is within publicDir (defense in depth)
         const resolvedPublic = path.resolve(publicDir);
         const resolvedTarget = path.resolve(targetPath);
-        if (!resolvedTarget.startsWith(resolvedPublic + path.sep) && resolvedTarget !== resolvedPublic) {
+        if (!resolvedTarget.startsWith(resolvedPublic + path.sep)) {
           skipped++;
           continue;
         }
