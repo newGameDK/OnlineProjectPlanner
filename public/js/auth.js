@@ -25,10 +25,12 @@ if (location.protocol !== 'file:') {
       if (!data || !data.ok) throw new Error();
     } catch {
       const safeBase = API_BASE.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      const diagUrl = apiUrl('/api/diag').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const hint = API_BASE && API_BASE !== '.'
         ? 'Check that the backend server at <code>' + safeBase + '</code> is running.'
-        : 'The page loaded, but the API is not responding. ' +
-          'Make sure the <code>api/</code> folder was uploaded and that PHP is enabled on your hosting.';
+        : 'The page loaded, but the PHP API is not responding. ' +
+          'Make sure the <code>api/</code> folder was uploaded and PHP is enabled. ' +
+          'For details open <a href="' + diagUrl + '" target="_blank">api/diag</a> in your browser.';
       document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
         '<div class="file-protocol-warning">' +
         '<strong>⚠ Cannot reach the backend API</strong><br>' +

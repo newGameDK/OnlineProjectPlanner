@@ -5,10 +5,23 @@
 
 $DATA_DIR = __DIR__ . '/data';
 if (!is_dir($DATA_DIR)) {
-    mkdir($DATA_DIR, 0750, true);
+    mkdir($DATA_DIR, 0755, true);
 }
 
-$db = new PDO('sqlite:' . $DATA_DIR . '/planner.db');
+if (!extension_loaded('pdo_sqlite')) {
+    http_response_code(503);
+    echo json_encode(['error' => 'SQLite PDO extension is not available on this server. Please enable pdo_sqlite in your PHP configuration.']);
+    exit;
+}
+
+try {
+    $db = new PDO('sqlite:' . $DATA_DIR . '/planner.db');
+} catch (Exception $e) {
+    http_response_code(503);
+    echo json_encode(['error' => 'Cannot open database: ' . $e->getMessage()]);
+    exit;
+}
+
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 $db->exec('PRAGMA journal_mode = WAL');

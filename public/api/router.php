@@ -6,13 +6,11 @@
 // It is a direct port of the Node.js server.js endpoints.
 // =========================================================================
 
-require_once __DIR__ . '/db.php';
-
-session_start();
+// Always send JSON content-type first so error responses are parseable.
 header('Content-Type: application/json; charset=utf-8');
 
 // -------------------------------------------------------------------------
-// Request parsing
+// Request parsing (done early so health/diag can run before DB init)
 // -------------------------------------------------------------------------
 
 $route  = isset($_GET['_route']) ? trim($_GET['_route'], '/') : '';
@@ -24,9 +22,54 @@ if ($method === 'OPTIONS') {
     exit;
 }
 
+// =========================================================================
+// HEALTH CHECK  (runs before DB init – always available)
+// =========================================================================
+if ($route === 'health' && $method === 'GET') {
+    echo json_encode(['ok' => true]);
+    exit;
+}
+
+// =========================================================================
+// DIAGNOSTICS  (runs before DB init – helps debug hosting issues)
+// =========================================================================
+if ($route === 'diag' && $method === 'GET') {
+    $dataDir  = __DIR__ . '/data';
+    $dbFile   = $dataDir . '/planner.db';
+    echo json_encode([
+        'php_version'       => PHP_VERSION,
+        'pdo_available'     => extension_loaded('pdo'),
+        'pdo_sqlite'        => extension_loaded('pdo_sqlite'),
+        'data_dir_exists'   => is_dir($dataDir),
+        'data_dir_writable' => is_writable($dataDir),
+        'db_file_exists'    => file_exists($dbFile),
+        'db_file_writable'  => file_exists($dbFile) && is_writable($dbFile),
+    ]);
+    exit;
+}
+
+// =========================================================================
+// DATABASE INIT  (required for all other routes)
+// =========================================================================
+
+require_once __DIR__ . '/db.php';
+
+// -------------------------------------------------------------------------
+// Session configuration
+// -------------------------------------------------------------------------
+
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path'     => '/',
+    'secure'   => (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
+session_start();
+
 // Parse JSON body
 $body = [];
-if ($method === 'POST' || $method === 'PUT') {
+if ($method === 'POST' || $method === 'PUT' || $method === 'PATCH') {
     $raw = file_get_contents('php://input');
     if ($raw) {
         $decoded = json_decode($raw, true);
@@ -65,13 +108,6 @@ $BASE_COLORS = [
     '#2196F3','#4CAF50','#FF9800','#9C27B0','#F44336',
     '#009688','#E91E63','#3F51B5','#795548','#00BCD4'
 ];
-
-// =========================================================================
-// HEALTH CHECK
-// =========================================================================
-if ($route === 'health' && $method === 'GET') {
-    json_out(['ok' => true]);
-}
 
 // =========================================================================
 // AUTH ROUTES
