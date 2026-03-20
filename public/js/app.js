@@ -943,8 +943,9 @@ function setupEventListeners() {
     }
   });
 
-  // Delete selected
-  document.getElementById('deleteSelectedBtn').addEventListener('click', deleteSelectedGanttEntries);
+  // Delete selected (button removed from toolbar; kept for keyboard/context-menu callers)
+  const _delBtn = document.getElementById('deleteSelectedBtn');
+  if (_delBtn) _delBtn.addEventListener('click', deleteSelectedGanttEntries);
 
   // Capacity input
   document.getElementById('capacityInput').addEventListener('change', async (e) => {
@@ -1043,6 +1044,7 @@ async function deleteSelectedGanttEntries() {
 
 function updateDeleteBtn() {
   const btn = document.getElementById('deleteSelectedBtn');
+  if (!btn) return;
   if (state.selectedGanttIds.size > 0) btn.classList.remove('hidden');
   else btn.classList.add('hidden');
 }

@@ -120,7 +120,7 @@
       pxPerDay = Math.min(pxPerDay * 1.04, 200); render();
     });
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
-      pxPerDay = Math.max(pxPerDay / 1.04, 0.5); render();
+      pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit()); render();
     });
     document.getElementById('chartStartDate').addEventListener('change', (e) => {
       if (e.target.value) chartStart = new Date(e.target.value + 'T00:00:00');
@@ -175,7 +175,7 @@
         if (e.deltaY < 0) {
           pxPerDay = Math.min(pxPerDay * 1.04, 200);
         } else {
-          pxPerDay = Math.max(pxPerDay / 1.04, 0.5);
+          pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit());
         }
         render();
       }
@@ -1535,6 +1535,15 @@
   }
   function daysBetween(a, b) {
     return Math.floor((b - a) / 86400000);
+  }
+  // Returns the minimum pxPerDay at which the full chart range fits in the
+  // visible timeline area – used as the lower bound when zooming out.
+  function minPxPerDayForFit() {
+    if (!chartStart || !chartEnd) return 0.5;
+    const totalDays = Math.max(1, daysBetween(chartStart, chartEnd));
+    const w = ganttTimeline ? ganttTimeline.clientWidth : 0;
+    // Always allow at least 0.5 px/day so the chart remains usable.
+    return Math.max(0.5, w > 0 ? w / totalDays : 0.5);
   }
   function forEachDay(start, end, fn) {
     let cur = new Date(start), i = 0;
