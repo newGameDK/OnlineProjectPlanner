@@ -93,12 +93,10 @@
     if (depth > 0 && entry.parent_id) {
       // Walk up to the visible root ancestor (depth 0) to get the base colour.
       let ancestor = entry;
-      let walked = 0;
-      while (ancestor.parent_id && walked < depth) {
+      while (ancestor.parent_id && (ancestor._depth || 0) > 0) {
         const parent = S().ganttEntries.find(e => e.id === ancestor.parent_id);
         if (!parent) break;
         ancestor = parent;
-        walked++;
       }
       const baseColor = U().getUserColor(ancestor.user_id, ancestor.color_variation);
       return U().lightenColor(baseColor, depth * 0.15);
