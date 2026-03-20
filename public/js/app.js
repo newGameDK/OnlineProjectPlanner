@@ -530,18 +530,113 @@ function setupEventListeners() {
   document.getElementById('updateBtn').addEventListener('click', () => {
     openModal('Update Application', `
       <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
-        Upload a ZIP file containing the new version of the <strong>public</strong> folder.
+        Install a version from GitHub or upload a ZIP manually.
         Your database and all user data will be preserved.
       </p>
-      <div class="form-group">
-        <label>Select update ZIP file</label>
-        <input type="file" id="updateZipFile" accept=".zip" style="font-size:13px">
+      <div id="ghReleasesSection">
+        <div class="form-group">
+          <label>Available versions from GitHub</label>
+          <div id="ghReleasesLoading" style="font-size:12px;color:var(--text-muted)">Loading releases…</div>
+          <select id="ghReleaseSelect" class="form-control" style="display:none;font-size:13px"></select>
+        </div>
+        <button type="button" id="ghInstallBtn" class="btn btn-primary btn-full" style="display:none;margin-bottom:12px">⬇ Install selected version</button>
       </div>
+      <details style="margin-bottom:12px">
+        <summary style="font-size:12px;cursor:pointer;color:var(--text-muted)">Or upload a ZIP file manually</summary>
+        <div class="form-group" style="margin-top:8px">
+          <label>Select update ZIP file</label>
+          <input type="file" id="updateZipFile" accept=".zip" style="font-size:13px">
+        </div>
+        <button type="button" id="manualUploadBtn" class="btn btn-secondary btn-full">Upload &amp; Update</button>
+      </details>
       <div id="updateProgress" class="update-progress" style="display:none">
         <div class="progress-bar"><div class="progress-bar-fill" id="updateProgressBar" style="width:0%"></div></div>
-        <div class="update-status" id="updateStatus">Uploading…</div>
+        <div class="update-status" id="updateStatus">Working…</div>
       </div>
-    `, async () => {
+    `, null);
+
+    // Hide modal OK button – we use our own buttons
+    document.getElementById('modalOk').style.display = 'none';
+
+    // Fetch releases from GitHub
+    (async () => {
+      const loadingEl = document.getElementById('ghReleasesLoading');
+      const selectEl  = document.getElementById('ghReleaseSelect');
+      const installBtn = document.getElementById('ghInstallBtn');
+      try {
+        const res = await fetch(apiUrl('/api/github-releases'), { credentials: 'include' });
+        if (!res.ok) throw new Error('Could not fetch releases');
+        const releases = await res.json();
+        if (!releases.length) { loadingEl.textContent = 'No releases found'; return; }
+
+        selectEl.innerHTML = '';
+        for (const r of releases) {
+          const asset = r.assets.find(a => a.name.endsWith('.zip'));
+          if (!asset) continue;
+          const opt = document.createElement('option');
+          opt.value = asset.download_url;
+          const size = asset.size ? ' (' + (asset.size / 1024 / 1024).toFixed(1) + ' MB)' : '';
+          opt.textContent = r.name + size;
+          selectEl.appendChild(opt);
+        }
+        if (!selectEl.options.length) { loadingEl.textContent = 'No ZIP assets found in releases'; return; }
+        loadingEl.style.display = 'none';
+        selectEl.style.display = '';
+        installBtn.style.display = '';
+      } catch {
+        loadingEl.textContent = 'Could not load releases from GitHub';
+      }
+    })();
+
+    // Install from GitHub handler
+    document.getElementById('ghInstallBtn').onclick = async () => {
+      const selectEl = document.getElementById('ghReleaseSelect');
+      const url = selectEl.value;
+      if (!url) return;
+
+      const progressDiv = document.getElementById('updateProgress');
+      const progressBar = document.getElementById('updateProgressBar');
+      const statusEl    = document.getElementById('updateStatus');
+      progressDiv.style.display = '';
+      progressBar.style.background = '';
+      progressBar.style.width = '20%';
+      statusEl.textContent = 'Downloading from GitHub…';
+      statusEl.className = 'update-status';
+
+      try {
+        const res = await fetch(apiUrl('/api/update-from-github'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        progressBar.style.width = '80%';
+        if (!res.headers.get('content-type')?.includes('application/json')) {
+          throw new Error('Server did not return a valid response.');
+        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Update failed');
+
+        progressBar.style.width = '100%';
+        statusEl.textContent = 'Update complete! New version: v' + (data.version || 'unknown') + '. Reloading…';
+        statusEl.className = 'update-status success';
+        document.getElementById('ghInstallBtn').style.display = 'none';
+
+        setTimeout(() => {
+          const u = new URL(window.location.href);
+          u.searchParams.set('_updated', Date.now());
+          window.location.href = u.toString();
+        }, 2000);
+      } catch (e) {
+        progressBar.style.width = '100%';
+        progressBar.style.background = 'var(--danger)';
+        statusEl.textContent = 'Update failed: ' + e.message;
+        statusEl.className = 'update-status error';
+      }
+    };
+
+    // Manual upload handler
+    document.getElementById('manualUploadBtn').onclick = async () => {
       const fileInput = document.getElementById('updateZipFile');
       if (!fileInput.files.length) { alert('Please select a ZIP file'); return; }
 
@@ -550,8 +645,9 @@ function setupEventListeners() {
 
       const progressDiv = document.getElementById('updateProgress');
       const progressBar = document.getElementById('updateProgressBar');
-      const statusEl = document.getElementById('updateStatus');
+      const statusEl    = document.getElementById('updateStatus');
       progressDiv.style.display = '';
+      progressBar.style.background = '';
       statusEl.textContent = 'Uploading…';
       statusEl.className = 'update-status';
       progressBar.style.width = '30%';
@@ -578,17 +674,12 @@ function setupEventListeners() {
         progressBar.style.width = '100%';
         statusEl.textContent = 'Update complete! New version: v' + (data.version || 'unknown') + '. Reloading…';
         statusEl.className = 'update-status success';
+        document.getElementById('manualUploadBtn').style.display = 'none';
 
-        // Hide the OK button after success
-        document.getElementById('modalOk').style.display = 'none';
-
-        // Reload after brief delay so user sees success message.
-        // Use a cache-busting query parameter to ensure the browser
-        // fetches all resources fresh after the update.
         setTimeout(() => {
-          const url = new URL(window.location.href);
-          url.searchParams.set('_updated', Date.now());
-          window.location.href = url.toString();
+          const u = new URL(window.location.href);
+          u.searchParams.set('_updated', Date.now());
+          window.location.href = u.toString();
         }, 2000);
       } catch (e) {
         progressBar.style.width = '100%';
@@ -596,7 +687,7 @@ function setupEventListeners() {
         statusEl.textContent = 'Update failed: ' + e.message;
         statusEl.className = 'update-status error';
       }
-    }, 'Upload & Update');
+    };
   });
 
   // New team
