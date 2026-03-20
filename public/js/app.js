@@ -253,6 +253,19 @@ function handleWSMessage(msg) {
       }
       break;
     }
+    case 'team_deleted': {
+      state.teams = state.teams.filter(t => t.id !== msg.team_id);
+      if (state.currentTeam?.id === msg.team_id) {
+        state.currentTeam = null;
+        state.currentProject = null;
+        document.getElementById('projectSection').style.display = 'none';
+        document.getElementById('memberSection').style.display = 'none';
+        document.getElementById('breadcrumbTeam').textContent = '—';
+        showWelcome();
+      }
+      renderTeamsList();
+      break;
+    }
   }
 }
 
@@ -379,6 +392,31 @@ function renderTeamsList() {
     li.className = 'sidebar-item' + (state.currentTeam?.id === team.id ? ' active' : '');
     li.innerHTML = `<span class="sidebar-item-name">${escHtml(team.name)}</span>`;
     li.addEventListener('click', () => selectTeam(team));
+    li.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [
+        {
+          icon: '🗑', label: 'Delete Team', danger: true, action: async () => {
+            if (!confirm(`Are you sure you want to delete the team "${team.name}" and all its projects and tasks?`)) return;
+            try {
+              await api('DELETE', `/api/teams/${team.id}`);
+              state.teams = state.teams.filter(t => t.id !== team.id);
+              if (state.currentTeam?.id === team.id) {
+                state.currentTeam = null;
+                state.currentProject = null;
+                document.getElementById('projectSection').style.display = 'none';
+                document.getElementById('memberSection').style.display = 'none';
+                document.getElementById('breadcrumbTeam').textContent = '—';
+                showWelcome();
+              }
+              renderTeamsList();
+            } catch (err) {
+              alert('Could not delete team: ' + err.message);
+            }
+          }
+        }
+      ]);
+    });
     list.appendChild(li);
   });
 }
@@ -414,6 +452,28 @@ function renderProjectsList() {
     li.className = 'sidebar-item' + (state.currentProject?.id === proj.id ? ' active' : '');
     li.innerHTML = `<span class="sidebar-item-name">${escHtml(proj.name)}</span>`;
     li.addEventListener('click', () => selectProject(proj));
+    li.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [
+        {
+          icon: '🗑', label: 'Delete Project', danger: true, action: async () => {
+            if (!confirm(`Are you sure you want to delete the project "${proj.name}" and all its tasks?`)) return;
+            try {
+              await api('DELETE', `/api/projects/${proj.id}`);
+              const tid = state.currentTeam?.id;
+              if (tid) state.projects[tid] = (state.projects[tid] || []).filter(p => p.id !== proj.id);
+              if (state.currentProject?.id === proj.id) {
+                state.currentProject = null;
+                showWelcome();
+              }
+              renderProjectsList();
+            } catch (err) {
+              alert('Could not delete project: ' + err.message);
+            }
+          }
+        }
+      ]);
+    });
     list.appendChild(li);
   });
 }
