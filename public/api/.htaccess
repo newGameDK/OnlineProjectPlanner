@@ -1,5 +1,17 @@
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteRule ^(.*)$ router.php?_route=$1 [QSA,L]
-</IfModule>
+# Clean-URL rewrite rules (optional)
+# These are ONLY needed when PHP_ROUTER is set to false in js/config.js.
+# The default setting (PHP_ROUTER = true) calls router.php directly, so
+# these rules are not required and are disabled by default.
+#
+# On some shared-hosting plans the directives below cause a 500 Internal
+# Server Error because AllowOverride does not include FileInfo.  If you
+# experience this, leave the rules commented out – they are not needed.
+#
+# Uncomment the block below if you want pretty /api/<path> URLs and your
+# host supports mod_rewrite in .htaccess files:
+#
+# <IfModule mod_rewrite.c>
+#   RewriteEngine On
+#   RewriteCond %{REQUEST_FILENAME} !-f
+#   RewriteRule ^(.*)$ router.php?_route=$1 [QSA,L]
+# </IfModule>

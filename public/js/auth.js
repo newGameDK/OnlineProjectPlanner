@@ -19,18 +19,60 @@ if (location.protocol === 'file:') {
 // Probe the API to detect hosting without a working backend.
 if (location.protocol !== 'file:') {
   (async () => {
-    try {
-      const res = await fetch(apiUrl('/api/health'), { credentials: 'include' });
-      const data = res.ok ? await res.json() : null;
-      if (!data || !data.ok) throw new Error();
-    } catch {
+    /** Try fetching a URL and return the response, or null on failure. */
+    async function probe(url) {
+      try {
+        const r = await fetch(url, { credentials: 'include' });
+        return r;
+      } catch { return null; }
+    }
+
+    // Primary probe: the normal apiUrl route
+    let res = await probe(apiUrl('/api/health'));
+
+    // Fallback: try hitting router.php directly (bypasses any .htaccess issues
+    // that apiUrl might inherit when PHP_ROUTER is false or API_BASE is custom).
+    if (!res || !res.ok) {
+      res = await probe((API_BASE === '.' ? '.' : API_BASE) + '/api/router.php?_route=health');
+    }
+
+    let data = null;
+    let detail = '';
+    if (res) {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        try { data = await res.json(); } catch { /* unparseable */ }
+      }
+      if (!res.ok || !data || !data.ok) {
+        // Server responded but not with a healthy JSON – extract detail
+        if (data && data.error)  detail = data.error;
+        else if (data && data.detail) detail = data.detail;
+        else if (!ct.includes('application/json'))
+          detail = 'The server returned HTML instead of JSON (HTTP ' + res.status + '). ' +
+                   'This usually means PHP is not executing. Check that PHP is enabled and the ' +
+                   '<code>api/</code> folder was uploaded correctly.';
+        else
+          detail = 'HTTP ' + res.status;
+      }
+    }
+
+    if (!data || !data.ok) {
       const safeBase = API_BASE.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      const diagUrl = apiUrl('/api/diag').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const hint = API_BASE && API_BASE !== '.'
-        ? 'Check that the backend server at <code>' + safeBase + '</code> is running.'
-        : 'The page loaded, but the PHP API is not responding. ' +
-          'Make sure the <code>api/</code> folder was uploaded and PHP is enabled. ' +
-          'For details open <a href="' + diagUrl + '" target="_blank">api/diag</a> in your browser.';
+      const diagUrl  = apiUrl('/api/diag').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      let hint;
+      if (API_BASE && API_BASE !== '.') {
+        hint = 'Check that the backend server at <code>' + safeBase + '</code> is running.';
+      } else {
+        hint = 'The page loaded, but the PHP API is not responding. ' +
+               'Make sure the <code>api/</code> folder was uploaded and PHP is enabled.';
+        if (detail) hint += '<br><small>Detail: ' + detail + '</small>';
+        hint += '<br>For diagnostics open <a href="' + diagUrl + '" target="_blank">api/diag</a> in your browser.';
+        hint += '<br><small>If diag also fails, try opening <code>' +
+                (API_BASE === '.' ? '.' : API_BASE) +
+                '/api/router.php?_route=health</code> directly. ' +
+                'A blank page or 500 error means the <code>api/.htaccess</code> file may be ' +
+                'causing problems — delete it and retry.</small>';
+      }
       document.querySelector('.auth-container').insertAdjacentHTML('afterbegin',
         '<div class="file-protocol-warning">' +
         '<strong>⚠ Cannot reach the backend API</strong><br>' +

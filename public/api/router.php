@@ -6,6 +6,41 @@
 // It is a direct port of the Node.js server.js endpoints.
 // =========================================================================
 
+// ---- PHP version gate ---------------------------------------------------
+// The null-coalescing operator (??) and other features used below require
+// PHP 7.0+.  session_set_cookie_params() with an array requires PHP 7.3+.
+// Bail out early with a clear JSON error if the version is too old so the
+// frontend can display a meaningful message instead of a blank 500.
+if (version_compare(PHP_VERSION, '7.3.0', '<')) {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(503);
+    echo json_encode([
+        'error' => 'PHP 7.3 or newer is required. Current version: ' . PHP_VERSION,
+        'php_version' => PHP_VERSION
+    ]);
+    exit;
+}
+
+// ---- Global error / exception handler -----------------------------------
+// Convert PHP errors and uncaught exceptions into JSON responses so the
+// frontend always receives parseable output instead of HTML error pages.
+set_error_handler(function ($severity, $message, $file, $line) {
+    // Let PHP handle error-suppressed expressions (@operator)
+    if (!(error_reporting() & $severity)) return false;
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
+set_exception_handler(function ($e) {
+    if (!headers_sent()) {
+        header('Content-Type: application/json; charset=utf-8');
+        http_response_code(500);
+    }
+    echo json_encode([
+        'error' => 'Internal server error',
+        'detail' => $e->getMessage(),
+    ]);
+    exit;
+});
+
 // Always send JSON content-type first so error responses are parseable.
 header('Content-Type: application/json; charset=utf-8');
 
