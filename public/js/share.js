@@ -57,6 +57,11 @@ function getUserColor(userId, variation, members) {
   const vars   = generateColorVariations(base);
   return vars[Math.min(variation || 0, vars.length - 1)];
 }
+function lightenColor(hex, amount) {
+  const [r, g, b] = hexToRgb(hex);
+  const [h, s, l] = rgbToHsl(r, g, b);
+  return hslToHex(h, s, Math.min(0.92, l + amount));
+}
 
 // ─── Date helpers ─────────────────────────────────────────────────────────
 function parseDate(str) {
@@ -227,7 +232,9 @@ function renderTaskList(entries) {
   ganttTaskList.innerHTML = '';
   entries.forEach(entry => {
     const hasChildren = S.entries.some(e => e.parent_id === entry.id);
-    const color = getUserColor(entry.user_id, entry.color_variation, S.members);
+    const baseColor = getUserColor(entry.user_id, entry.color_variation, S.members);
+    const depth = entry._depth || 0;
+    const color = depth > 0 ? lightenColor(baseColor, depth * 0.15) : baseColor;
 
     const row = document.createElement('div');
     row.className  = 'gantt-task-row';
@@ -359,7 +366,9 @@ function buildBar(entry) {
   const left      = leftDays  * pxPerDay;
   const width     = widthDays * pxPerDay;
 
-  const color       = getUserColor(entry.user_id, entry.color_variation, S.members);
+  const baseColor   = getUserColor(entry.user_id, entry.color_variation, S.members);
+  const depth       = entry._depth || 0;
+  const color       = depth > 0 ? lightenColor(baseColor, depth * 0.15) : baseColor;
   const hasChildren = S.entries.some(e => e.parent_id === entry.id);
 
   const container = document.createElement('div');
