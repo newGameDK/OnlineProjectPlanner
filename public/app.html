@@ -101,6 +101,7 @@
           <div class="toolbar-group">
             <button id="addGanttBtn" class="btn btn-primary btn-sm" data-help="Add a new Gantt task entry to the current view">+ Task</button>
             <button id="undoBtn" class="btn btn-secondary btn-sm" title="Undo (Ctrl+Z)" data-help="Undo the last action (Ctrl+Z)">↩ Undo</button>
+            <button id="collapseAllBtn" class="btn btn-secondary btn-sm" title="Collapse all expanded sub-tasks" data-help="Collapse all expanded sub-task trees">↑ Collapse All</button>
             <button id="deleteSelectedBtn" class="btn btn-danger btn-sm hidden" data-help="Delete all selected Gantt entries">🗑 Delete Selected</button>
           </div>
           <div class="toolbar-group">
@@ -159,7 +160,7 @@
             </div>
             <!-- Gantt chart body -->
             <div class="gantt-body" id="ganttBody">
-              <div class="gantt-tasks" id="ganttTaskList" data-help="Task list: click to select, click ▶ to expand sub-entries, double-click bar to drill down into sub-chart"></div>
+              <div class="gantt-tasks" id="ganttTaskList" data-help="Task list: click to select, click ▶ to expand sub-entries inline, double-click bar to toggle expand"></div>
               <div class="gantt-timeline" id="ganttTimeline" data-help="Timeline: drag bar body to move, drag edges to resize, right-click for options">
                 <div class="gantt-timeline-ruler" id="ganttRuler"></div>
                 <div class="gantt-timeline-rows" id="ganttRows"></div>
