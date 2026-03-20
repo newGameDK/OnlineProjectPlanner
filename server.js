@@ -201,7 +201,7 @@ const stmts = {
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
-  updateGantt: db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
+  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
@@ -574,11 +574,29 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
   if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
+  // If parent_id is being changed, prevent circular references
+  const newParentId = req.body.parent_id !== undefined ? (req.body.parent_id || null) : existing.parent_id;
+  if (newParentId !== existing.parent_id && newParentId !== null) {
+    // Cannot set parent to self
+    if (newParentId === existing.id) return res.status(400).json({ error: 'Cannot set parent to self' });
+    // Walk up the ancestry of newParentId to ensure existing.id is not an ancestor
+    let cursor = newParentId;
+    while (cursor) {
+      const ancestor = stmts.getGantt.get(cursor);
+      if (!ancestor) break;
+      if (ancestor.parent_id === existing.id) {
+        return res.status(400).json({ error: 'Circular parent reference' });
+      }
+      cursor = ancestor.parent_id;
+    }
+  }
+
   // Save undo action before update
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
 
   const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours } = req.body;
   stmts.updateGantt.run(
+    newParentId,
     title ?? existing.title,
     start_date ?? existing.start_date,
     end_date ?? existing.end_date,

@@ -284,6 +284,31 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .gantt-task-action-btn:hover { background: var(--border); }
 
+/* Drag grip for reparenting */
+.gantt-task-grip {
+  flex-shrink: 0; width: 14px; text-align: center;
+  font-size: 12px; color: var(--text-muted); cursor: grab;
+  opacity: 0; transition: opacity .15s;
+  user-select: none; line-height: 1;
+}
+.gantt-task-row:hover .gantt-task-grip { opacity: 1; }
+.gantt-task-grip:active { cursor: grabbing; }
+
+/* Reparent ghost (floating row during drag) */
+.reparent-ghost {
+  position: fixed; z-index: 1000; pointer-events: none;
+  opacity: 0.85; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  background: var(--surface); border: 2px solid var(--primary);
+  border-radius: 4px;
+}
+
+/* Drop target highlight */
+.gantt-task-row.reparent-target {
+  background: var(--primary-light) !important;
+  outline: 2px dashed var(--primary);
+  outline-offset: -2px;
+}
+
 /* Gantt timeline rows */
 .gantt-row-bg {
   height: var(--row-h); border-bottom: 1px solid var(--border);
@@ -527,10 +552,17 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
    ===================================================================== */
 #depArrowsSvg { pointer-events: none; }
 #depArrowsSvg path.dep-arrow {
-  pointer-events: stroke; cursor: pointer;
-  transition: stroke .15s;
+  pointer-events: none;
+  transition: stroke .15s, stroke-width .15s;
 }
-#depArrowsSvg path.dep-arrow:hover { stroke: var(--danger) !important; }
+#depArrowsSvg path.dep-arrow:hover,
+#depArrowsSvg path.dep-arrow.dep-arrow-hover {
+  stroke: var(--danger) !important;
+  stroke-width: 2.5;
+}
+#depArrowsSvg path.dep-arrow-hit {
+  pointer-events: stroke; cursor: pointer;
+}
 
 /* =====================================================================
    Connecting mode banner

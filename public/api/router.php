@@ -688,12 +688,29 @@ if ($seg1 === 'gantt') {
             if (!$existing) json_out(['error' => 'Not found'], 404);
             if (!can_access_project($db, $existing['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
 
+            // Resolve new parent_id
+            $newParentId = array_key_exists('parent_id', $body) ? ($body['parent_id'] ?: null) : $existing['parent_id'];
+            if ($newParentId !== $existing['parent_id'] && $newParentId !== null) {
+                if ($newParentId === $ganttId) json_out(['error' => 'Cannot set parent to self'], 400);
+                // Circular check: walk up ancestry
+                $cursor = $newParentId;
+                while ($cursor) {
+                    $s2 = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+                    $s2->execute([$cursor]);
+                    $anc = $s2->fetch();
+                    if (!$anc) break;
+                    if ($anc['parent_id'] === $ganttId) json_out(['error' => 'Circular parent reference'], 400);
+                    $cursor = $anc['parent_id'];
+                }
+            }
+
             // Save undo
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
 
-            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
+            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
             $s->execute([
+                $newParentId,
                 $body['title'] ?? $existing['title'],
                 $body['start_date'] ?? $existing['start_date'],
                 $body['end_date'] ?? $existing['end_date'],
