@@ -906,6 +906,24 @@ app.post('/api/update', requireAuth, (req, res) => {
       // Clean up
       fs.unlinkSync(req.file.path);
 
+      // ---- Cache-bust: update ?v= query strings in HTML files ----
+      // This ensures browsers fetch the latest JS/CSS after an in-app update,
+      // even if the uploaded ZIP did not include cache-busting parameters.
+      const htmlFiles = fs.readdirSync(publicDir).filter(f => f.endsWith('.html'));
+      for (const htmlFile of htmlFiles) {
+        const htmlPath = path.join(publicDir, htmlFile);
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        const updated = html.replace(
+          /((?:href|src)\s*=\s*["'])([^"']+\.(css|js))(\?v=[^"']*)?(['"])/gi,
+          (match, prefix, url, _ext, _oldVer, suffix) => {
+            // Skip external URLs (contain ://)
+            if (url.includes('://')) return match;
+            return prefix + url + '?v=' + newVersion + suffix;
+          }
+        );
+        if (updated !== html) fs.writeFileSync(htmlPath, updated, 'utf8');
+      }
+
       res.json({
         ok: true,
         version: newVersion,

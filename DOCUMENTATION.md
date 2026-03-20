@@ -13,9 +13,11 @@ The application works on any PHP-enabled shared web hosting (such as simply.com)
 ```
 OnlineProjectPlanner/
 ├── public/                        ← Upload this folder's contents to public_html
+│   ├── .htaccess                  ← Cache control headers (prevents stale JS/CSS)
 │   ├── index.html                 ← Login / Register page
 │   ├── app.html                   ← Main application page (Gantt + Todo)
 │   ├── share.html                 ← Public read-only share view
+│   ├── version.json               ← Version number (single source of truth)
 │   │
 │   ├── css/
 │   │   └── style.css              ← All application styles (single file)
@@ -287,9 +289,11 @@ PORT=8080 npm start  # custom port
    The result should look like:
    ```
    public_html/
+   ├── .htaccess              ← Cache control (hidden file – ensure your FTP client uploads it)
    ├── index.html
    ├── app.html
    ├── share.html
+   ├── version.json
    ├── css/style.css
    ├── js/
    │   ├── config.js
@@ -338,7 +342,9 @@ PORT=8080 npm start  # custom port
 | Login works but session is lost on next request | Session cookie path conflict | Already fixed in the current code (cookie path set to `/`) |
 | "Cannot reach the backend API" banner | `api/` folder not uploaded, or PHP not enabled | Re-upload `api/` folder; confirm PHP is enabled in your hosting control panel |
 | `diag` shows `data_dir_writable: false` | FTP permissions too restrictive | Right-click `api/data/` in your FTP client → change permissions to `755` |
-| `.htaccess` causes 500 error | Server has `AllowOverride None` | Safe to delete `api/.htaccess` – it is not needed when `PHP_ROUTER = true` |
+| `.htaccess` causes 500 error | Server has `AllowOverride None` | Safe to delete `api/.htaccess` – it is not needed when `PHP_ROUTER = true`. The root `.htaccess` handles cache control but is also optional. |
+| Version number not shown on login page | Browser serving cached old JS files | Hard refresh (`Ctrl+Shift+R`), or ensure the root `.htaccess` file was uploaded (some FTP clients hide dotfiles) |
+| Uploaded new files but still see old version | Browser cache / missing `.htaccess` | Check that `version.json` shows the correct version in the browser, then do a hard refresh |
 
 ### Subdirectory installation
 
@@ -346,10 +352,52 @@ If you install into a subdirectory (e.g. `public_html/planner/`), no extra confi
 
 ### Updating
 
-To update to a newer version:
-1. Upload the new files over the existing ones.
-2. **Do not delete** `api/data/` – it contains your database.
-3. The schema migration is handled automatically by the `CREATE TABLE IF NOT EXISTS` statements in `db.php`.
+There are **three ways** to update to a newer version:
+
+#### Option A – In-app update (recommended)
+
+1. Log in to the application.
+2. Click your **user avatar** (top-right) → **🔄 Update App**.
+3. Select the ZIP file containing the new `public/` folder.
+4. The app uploads, extracts, and applies the update automatically.
+5. Your database (`api/data/`) is **never overwritten**.
+6. The page reloads with cache-busting parameters so you immediately see the new version.
+
+#### Option B – Manual FTP upload (replace files)
+
+1. Download the new release.
+2. Upload the **contents of the `public/` folder** to your existing installation directory (the same `public_html/` or subdirectory you used originally), **overwriting** all existing files.
+3. **Do not delete** the `api/data/` folder – it contains your SQLite database.
+4. **Clear your browser cache** or do a hard refresh (`Ctrl+Shift+R` / `Cmd+Shift+R`) to ensure the new JavaScript and CSS files are loaded.
+5. The schema migration is handled automatically by the `CREATE TABLE IF NOT EXISTS` statements in `db.php`.
+
+#### Option C – Deploy to a new folder (fresh start)
+
+If you want to keep the old installation intact:
+
+1. Upload the new `public/` folder contents to a **new directory** (e.g. `public_html/planner_v2/`).
+2. Open the new URL in your browser (e.g. `https://yourdomain.com/planner_v2/index.html`).
+3. The new installation creates its own fresh database in `api/data/planner.db`.
+4. If you want to keep existing data, **copy** the `api/data/planner.db` file from the old installation to the new one.
+
+> **Important:** When deploying to a new folder, you start with a fresh database unless you manually copy `api/data/planner.db` from the old location. No hidden processes or external databases are involved – all data lives in that single file.
+
+### Browser cache issues
+
+If you upload new files but still see the old version:
+
+1. The application includes a `.htaccess` file with cache control headers. Make sure the `.htaccess` file was uploaded (it is a hidden file and some FTP clients skip hidden files by default).
+2. Do a hard refresh: **Ctrl+Shift+R** (Windows/Linux) or **Cmd+Shift+R** (Mac).
+3. If the problem persists, clear your browser cache entirely, or try an incognito/private window.
+4. Verify the upload by checking `https://yourdomain.com/version.json` – it should show the new version number.
+
+### How cache busting works
+
+The application prevents stale files from being served using three layers:
+
+1. **`.htaccess` cache headers** – tells the browser to always revalidate HTML, JS, CSS, and JSON files with the server. This is the primary mechanism.
+2. **`?v=VERSION` query strings** – all HTML files reference JS/CSS with a version parameter (e.g. `style.css?v=1.1.0`). When the version changes, the browser treats these as new URLs and fetches fresh copies.
+3. **`<meta>` no-cache tags** – each HTML file includes meta tags as a fallback for environments where `.htaccess` is not supported.
 
 ---
 
