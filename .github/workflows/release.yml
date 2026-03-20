@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -11,13 +13,58 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Skip automated version-bump commits to prevent infinite loops
+    if: "!startsWith(github.event.head_commit.message, '[version-bump]')"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Read version from tag
+      - name: Determine version
         id: version
-        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # Manual tag push – use the tag directly
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            # Push to main – auto-increment patch version
+            CURRENT_VERSION=$(node -p "require('./public/version.json').version")
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+            PATCH=$((PATCH + 1))
+            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update version files
+        if: steps.version.outputs.is_tag == 'false'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          node -e "
+            const fs = require('fs');
+            const v = JSON.parse(fs.readFileSync('public/version.json', 'utf8'));
+            v.version = '${NEW_VERSION}';
+            v.buildDate = '${BUILD_DATE}';
+            fs.writeFileSync('public/version.json', JSON.stringify(v, null, 2) + '\n');
+          "
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = '${NEW_VERSION}';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+      - name: Commit and tag version bump
+        if: steps.version.outputs.is_tag == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/version.json package.json
+          git commit -m "[version-bump] ${{ steps.version.outputs.tag }}"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin HEAD "${{ steps.version.outputs.tag }}"
 
       - name: Create public folder ZIP
         run: cd public && zip -r "../public-${{ steps.version.outputs.tag }}.zip" .
@@ -25,6 +72,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
           files: public-${{ steps.version.outputs.tag }}.zip
           generate_release_notes: true
