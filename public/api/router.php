@@ -581,7 +581,7 @@ if ($seg1 === 'gantt') {
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
 
-            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,updated_at=? WHERE id=?');
+            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
             $s->execute([
                 $body['title'] ?? $existing['title'],
                 $body['start_date'] ?? $existing['start_date'],
@@ -591,6 +591,7 @@ if ($seg1 === 'gantt') {
                 $body['position'] ?? $existing['position'],
                 $body['notes'] ?? $existing['notes'],
                 array_key_exists('folder_url', $body) ? $body['folder_url'] : $existing['folder_url'],
+                array_key_exists('subtract_hours', $body) ? ($body['subtract_hours'] ? 1 : 0) : ($existing['subtract_hours'] ?? 0),
                 now_ms(),
                 $ganttId
             ]);
@@ -812,8 +813,8 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $result = ['undone' => 'create_gantt', 'entry_id' => $data['entry']['id']];
     } elseif ($action['action_type'] === 'update_gantt') {
         $e = $data['entry'];
-        $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,updated_at=? WHERE id=?');
-        $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', now_ms(), $e['id']]);
+        $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
+        $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, now_ms(), $e['id']]);
 
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);

@@ -245,7 +245,12 @@
       const actions = document.createElement('div');
       actions.className = 'gantt-task-actions';
       actions.appendChild(makeBtn('\u270F', 'Edit',         () => showEditEntryModal(entry)));
-      actions.appendChild(makeBtn('\u2611', 'Add to Todo',  () => addToTodo(entry)));
+
+      const hasTodo = S().todos.some(t => t.gantt_entry_id === entry.id);
+      const todoBtn = makeBtn(hasTodo ? '\u2713' : '\u2611', 'Add to Todo', () => { if (!hasTodo) addToTodo(entry); });
+      if (hasTodo) { todoBtn.style.color = '#2e7d32'; todoBtn.title = 'Already in Todo list'; }
+      actions.appendChild(todoBtn);
+
       actions.appendChild(makeBtn('+',      'Add sub-task', () => showAddEntryModal(entry.id)));
       actions.appendChild(makeBtn('\uD83D\uDDD1', 'Delete', () => deleteEntry(entry)));
       row.appendChild(actions);
@@ -298,8 +303,17 @@
     } else if (scale === 'week') {
       forEachDay(chartStart, chartEnd, (d, i) => {
         if (d.getDay() === 1 || i === 0) {
+          // Calculate days until next Monday (or end of chart) for proper cell width
+          const daysLeft = daysBetween(d, chartEnd);
+          let cellDays;
+          if (d.getDay() === 1) {
+            cellDays = Math.min(7, daysLeft);
+          } else {
+            // Partial first week: days until next Monday
+            cellDays = Math.min((8 - d.getDay()) % 7 || 7, daysLeft);
+          }
           ganttRuler.appendChild(makeRulerCell(
-            i * pxPerDay, 7 * pxPerDay,
+            i * pxPerDay, cellDays * pxPerDay,
             'W' + getWeekNumber(d) + ' \u2013 ' + d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
             'major'
           ));
@@ -310,8 +324,10 @@
       while (cur <= chartEnd) {
         const offset = daysBetween(chartStart, cur);
         const dim    = new Date(cur.getFullYear(), cur.getMonth() + 1, 0).getDate();
+        // For partial first month, only count remaining days in that month
+        const cellDays = Math.min(dim - cur.getDate() + 1, daysBetween(cur, chartEnd));
         ganttRuler.appendChild(makeRulerCell(
-          offset * pxPerDay, dim * pxPerDay,
+          offset * pxPerDay, cellDays * pxPerDay,
           cur.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
           'major'
         ));
@@ -408,12 +424,22 @@
       bar.appendChild(folderBtn);
     }
 
-    // Sub-chart indicator
+    // Sub-chart indicator (clickable expand/collapse)
+    let barIndicator = null;
     if (hasChildren) {
+      const isExpanded = expandedIds.has(entry.id);
       const ind = document.createElement('span');
       ind.className   = 'has-children-indicator';
-      ind.textContent = '\u25BC';
+      ind.textContent = isExpanded ? '\u25BC' : '\u25B6';
+      ind.title       = isExpanded ? 'Collapse sub-entries' : 'Expand sub-entries';
+      ind.addEventListener('mousedown', (e) => e.stopPropagation());
+      ind.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (expandedIds.has(entry.id)) { expandedIds.delete(entry.id); } else { expandedIds.add(entry.id); }
+        render();
+      });
       bar.appendChild(ind);
+      barIndicator = ind;
     }
 
     // ── Left resize handle ─────────────────────────────────────────────────
@@ -475,7 +501,8 @@
     // ── Bar body drag (move) ───────────────────────────────────────────────
     bar.addEventListener('mousedown', (e) => {
       if (e.target === hLeft || e.target === hRight ||
-          e.target === inputNode || e.target === outputNode) return;
+          e.target === inputNode || e.target === outputNode ||
+          e.target === barIndicator) return;
       e.preventDefault();
       startDrag(e, 'move', entry, bar, container);
     });
@@ -544,24 +571,33 @@
     document.body.style.userSelect = '';
     if (drag.ghostEl) { drag.ghostEl.style.opacity = ''; drag.ghostEl.style.cursor = ''; }
 
-    const deltaDays = Math.round((e.pageX - drag.startX) / pxPerDay);
-    if (deltaDays !== 0) {
-      const { newStart, newEnd } = calcDragDates(deltaDays);
-      try {
-        const updated = await API('PUT', '/api/gantt/' + drag.entryId, {
-          start_date: newStart, end_date: newEnd,
-        });
-        const idx = S().ganttEntries.findIndex(x => x.id === drag.entryId);
-        if (idx !== -1) S().ganttEntries[idx] = updated.entry;
-      } catch (err) {
-        console.error('Save drag failed:', err);
-        updateBarVisual(drag.containerEl, drag.origStart, drag.origEnd);
-      }
-      render();
-    }
+    // Capture drag state and reset immediately to prevent sticking
+    const deltaDays    = Math.round((e.pageX - drag.startX) / pxPerDay);
+    const { newStart, newEnd } = calcDragDates(deltaDays);
+    const entryId      = drag.entryId;
+    const containerEl  = drag.containerEl;
+    const origStart    = drag.origStart;
+    const origEnd      = drag.origEnd;
 
     drag.active = false; drag.type = null; drag.entryId = null;
     drag.ghostEl = null; drag.containerEl = null;
+
+    if (deltaDays !== 0) {
+      try {
+        const updated = await API('PUT', '/api/gantt/' + entryId, {
+          start_date: newStart, end_date: newEnd,
+        });
+        const idx = S().ganttEntries.findIndex(x => x.id === entryId);
+        if (idx !== -1) {
+          S().ganttEntries[idx] = updated.entry;
+          await expandParentDates(updated.entry);
+        }
+      } catch (err) {
+        console.error('Save drag failed:', err);
+        updateBarVisual(containerEl, origStart, origEnd);
+      }
+      render();
+    }
   }
 
   function calcDragDates(deltaDays) {
@@ -788,9 +824,14 @@
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
     let total = entry.hours_estimate || 0;
-    S().ganttEntries
-      .filter(e => e.parent_id === entryId)
-      .forEach(child => { total += calcTotalHours(child.id); });
+    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
+    let childSum = 0;
+    children.forEach(child => { childSum += calcTotalHours(child.id); });
+    if (entry.subtract_hours && childSum > 0) {
+      total = Math.max(0, total - childSum);
+    } else {
+      total += childSum;
+    }
     return total;
   }
 
@@ -912,6 +953,31 @@
         ganttBreadcrumb.appendChild(cur);
       }
     });
+
+    // Subtract hours checkbox – only shown when drilled into a parent
+    const parentEntry = S().ganttEntries.find(e => e.id === currentParentId);
+    if (parentEntry) {
+      const lbl = document.createElement('label');
+      lbl.className = 'gantt-bc-subtract';
+      lbl.title = 'Subtract sub-task hours from the parent task\'s hours estimate';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!parentEntry.subtract_hours;
+      cb.addEventListener('change', async () => {
+        try {
+          const data = await API('PUT', '/api/gantt/' + parentEntry.id, { subtract_hours: cb.checked });
+          const idx = S().ganttEntries.findIndex(e => e.id === parentEntry.id);
+          if (idx !== -1) S().ganttEntries[idx] = data.entry;
+          // Update the breadcrumb stack entry too
+          const crumb = parentStack.find(c => c.entry.id === parentEntry.id);
+          if (crumb) crumb.entry = data.entry;
+          render();
+        } catch (_) { cb.checked = !cb.checked; }
+      });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(' Subtract hours from parent'));
+      ganttBreadcrumb.appendChild(lbl);
+    }
   }
 
   // =========================================================================
@@ -942,6 +1008,11 @@
         ...vals,
       });
       S().ganttEntries.push(data.entry);
+      await expandParentDates(data.entry);
+      // Auto-expand the parent so the new child is visible inline
+      if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
+        expandedIds.add(data.entry.parent_id);
+      }
       render();
       U().closeModal();
 
@@ -958,7 +1029,10 @@
       if (!vals.title) return alert('Title is required');
       const data = await API('PUT', '/api/gantt/' + entry.id, vals);
       const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
-      if (idx !== -1) S().ganttEntries[idx] = data.entry;
+      if (idx !== -1) {
+        S().ganttEntries[idx] = data.entry;
+        await expandParentDates(data.entry);
+      }
       render();
       U().closeModal();
     });
@@ -1067,9 +1141,29 @@
   }
 
   // =========================================================================
-  // Add to Todo
+  // Auto-expand parent date range when a child falls outside it
+  // =========================================================================
+  async function expandParentDates(entry) {
+    if (!entry.parent_id) return;
+    const parent = S().ganttEntries.find(e => e.id === entry.parent_id);
+    if (!parent) return;
+    let changed = false;
+    let newStart = parent.start_date;
+    let newEnd   = parent.end_date;
+    if (entry.start_date < newStart) { newStart = entry.start_date; changed = true; }
+    if (entry.end_date   > newEnd)   { newEnd   = entry.end_date;   changed = true; }
+    if (!changed) return;
+    try {
+      const data = await API('PUT', '/api/gantt/' + parent.id, { start_date: newStart, end_date: newEnd });
+      const idx = S().ganttEntries.findIndex(e => e.id === parent.id);
+      if (idx !== -1) S().ganttEntries[idx] = data.entry;
+      // Recursively expand grandparent if needed
+      await expandParentDates(data.entry);
+    } catch (err) { console.warn('expandParentDates:', err); }
+  }
   // =========================================================================
   async function addToTodo(entry) {
+    if (S().todos.some(t => t.gantt_entry_id === entry.id)) return;
     const data = await API('POST', '/api/todos', {
       project_id:     entry.project_id,
       gantt_entry_id: entry.id,
@@ -1078,10 +1172,7 @@
     });
     S().todos.push(data.todo);
     if (window.todoModule) window.todoModule.render();
-    const btn = document.querySelector(
-      '.gantt-task-row[data-id="' + entry.id + '"] .gantt-task-action-btn[title="Add to Todo"]'
-    );
-    if (btn) { btn.textContent = '\u2713'; setTimeout(() => { btn.textContent = '\u2611'; }, 1500); }
+    render();
   }
 
   // =========================================================================

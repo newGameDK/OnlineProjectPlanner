@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS gantt_entries (
   position INTEGER NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
   folder_url TEXT NOT NULL DEFAULT '',
+  subtract_hours INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -144,6 +145,11 @@ try {
   db.exec(`ALTER TABLE projects ADD COLUMN share_token TEXT`);
 } catch (_) { /* column already exists – ignore */ }
 
+// Migration: add subtract_hours to gantt_entries
+try {
+  db.exec(`ALTER TABLE gantt_entries ADD COLUMN subtract_hours INTEGER NOT NULL DEFAULT 0`);
+} catch (_) { /* column already exists – ignore */ }
+
 // ---------------------------------------------------------------------------
 // Prepared statements
 // ---------------------------------------------------------------------------
@@ -194,7 +200,7 @@ const stmts = {
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
-  updateGantt: db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,updated_at=? WHERE id=?`),
+  updateGantt: db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
@@ -570,7 +576,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
   // Save undo action before update
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
 
-  const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
+  const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours } = req.body;
   stmts.updateGantt.run(
     title ?? existing.title,
     start_date ?? existing.start_date,
@@ -580,6 +586,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
     position ?? existing.position,
     notes ?? existing.notes,
     folder_url !== undefined ? folder_url : existing.folder_url,
+    subtract_hours !== undefined ? (subtract_hours ? 1 : 0) : existing.subtract_hours,
     now(),
     existing.id
   );
@@ -728,8 +735,8 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
   } else if (action.action_type === 'update_gantt') {
     // Undo update = restore previous state
     const e = data.entry;
-    db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,updated_at=? WHERE id=?`)
-      .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', now(), e.id);
+    db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`)
+      .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, now(), e.id);
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
