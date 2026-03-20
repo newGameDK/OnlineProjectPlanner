@@ -159,6 +159,18 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 `);
 
+// Global undo history (not project-scoped; survives team/project deletion)
+db.exec(`
+CREATE TABLE IF NOT EXISTS global_undo_history (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  action_data TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+`);
+
 // ---------------------------------------------------------------------------
 // Prepared statements
 // ---------------------------------------------------------------------------
@@ -207,6 +219,7 @@ const stmts = {
   updateProject: db.prepare(`UPDATE projects SET name=?,description=?,updated_at=? WHERE id=?`),
   deleteProject: db.prepare(`DELETE FROM projects WHERE id=?`),
   setShareToken: db.prepare(`UPDATE projects SET share_token=? WHERE id=?`),
+  restoreProjectMeta: db.prepare(`UPDATE projects SET share_token=?,created_at=?,updated_at=? WHERE id=?`),
   getProjectByShareToken: db.prepare(`SELECT * FROM projects WHERE share_token=?`),
 
   // Gantt
@@ -231,6 +244,11 @@ const stmts = {
   addUndo: db.prepare(`INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)`),
   getUndoForUser: db.prepare(`SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 200`),
   deleteUndo: db.prepare(`DELETE FROM undo_history WHERE id=?`),
+
+  // Global undo (team/project-level operations that survive deletion)
+  addGlobalUndo: db.prepare(`INSERT INTO global_undo_history (id,user_id,action_type,action_data) VALUES (?,?,?,?)`),
+  getLatestGlobalUndo: db.prepare(`SELECT * FROM global_undo_history WHERE user_id=? ORDER BY created_at DESC LIMIT 1`),
+  deleteGlobalUndo: db.prepare(`DELETE FROM global_undo_history WHERE id=?`),
 
   // Dependencies
   createDep: db.prepare(`INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)`),
@@ -422,6 +440,21 @@ app.delete('/api/teams/:id', requireAuth, (req, res) => {
   if (!team) return res.status(404).json({ error: 'Team not found' });
   if (team.owner_id !== req.session.userId) return res.status(403).json({ error: 'Only owner can delete team' });
   const members = stmts.getTeamMembers.all(team.id);
+
+  // Snapshot the full team for undo before cascade deletion removes everything
+  const projects = stmts.getTeamProjects.all(team.id);
+  const teamSnapshot = {
+    team,
+    members,
+    projects: projects.map(p => ({
+      project: p,
+      entries: stmts.getProjectGantt.all(p.id),
+      todos: stmts.getProjectTodos.all(p.id),
+      dependencies: stmts.getProjectDeps.all(p.id),
+    })),
+  };
+  stmts.addGlobalUndo.run(uuidv4(), req.session.userId, 'delete_team', JSON.stringify(teamSnapshot));
+
   // Notify members before deleting so the team_members cascade hasn't run yet
   members.forEach(m => {
     const conns = userConnections.get(m.id);
@@ -522,6 +555,15 @@ app.delete('/api/projects/:id', requireAuth, (req, res) => {
   const project = stmts.getProject.get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
   if (!assertMember(project.team_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+  // Snapshot the full project for undo before cascade deletion removes everything
+  const projectSnapshot = {
+    project,
+    entries: stmts.getProjectGantt.all(project.id),
+    todos: stmts.getProjectTodos.all(project.id),
+    dependencies: stmts.getProjectDeps.all(project.id),
+  };
+  stmts.addGlobalUndo.run(uuidv4(), req.session.userId, 'delete_project', JSON.stringify(projectSnapshot));
 
   stmts.deleteProject.run(project.id);
   broadcastToTeam(project.team_id, { type: 'project_deleted', project_id: project.id });
@@ -809,8 +851,85 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Backup route – export all user data as JSON
+// Global undo route (team/project-level deletion)
 // ---------------------------------------------------------------------------
+
+app.post('/api/undo-global', requireAuth, (req, res) => {
+  const userId = req.session.userId;
+  const action = stmts.getLatestGlobalUndo.get(userId);
+  if (!action) return res.status(400).json({ error: 'Nothing to undo' });
+
+  const data = JSON.parse(action.action_data);
+  stmts.deleteGlobalUndo.run(action.id);
+
+  let result = {};
+  if (action.action_type === 'delete_project') {
+    const p = data.project;
+    // Restore project
+    try {
+      stmts.createProject.run(p.id, p.team_id, p.name, p.description || '', p.created_by);
+      stmts.restoreProjectMeta.run(p.share_token || null, p.created_at, p.updated_at, p.id);
+    } catch (_) { /* already exists */ }
+    // Restore gantt entries
+    for (const e of (data.entries || [])) {
+      try {
+        stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
+          e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+      } catch (_) { /* already exists */ }
+    }
+    // Restore todos
+    for (const t of (data.todos || [])) {
+      try {
+        stmts.createTodo.run(t.id, t.project_id, t.gantt_entry_id || null, t.title,
+          t.description || '', t.status || 'todo', t.assignee_id || null, t.due_date || null, t.position || 0);
+      } catch (_) { /* already exists */ }
+    }
+    // Restore dependencies
+    for (const d of (data.dependencies || [])) {
+      try { stmts.createDep.run(d.id, d.project_id, d.source_id, d.target_id); } catch (_) {}
+    }
+    const project = stmts.getProject.get(p.id);
+    if (project) broadcastToTeam(project.team_id, { type: 'project_created', project });
+    result = { undone: 'delete_project', project };
+  } else if (action.action_type === 'delete_team') {
+    const t = data.team;
+    // Restore team
+    try {
+      stmts.createTeam.run(t.id, t.name, t.owner_id, t.capacity_hours_month || 160);
+    } catch (_) { /* already exists */ }
+    // Restore members
+    for (const m of (data.members || [])) {
+      try { stmts.addTeamMember.run(t.id, m.id, m.role || 'member'); } catch (_) {}
+    }
+    // Restore each project with its data
+    for (const pd of (data.projects || [])) {
+      const p = pd.project;
+      try {
+        stmts.createProject.run(p.id, p.team_id, p.name, p.description || '', p.created_by);
+        stmts.restoreProjectMeta.run(p.share_token || null, p.created_at, p.updated_at, p.id);
+      } catch (_) { /* already exists */ }
+      for (const e of (pd.entries || [])) {
+        try {
+          stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
+            e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+        } catch (_) {}
+      }
+      for (const td of (pd.todos || [])) {
+        try {
+          stmts.createTodo.run(td.id, td.project_id, td.gantt_entry_id || null, td.title,
+            td.description || '', td.status || 'todo', td.assignee_id || null, td.due_date || null, td.position || 0);
+        } catch (_) {}
+      }
+      for (const d of (pd.dependencies || [])) {
+        try { stmts.createDep.run(d.id, d.project_id, d.source_id, d.target_id); } catch (_) {}
+      }
+    }
+    const team = stmts.getTeam.get(t.id);
+    result = { undone: 'delete_team', team };
+  }
+
+  res.json(result);
+});
 
 app.get('/api/backup', requireAuth, (req, res) => {
   const userId = req.session.userId;
