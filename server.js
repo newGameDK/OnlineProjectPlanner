@@ -5,6 +5,7 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const http = require('http');
+const https = require('https');
 const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
@@ -200,7 +201,7 @@ const stmts = {
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
-  updateGantt: db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
+  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
@@ -573,11 +574,29 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
   if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
+  // If parent_id is being changed, prevent circular references
+  const newParentId = req.body.parent_id !== undefined ? (req.body.parent_id || null) : existing.parent_id;
+  if (newParentId !== existing.parent_id && newParentId !== null) {
+    // Cannot set parent to self
+    if (newParentId === existing.id) return res.status(400).json({ error: 'Cannot set parent to self' });
+    // Walk up the ancestry of newParentId to ensure existing.id is not an ancestor
+    let cursor = newParentId;
+    while (cursor) {
+      const ancestor = stmts.getGantt.get(cursor);
+      if (!ancestor) break;
+      if (ancestor.parent_id === existing.id) {
+        return res.status(400).json({ error: 'Circular parent reference' });
+      }
+      cursor = ancestor.parent_id;
+    }
+  }
+
   // Save undo action before update
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
 
   const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours } = req.body;
   stmts.updateGantt.run(
+    newParentId,
     title ?? existing.title,
     start_date ?? existing.start_date,
     end_date ?? existing.end_date,
@@ -808,14 +827,119 @@ app.get('/api/version', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Update route – Upload a ZIP to update the application
+// Update helpers & routes
 // ---------------------------------------------------------------------------
 
 const multerImported = (() => { try { return require('multer'); } catch { return null; } })();
 
+/**
+ * Apply a ZIP update from a file on disk.
+ * Extracts the public-folder contents, protects api/data/, and cache-busts HTML.
+ * @param {string} zipPath  Absolute path to the ZIP file
+ * @returns {{ ok:boolean, version:string, extracted:number, skipped:number, message:string }}
+ */
+function applyZipUpdate(zipPath) {
+  const AdmZip = require('adm-zip');
+  const zip = new AdmZip(zipPath);
+  const entries = zip.getEntries();
+  const publicDir = path.join(__dirname, 'public');
+
+  // Find the root of the application inside the ZIP
+  let zipBase = '';
+  for (const entry of entries) {
+    const name = entry.entryName;
+    const match = name.match(/^((?:[^/]+\/)*)version\.json$/);
+    if (match) { zipBase = match[1]; break; }
+  }
+  if (!zipBase) {
+    for (const entry of entries) {
+      const name = entry.entryName;
+      const match = name.match(/^((?:[^/]+\/)*)index\.html$/);
+      if (match) { zipBase = match[1]; break; }
+    }
+  }
+
+  // Read new version
+  let newVersion = 'unknown';
+  const versionEntry = zip.getEntry(zipBase + 'version.json');
+  if (versionEntry) {
+    try {
+      const vData = JSON.parse(versionEntry.getData().toString('utf8'));
+      if (vData.version) newVersion = vData.version;
+    } catch { /* ignore */ }
+  }
+
+  const protectedPaths = ['api/data/'];
+  let extracted = 0;
+  let skipped = 0;
+
+  for (const entry of entries) {
+    if (zipBase && !entry.entryName.startsWith(zipBase)) continue;
+    const relativePath = entry.entryName.substring(zipBase.length);
+    if (!relativePath) continue;
+
+    // Path traversal protection: reject paths with ..
+    if (relativePath.includes('..')) { skipped++; continue; }
+
+    // Check protected paths
+    let isProtected = false;
+    for (const pp of protectedPaths) {
+      if (relativePath.startsWith(pp)) { isProtected = true; break; }
+    }
+    if (isProtected) { skipped++; continue; }
+
+    const targetPath = path.join(publicDir, relativePath);
+
+    // Verify resolved path is within publicDir (defense in depth)
+    const resolvedPublic = path.resolve(publicDir);
+    const resolvedTarget = path.resolve(targetPath);
+    if (!resolvedTarget.startsWith(resolvedPublic + path.sep)) {
+      skipped++;
+      continue;
+    }
+
+    if (entry.isDirectory) {
+      if (!fs.existsSync(targetPath)) fs.mkdirSync(targetPath, { recursive: true });
+      continue;
+    }
+
+    const parentDir = path.dirname(targetPath);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+    fs.writeFileSync(targetPath, entry.getData());
+    extracted++;
+  }
+
+  // ---- Cache-bust: update ?v= query strings in HTML files ----
+  try {
+    const htmlFiles = fs.readdirSync(publicDir).filter(f => f.endsWith('.html'));
+    for (const htmlFile of htmlFiles) {
+      const htmlPath = path.join(publicDir, htmlFile);
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      const updated = html.replace(
+        /((?:href|src)\s*=\s*["'])([^"']+\.(css|js))(\?v=[^"']*)?(['"])/gi,
+        (match, prefix, url, _ext, _oldVer, suffix) => {
+          if (url.includes('://')) return match;
+          return prefix + url + '?v=' + newVersion + suffix;
+        }
+      );
+      if (updated !== html) fs.writeFileSync(htmlPath, updated, 'utf8');
+    }
+  } catch (_) {
+    // Cache-busting is non-critical; the update itself already succeeded
+  }
+
+  return {
+    ok: true,
+    version: newVersion,
+    extracted,
+    skipped,
+    message: `Update applied successfully. ${extracted} files updated, ${skipped} protected files skipped.`
+  };
+}
+
+// Upload a ZIP to update the application
 app.post('/api/update', requireAuth, (req, res) => {
-  // For Node.js deployment, we need multer for file uploads.
-  // If multer is not installed, we return a helpful error.
   if (!multerImported) {
     return res.status(501).json({
       error: 'File upload is not supported on this Node.js deployment. ' +
@@ -830,9 +954,7 @@ app.post('/api/update', requireAuth, (req, res) => {
     if (err) return res.status(400).json({ error: 'Upload failed: ' + err.message });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    let AdmZip;
-    try { AdmZip = require('adm-zip'); } catch {
-      // Clean up uploaded file
+    try { require('adm-zip'); } catch {
       fs.unlinkSync(req.file.path);
       return res.status(501).json({
         error: 'ZIP handling not available. Install adm-zip (npm install adm-zip) for Node.js updates.'
@@ -840,114 +962,138 @@ app.post('/api/update', requireAuth, (req, res) => {
     }
 
     try {
-      const zip = new AdmZip(req.file.path);
-      const entries = zip.getEntries();
-      const publicDir = path.join(__dirname, 'public');
-
-      // Find the root of the application inside the ZIP
-      let zipBase = '';
-      for (const entry of entries) {
-        const name = entry.entryName;
-        const match = name.match(/^((?:[^/]+\/)*)version\.json$/);
-        if (match) { zipBase = match[1]; break; }
-      }
-      if (!zipBase) {
-        for (const entry of entries) {
-          const name = entry.entryName;
-          const match = name.match(/^((?:[^/]+\/)*)index\.html$/);
-          if (match) { zipBase = match[1]; break; }
-        }
-      }
-
-      // Read new version
-      let newVersion = 'unknown';
-      const versionEntry = zip.getEntry(zipBase + 'version.json');
-      if (versionEntry) {
-        try {
-          const vData = JSON.parse(versionEntry.getData().toString('utf8'));
-          if (vData.version) newVersion = vData.version;
-        } catch { /* ignore */ }
-      }
-
-      const protectedPaths = ['api/data/'];
-      let extracted = 0;
-      let skipped = 0;
-
-      for (const entry of entries) {
-        if (zipBase && !entry.entryName.startsWith(zipBase)) continue;
-        const relativePath = entry.entryName.substring(zipBase.length);
-        if (!relativePath) continue;
-
-        // Path traversal protection: reject paths with ..
-        if (relativePath.includes('..')) { skipped++; continue; }
-
-        // Check protected paths
-        let isProtected = false;
-        for (const pp of protectedPaths) {
-          if (relativePath.startsWith(pp)) { isProtected = true; break; }
-        }
-        if (isProtected) { skipped++; continue; }
-
-        const targetPath = path.join(publicDir, relativePath);
-
-        // Verify resolved path is within publicDir (defense in depth)
-        const resolvedPublic = path.resolve(publicDir);
-        const resolvedTarget = path.resolve(targetPath);
-        if (!resolvedTarget.startsWith(resolvedPublic + path.sep)) {
-          skipped++;
-          continue;
-        }
-
-        if (entry.isDirectory) {
-          if (!fs.existsSync(targetPath)) fs.mkdirSync(targetPath, { recursive: true });
-          continue;
-        }
-
-        const parentDir = path.dirname(targetPath);
-        if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
-
-        fs.writeFileSync(targetPath, entry.getData());
-        extracted++;
-      }
-
-      // Clean up
+      const result = applyZipUpdate(req.file.path);
       fs.unlinkSync(req.file.path);
-
-      // ---- Cache-bust: update ?v= query strings in HTML files ----
-      // This ensures browsers fetch the latest JS/CSS after an in-app update,
-      // even if the uploaded ZIP did not include cache-busting parameters.
-      try {
-        const htmlFiles = fs.readdirSync(publicDir).filter(f => f.endsWith('.html'));
-        for (const htmlFile of htmlFiles) {
-          const htmlPath = path.join(publicDir, htmlFile);
-          let html = fs.readFileSync(htmlPath, 'utf8');
-          const updated = html.replace(
-            /((?:href|src)\s*=\s*["'])([^"']+\.(css|js))(\?v=[^"']*)?(['"])/gi,
-            (match, prefix, url, _ext, _oldVer, suffix) => {
-              // Skip external URLs (contain ://)
-              if (url.includes('://')) return match;
-              return prefix + url + '?v=' + newVersion + suffix;
-            }
-          );
-          if (updated !== html) fs.writeFileSync(htmlPath, updated, 'utf8');
-        }
-      } catch (_) {
-        // Cache-busting is non-critical; the update itself already succeeded
-      }
-
-      res.json({
-        ok: true,
-        version: newVersion,
-        extracted,
-        skipped,
-        message: `Update applied successfully. ${extracted} files updated, ${skipped} protected files skipped.`
-      });
+      res.json(result);
     } catch (e) {
-      // Clean up on error
       if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       res.status(500).json({ error: 'Update failed: ' + e.message });
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// GitHub releases – list available versions & update from GitHub
+// ---------------------------------------------------------------------------
+
+app.get('/api/github-releases', (_req, res) => {
+  const versionFile = path.join(__dirname, 'public', 'version.json');
+  let repository = '';
+  try {
+    const vData = JSON.parse(fs.readFileSync(versionFile, 'utf8'));
+    repository = vData.repository || '';
+  } catch { /* ignore */ }
+
+  if (!repository) {
+    return res.status(400).json({ error: 'No repository configured in version.json' });
+  }
+
+  const apiUrl = `https://api.github.com/repos/${repository}/releases`;
+  const options = {
+    headers: { 'User-Agent': 'OnlineProjectPlanner', 'Accept': 'application/vnd.github+json' }
+  };
+
+  https.get(apiUrl, options, (ghRes) => {
+    let body = '';
+    ghRes.on('data', (chunk) => { body += chunk; });
+    ghRes.on('end', () => {
+      if (ghRes.statusCode !== 200) {
+        return res.status(502).json({ error: 'GitHub API error: ' + ghRes.statusCode });
+      }
+      try {
+        const releases = JSON.parse(body);
+        const result = releases.map(r => ({
+          tag: r.tag_name,
+          name: r.name || r.tag_name,
+          published: r.published_at,
+          body: r.body || '',
+          assets: (r.assets || []).map(a => ({
+            name: a.name,
+            size: a.size,
+            download_url: a.browser_download_url
+          }))
+        }));
+        res.json(result);
+      } catch (e) {
+        res.status(502).json({ error: 'Failed to parse GitHub response' });
+      }
+    });
+  }).on('error', (e) => {
+    res.status(502).json({ error: 'Failed to reach GitHub: ' + e.message });
+  });
+});
+
+app.post('/api/update-from-github', requireAuth, (req, res) => {
+  const { url } = req.body || {};
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'Missing download URL' });
+  }
+
+  // Validate URL is from GitHub releases
+  if (!url.startsWith('https://github.com/')) {
+    return res.status(400).json({ error: 'URL must be a GitHub release asset' });
+  }
+
+  try { require('adm-zip'); } catch {
+    return res.status(501).json({
+      error: 'ZIP handling not available. Install adm-zip (npm install adm-zip) for Node.js updates.'
+    });
+  }
+
+  const uploadDir = path.join(DATA_DIR, 'tmp_uploads');
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  const tmpFile = path.join(uploadDir, 'github_update_' + Date.now() + '.zip');
+
+  // Download the ZIP from GitHub (follows redirects)
+  const cleanup = () => { try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch {} };
+  const download = (downloadUrl, redirects) => {
+    if (redirects > 5) {
+      cleanup();
+      return res.status(502).json({ error: 'Too many redirects' });
+    }
+
+    let parsedUrl;
+    try { parsedUrl = new URL(downloadUrl); } catch {
+      cleanup();
+      return res.status(502).json({ error: 'Invalid redirect URL' });
+    }
+    const proto = parsedUrl.protocol === 'https:' ? https : http;
+    proto.get(downloadUrl, { headers: { 'User-Agent': 'OnlineProjectPlanner' } }, (ghRes) => {
+      // Follow redirects
+      if (ghRes.statusCode >= 300 && ghRes.statusCode < 400 && ghRes.headers.location) {
+        ghRes.resume();
+        return download(ghRes.headers.location, redirects + 1);
+      }
+
+      if (ghRes.statusCode !== 200) {
+        ghRes.resume();
+        return res.status(502).json({ error: 'Download failed: HTTP ' + ghRes.statusCode });
+      }
+
+      const fileStream = fs.createWriteStream(tmpFile);
+      ghRes.pipe(fileStream);
+      fileStream.on('finish', () => {
+        fileStream.close();
+        try {
+          const result = applyZipUpdate(tmpFile);
+          fs.unlinkSync(tmpFile);
+          res.json(result);
+        } catch (e) {
+          if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+          res.status(500).json({ error: 'Update failed: ' + e.message });
+        }
+      });
+      fileStream.on('error', (e) => {
+        if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+        res.status(500).json({ error: 'File write failed: ' + e.message });
+      });
+    }).on('error', (e) => {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      res.status(502).json({ error: 'Download failed: ' + e.message });
+    });
+  };
+
+  download(url, 0);
 });
 
 // ---------------------------------------------------------------------------

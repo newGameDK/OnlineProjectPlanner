@@ -66,6 +66,14 @@
     tempLine: null,     // SVG <line> for rubber-band
   };
 
+  // ── reparent drag state ────────────────────────────────────────────────────
+  const reparentDrag = {
+    active: false,
+    entryId: null,
+    startY: 0,
+    dragEl: null,       // floating ghost element
+  };
+
   // ─── DOM refs ─────────────────────────────────────────────────────────────
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
@@ -191,6 +199,19 @@
       row.className = 'gantt-task-row' + (S().selectedGanttIds.has(entry.id) ? ' selected' : '');
       row.dataset.id = entry.id;
 
+      // Drag handle for reparenting
+      const grip = document.createElement('span');
+      grip.className = 'gantt-task-grip';
+      grip.textContent = '\u2261';  // ≡
+      grip.title = 'Drag to move under another task';
+      grip.setAttribute('aria-label', 'Drag to move under another task');
+      grip.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startReparentDrag(e, entry, row);
+      });
+      row.appendChild(grip);
+
       // Indent placeholder
       const depth = entry._depth || 0;
       const ind = document.createElement('span');
@@ -284,6 +305,128 @@
     b.title = title;
     b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     return b;
+  }
+
+  // ─── reparent drag-and-drop ────────────────────────────────────────────────
+  function startReparentDrag(e, entry, rowEl) {
+    reparentDrag.active  = true;
+    reparentDrag.entryId = entry.id;
+    reparentDrag.startY  = e.clientY;
+
+    // Create floating ghost
+    const ghost = rowEl.cloneNode(true);
+    ghost.className = 'gantt-task-row reparent-ghost';
+    ghost.style.width = rowEl.offsetWidth + 'px';
+    ghost.style.left  = rowEl.getBoundingClientRect().left + 'px';
+    ghost.style.top   = e.clientY - ROW_H / 2 + 'px';
+    document.body.appendChild(ghost);
+    reparentDrag.dragEl = ghost;
+
+    document.body.style.cursor     = 'grabbing';
+    document.body.style.userSelect = 'none';
+
+    document.addEventListener('mousemove', onReparentMove);
+    document.addEventListener('mouseup', onReparentUp);
+  }
+
+  function onReparentMove(e) {
+    if (!reparentDrag.active) return;
+
+    // Move ghost
+    reparentDrag.dragEl.style.top = (e.clientY - ROW_H / 2) + 'px';
+
+    // Highlight drop target
+    const rows = ganttTaskList.querySelectorAll('.gantt-task-row');
+    rows.forEach(r => r.classList.remove('reparent-target', 'reparent-root-target'));
+    ganttTaskList.classList.remove('reparent-root-target');
+
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    if (!target) return;
+    const targetRow = target.closest('.gantt-task-row');
+    if (targetRow && targetRow.dataset.id !== reparentDrag.entryId) {
+      targetRow.classList.add('reparent-target');
+    } else if (ganttTaskList.contains(target) && !targetRow) {
+      // Hovering over task list but not on a row — show root drop indicator
+      ganttTaskList.classList.add('reparent-root-target');
+    }
+  }
+
+  async function onReparentUp(e) {
+    document.removeEventListener('mousemove', onReparentMove);
+    document.removeEventListener('mouseup', onReparentUp);
+
+    if (!reparentDrag.active) return;
+
+    // Cleanup
+    document.body.style.cursor     = '';
+    document.body.style.userSelect = '';
+    if (reparentDrag.dragEl) {
+      reparentDrag.dragEl.remove();
+      reparentDrag.dragEl = null;
+    }
+
+    const rows = ganttTaskList.querySelectorAll('.gantt-task-row');
+    rows.forEach(r => r.classList.remove('reparent-target', 'reparent-root-target'));
+    ganttTaskList.classList.remove('reparent-root-target');
+
+    const entryId = reparentDrag.entryId;
+    reparentDrag.active  = false;
+    reparentDrag.entryId = null;
+
+    // Determine drop target
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    if (!target) return;
+    const targetRow = target.closest('.gantt-task-row');
+
+    let newParentId;
+    if (targetRow && targetRow.dataset.id !== entryId) {
+      newParentId = targetRow.dataset.id;
+    } else if (ganttTaskList.contains(target) && !targetRow) {
+      // Dropped in blank area of task list — make root-level (under currentParentId)
+      newParentId = currentParentId || null;
+    } else {
+      return; // dropped on self or outside
+    }
+
+    // Check we're actually changing the parent
+    const entry = S().ganttEntries.find(x => x.id === entryId);
+    if (!entry) return;
+    if (entry.parent_id === newParentId) return;
+
+    // Prevent dropping onto own descendant (circular) – build child map once
+    if (newParentId) {
+      const childrenOf = {};
+      S().ganttEntries.forEach(e => {
+        const pid = e.parent_id || '__root__';
+        if (!childrenOf[pid]) childrenOf[pid] = [];
+        childrenOf[pid].push(e);
+      });
+      const isDescendant = (targetId, ancestorId) => {
+        const kids = childrenOf[ancestorId] || [];
+        for (const child of kids) {
+          if (child.id === targetId) return true;
+          if (isDescendant(targetId, child.id)) return true;
+        }
+        return false;
+      };
+      if (newParentId === entryId || isDescendant(newParentId, entryId)) return;
+    }
+
+    try {
+      const updated = await API('PUT', '/api/gantt/' + entryId, {
+        parent_id: newParentId,
+      });
+      const idx = S().ganttEntries.findIndex(x => x.id === entryId);
+      if (idx !== -1) S().ganttEntries[idx] = updated.entry;
+
+      // Auto-expand the new parent so the moved entry is visible
+      if (newParentId && newParentId !== currentParentId) {
+        expandedIds.add(newParentId);
+      }
+    } catch (err) {
+      console.error('Reparent failed:', err);
+    }
+    render();
   }
 
   // ─── ruler ────────────────────────────────────────────────────────────────
@@ -709,7 +852,7 @@
     const svg = ensureDepSvg();
 
     // Remove old static arrows + defs (keep rubber-band temp line if present)
-    Array.from(svg.querySelectorAll('.dep-arrow, defs')).forEach(el => el.remove());
+    Array.from(svg.querySelectorAll('.dep-arrow, .dep-arrow-hit, defs')).forEach(el => el.remove());
 
     // Arrowhead marker definition
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
@@ -757,17 +900,32 @@
       path.setAttribute('fill', 'none');
       path.setAttribute('marker-end', 'url(#depArrow)');
       path.classList.add('dep-arrow');
-      path.style.pointerEvents = 'stroke';
-      path.style.cursor        = 'pointer';
-      path.title = srcEntry.title + ' \u2192 ' + tgtEntry.title + '\nClick to delete dependency';
 
-      path.addEventListener('click', (e) => {
+      // Wide invisible hit-area for easier clicking
+      const hitArea = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      hitArea.setAttribute('d', d);
+      hitArea.setAttribute('stroke', 'transparent');
+      hitArea.setAttribute('stroke-width', '14');
+      hitArea.setAttribute('fill', 'none');
+      hitArea.classList.add('dep-arrow-hit');
+      hitArea.style.pointerEvents = 'stroke';
+      hitArea.style.cursor        = 'pointer';
+      hitArea.title = srcEntry.title + ' \u2192 ' + tgtEntry.title + '\nClick to delete dependency';
+
+      const onArrowClick = (e) => {
         e.stopPropagation();
         if (confirm('Remove dependency: "' + srcEntry.title + '" \u2192 "' + tgtEntry.title + '"?')) {
           deleteDependency(dep.id);
         }
-      });
+      };
+      hitArea.addEventListener('click', onArrowClick);
+      path.addEventListener('click', onArrowClick);
 
+      // Hover: highlight visible arrow when hit-area is hovered
+      hitArea.addEventListener('mouseenter', () => path.classList.add('dep-arrow-hover'));
+      hitArea.addEventListener('mouseleave', () => path.classList.remove('dep-arrow-hover'));
+
+      svg.appendChild(hitArea);
       svg.appendChild(path);
     });
 

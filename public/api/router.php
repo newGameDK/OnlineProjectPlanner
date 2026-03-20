@@ -129,6 +129,117 @@ function require_auth() {
     return $_SESSION['userId'];
 }
 
+/**
+ * Apply a ZIP update from a file on disk.
+ * Extracts the public-folder contents, protects api/data/, and cache-busts HTML.
+ * @param string $zipFilePath  Absolute path to the ZIP file
+ * @return array  Result with ok, version, extracted, skipped, message
+ */
+function apply_zip_update($zipFilePath) {
+    $publicDir = dirname(__DIR__);
+
+    $zip = new ZipArchive();
+    $openResult = $zip->open($zipFilePath);
+    if ($openResult !== true) {
+        return ['error' => 'Failed to open ZIP file (code: ' . $openResult . ')'];
+    }
+
+    // Find the root of the application inside the ZIP
+    $zipBase = '';
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = $zip->getNameIndex($i);
+        if (preg_match('#^((?:[^/]+/)*)version\.json$#', $name, $m)) {
+            $zipBase = $m[1];
+            break;
+        }
+    }
+    if ($zipBase === '') {
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if (preg_match('#^((?:[^/]+/)*)index\.html$#', $name, $m)) {
+                $zipBase = $m[1];
+                break;
+            }
+        }
+    }
+
+    // Read new version from the ZIP
+    $newVersion = 'unknown';
+    $versionContent = $zip->getFromName($zipBase . 'version.json');
+    if ($versionContent !== false) {
+        $vData = json_decode($versionContent, true);
+        if (isset($vData['version'])) $newVersion = $vData['version'];
+    }
+
+    $protectedPaths = ['api/data/'];
+    $extracted = 0;
+    $skipped   = 0;
+
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $entryName = $zip->getNameIndex($i);
+        if ($zipBase !== '' && strpos($entryName, $zipBase) !== 0) continue;
+        $relativePath = substr($entryName, strlen($zipBase));
+        if ($relativePath === '' || $relativePath === false) continue;
+        if (strpos($relativePath, '..') !== false) { $skipped++; continue; }
+
+        $isProtected = false;
+        foreach ($protectedPaths as $pp) {
+            if (strpos($relativePath, $pp) === 0) { $isProtected = true; break; }
+        }
+        if ($isProtected) { $skipped++; continue; }
+
+        $targetPath = $publicDir . '/' . $relativePath;
+        $parentDir = dirname($targetPath);
+        if (!is_dir($parentDir)) mkdir($parentDir, 0755, true);
+
+        $resolvedTarget = realpath($parentDir);
+        $resolvedPublic = realpath($publicDir);
+        if ($resolvedTarget === false || $resolvedPublic === false ||
+            (strpos($resolvedTarget, $resolvedPublic . DIRECTORY_SEPARATOR) !== 0 && $resolvedTarget !== $resolvedPublic)) {
+            $skipped++;
+            continue;
+        }
+
+        if (substr($entryName, -1) === '/') continue;
+
+        $content = $zip->getFromIndex($i);
+        if ($content !== false) {
+            file_put_contents($targetPath, $content);
+            $extracted++;
+        }
+    }
+
+    $zip->close();
+
+    // Cache-bust HTML files
+    $htmlFiles = glob($publicDir . '/*.html');
+    if (is_array($htmlFiles)) {
+        foreach ($htmlFiles as $htmlFile) {
+            $html = file_get_contents($htmlFile);
+            if ($html === false) continue;
+            $updated = preg_replace_callback(
+                '/((?:href|src)\s*=\s*["\'])([^"\']+\.(css|js))(\?v=[^"\']*)?(["\'])/i',
+                function ($m) use ($newVersion) {
+                    if (strpos($m[2], '://') !== false) return $m[0];
+                    return $m[1] . $m[2] . '?v=' . $newVersion . $m[5];
+                },
+                $html
+            );
+            if ($updated !== null && $updated !== $html) {
+                file_put_contents($htmlFile, $updated);
+            }
+        }
+    }
+
+    return [
+        'ok'        => true,
+        'version'   => $newVersion,
+        'extracted' => $extracted,
+        'skipped'   => $skipped,
+        'message'   => 'Update applied successfully. ' . $extracted . ' files updated, ' . $skipped . ' protected files skipped.'
+    ];
+}
+
 // -------------------------------------------------------------------------
 // Route matching
 // -------------------------------------------------------------------------
@@ -577,12 +688,29 @@ if ($seg1 === 'gantt') {
             if (!$existing) json_out(['error' => 'Not found'], 404);
             if (!can_access_project($db, $existing['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
 
+            // Resolve new parent_id
+            $newParentId = array_key_exists('parent_id', $body) ? ($body['parent_id'] ?: null) : $existing['parent_id'];
+            if ($newParentId !== $existing['parent_id'] && $newParentId !== null) {
+                if ($newParentId === $ganttId) json_out(['error' => 'Cannot set parent to self'], 400);
+                // Circular check: walk up ancestry
+                $cursor = $newParentId;
+                while ($cursor) {
+                    $s2 = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+                    $s2->execute([$cursor]);
+                    $anc = $s2->fetch();
+                    if (!$anc) break;
+                    if ($anc['parent_id'] === $ganttId) json_out(['error' => 'Circular parent reference'], 400);
+                    $cursor = $anc['parent_id'];
+                }
+            }
+
             // Save undo
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
 
-            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
+            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
             $s->execute([
+                $newParentId,
                 $body['title'] ?? $existing['title'],
                 $body['start_date'] ?? $existing['start_date'],
                 $body['end_date'] ?? $existing['end_date'],
@@ -916,153 +1044,121 @@ if ($seg1 === 'version' && $method === 'GET') {
 if ($seg1 === 'update' && $method === 'POST') {
     require_auth();
 
-    // Check that the PHP zip extension is available
     if (!class_exists('ZipArchive')) {
         json_out(['error' => 'PHP zip extension is not installed on this server'], 500);
     }
 
-    // Validate uploaded file
     if (empty($_FILES['zipfile']) || $_FILES['zipfile']['error'] !== UPLOAD_ERR_OK) {
         $code = isset($_FILES['zipfile']) ? $_FILES['zipfile']['error'] : -1;
         json_out(['error' => 'No file uploaded or upload error (code: ' . $code . ')'], 400);
     }
 
     $uploadedFile = $_FILES['zipfile']['tmp_name'];
-    $publicDir = dirname(__DIR__); // The public/ directory
+    $result = apply_zip_update($uploadedFile);
 
-    // Open and validate the ZIP
-    $zip = new ZipArchive();
-    $openResult = $zip->open($uploadedFile);
-    if ($openResult !== true) {
-        json_out(['error' => 'Failed to open ZIP file (code: ' . $openResult . ')'], 400);
+    if (file_exists($uploadedFile)) unlink($uploadedFile);
+
+    if (isset($result['error'])) {
+        json_out($result, 400);
+    }
+    json_out($result);
+}
+
+// =========================================================================
+// GITHUB RELEASES – list available versions & update from GitHub
+// =========================================================================
+
+if ($seg1 === 'github-releases' && $method === 'GET') {
+    $versionFile = dirname(__DIR__) . '/version.json';
+    $repository = '';
+    if (file_exists($versionFile)) {
+        $vData = json_decode(file_get_contents($versionFile), true);
+        if (isset($vData['repository'])) $repository = $vData['repository'];
+    }
+    if (!$repository) {
+        json_out(['error' => 'No repository configured in version.json'], 400);
     }
 
-    // Find the root of the application inside the ZIP.
-    // Look for version.json or index.html to determine the base path.
-    $zipBase = '';
-    for ($i = 0; $i < $zip->numFiles; $i++) {
-        $name = $zip->getNameIndex($i);
-        // Check for version.json at various depths
-        if (preg_match('#^((?:[^/]+/)*)version\.json$#', $name, $m)) {
-            $zipBase = $m[1];
-            break;
-        }
-    }
-    // Fallback: look for index.html
-    if ($zipBase === '') {
-        for ($i = 0; $i < $zip->numFiles; $i++) {
-            $name = $zip->getNameIndex($i);
-            if (preg_match('#^((?:[^/]+/)*)index\.html$#', $name, $m)) {
-                $zipBase = $m[1];
-                break;
-            }
-        }
-    }
-
-    // Read new version from the ZIP
-    $newVersion = 'unknown';
-    $versionContent = $zip->getFromName($zipBase . 'version.json');
-    if ($versionContent !== false) {
-        $vData = json_decode($versionContent, true);
-        if (isset($vData['version'])) $newVersion = $vData['version'];
-    }
-
-    // Protected paths that must NOT be overwritten (relative to public/)
-    $protectedPaths = ['api/data/'];
-
-    // Extract files, skipping protected paths
-    $extracted = 0;
-    $skipped   = 0;
-    for ($i = 0; $i < $zip->numFiles; $i++) {
-        $entryName = $zip->getNameIndex($i);
-
-        // Skip entries outside our detected base
-        if ($zipBase !== '' && strpos($entryName, $zipBase) !== 0) continue;
-
-        // Get the relative path within the application
-        $relativePath = substr($entryName, strlen($zipBase));
-        if ($relativePath === '' || $relativePath === false) continue;
-
-        // Path traversal protection: reject paths with ..
-        if (strpos($relativePath, '..') !== false) { $skipped++; continue; }
-
-        // Check if this path is protected
-        $isProtected = false;
-        foreach ($protectedPaths as $pp) {
-            if (strpos($relativePath, $pp) === 0) {
-                $isProtected = true;
-                break;
-            }
-        }
-        if ($isProtected) { $skipped++; continue; }
-
-        $targetPath = $publicDir . '/' . $relativePath;
-
-        // Verify resolved path is within publicDir (defense in depth)
-        // Ensure parent directory exists first so realpath() can resolve it
-        $parentDir = dirname($targetPath);
-        if (!is_dir($parentDir)) {
-            mkdir($parentDir, 0755, true);
-        }
-        $resolvedTarget = realpath($parentDir);
-        $resolvedPublic = realpath($publicDir);
-        if ($resolvedTarget === false || $resolvedPublic === false ||
-            (strpos($resolvedTarget, $resolvedPublic . DIRECTORY_SEPARATOR) !== 0 && $resolvedTarget !== $resolvedPublic)) {
-            $skipped++;
-            continue;
-        }
-
-        // If entry is a directory, create it
-        if (substr($entryName, -1) === '/') {
-            continue; // Already created above
-        }
-
-        // Extract file content and write it
-        $content = $zip->getFromIndex($i);
-        if ($content !== false) {
-            file_put_contents($targetPath, $content);
-            $extracted++;
-        }
-    }
-
-    $zip->close();
-
-    // Clean up uploaded file
-    if (file_exists($uploadedFile)) {
-        unlink($uploadedFile);
-    }
-
-    // ---- Cache-bust: update ?v= query strings in HTML files ----
-    // This ensures browsers fetch the latest JS/CSS after an in-app update,
-    // even if the uploaded ZIP did not include cache-busting parameters.
-    $htmlFiles = glob($publicDir . '/*.html');
-    if (is_array($htmlFiles)) {
-        foreach ($htmlFiles as $htmlFile) {
-            $html = file_get_contents($htmlFile);
-            if ($html === false) continue;
-            // Update or add ?v= on local (relative) CSS/JS references
-            $updated = preg_replace_callback(
-                '/((?:href|src)\s*=\s*["\'])([^"\']+\.(css|js))(\?v=[^"\']*)?(["\'])/i',
-                function ($m) use ($newVersion) {
-                    // Skip external URLs (contain ://)
-                    if (strpos($m[2], '://') !== false) return $m[0];
-                    return $m[1] . $m[2] . '?v=' . $newVersion . $m[5];
-                },
-                $html
-            );
-            if ($updated !== null && $updated !== $html) {
-                file_put_contents($htmlFile, $updated);
-            }
-        }
-    }
-
-    json_out([
-        'ok'        => true,
-        'version'   => $newVersion,
-        'extracted' => $extracted,
-        'skipped'   => $skipped,
-        'message'   => 'Update applied successfully. ' . $extracted . ' files updated, ' . $skipped . ' protected files skipped.'
+    $apiUrl = 'https://api.github.com/repos/' . $repository . '/releases';
+    $ctx = stream_context_create([
+        'http' => [
+            'header' => "User-Agent: OnlineProjectPlanner\r\nAccept: application/vnd.github+json\r\n",
+            'timeout' => 10,
+        ]
     ]);
+    $raw = @file_get_contents($apiUrl, false, $ctx);
+    if ($raw === false) {
+        json_out(['error' => 'Failed to reach GitHub API'], 502);
+    }
+    $releases = json_decode($raw, true);
+    if (!is_array($releases)) {
+        json_out(['error' => 'Failed to parse GitHub response'], 502);
+    }
+    $result = [];
+    foreach ($releases as $r) {
+        $assets = [];
+        if (isset($r['assets']) && is_array($r['assets'])) {
+            foreach ($r['assets'] as $a) {
+                $assets[] = [
+                    'name'         => $a['name'],
+                    'size'         => $a['size'],
+                    'download_url' => $a['browser_download_url'],
+                ];
+            }
+        }
+        $result[] = [
+            'tag'       => $r['tag_name'],
+            'name'      => $r['name'] ?: $r['tag_name'],
+            'published' => $r['published_at'],
+            'body'      => $r['body'] ?: '',
+            'assets'    => $assets,
+        ];
+    }
+    json_out($result);
+}
+
+if ($seg1 === 'update-from-github' && $method === 'POST') {
+    require_auth();
+
+    if (!class_exists('ZipArchive')) {
+        json_out(['error' => 'PHP zip extension is not installed on this server'], 500);
+    }
+
+    $url = $body['url'] ?? '';
+    if (!$url || !is_string($url)) {
+        json_out(['error' => 'Missing download URL'], 400);
+    }
+
+    // Validate URL is from GitHub
+    if (strpos($url, 'https://github.com/') !== 0) {
+        json_out(['error' => 'URL must be a GitHub release asset'], 400);
+    }
+
+    $dataDir = __DIR__ . '/data';
+    if (!is_dir($dataDir)) mkdir($dataDir, 0755, true);
+    $tmpFile = $dataDir . '/github_update_' . time() . '.zip';
+
+    $ctx = stream_context_create([
+        'http' => [
+            'header'          => "User-Agent: OnlineProjectPlanner\r\n",
+            'timeout'         => 60,
+            'follow_location' => 1,
+            'max_redirects'   => 5,
+        ]
+    ]);
+    $data = @file_get_contents($url, false, $ctx);
+    if ($data === false) {
+        json_out(['error' => 'Failed to download file from GitHub'], 502);
+    }
+    file_put_contents($tmpFile, $data);
+
+    $result = apply_zip_update($tmpFile);
+    if (file_exists($tmpFile)) unlink($tmpFile);
+
+    if (isset($result['error'])) {
+        json_out($result, 500);
+    }
+    json_out($result);
 }
 
 // =========================================================================
