@@ -1135,6 +1135,17 @@ function isColorDark(hex) {
   return lum < 0.45;
 }
 
+/**
+ * Return a lighter version of a hex color by increasing HSL lightness.
+ * @param {string} hex   - Input color e.g. '#2196F3'
+ * @param {number} amount - How much to add to lightness (0–1 range)
+ */
+function lightenColor(hex, amount) {
+  const [r, g, b] = hexToRgb(hex);
+  const [h, s, l] = rgbToHsl(r, g, b);
+  return hslToHex(h, s, Math.min(0.92, l + amount));
+}
+
 // ==========================================================================
 // Export: Excel (XLSX) with visual Gantt chart
 // ==========================================================================
@@ -1581,7 +1592,7 @@ async function showShareModal() {
 // Expose globally for cross-module use
 window.appState = state;
 window.appAPI = api;
-window.appUtils = { escHtml, formatDate, getUserColor, isColorDark, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn };
+window.appUtils = { escHtml, formatDate, getUserColor, isColorDark, lightenColor, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn };
 
 // Start app
 init();

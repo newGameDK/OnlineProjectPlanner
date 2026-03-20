@@ -272,7 +272,9 @@
     ganttTaskList.innerHTML = '';
     entries.forEach(entry => {
       const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
-      const color = U().getUserColor(entry.user_id, entry.color_variation);
+      const baseColor = U().getUserColor(entry.user_id, entry.color_variation);
+      const depth = entry._depth || 0;
+      const color = depth > 0 ? U().lightenColor(baseColor, depth * 0.15) : baseColor;
 
       const row = document.createElement('div');
       row.className = 'gantt-task-row' + (S().selectedGanttIds.has(entry.id) ? ' selected' : '');
@@ -616,7 +618,9 @@
     const left  = leftDays  * pxPerDay;
     const width = widthDays * pxPerDay;
 
-    const color       = U().getUserColor(entry.user_id, entry.color_variation);
+    const baseColor   = U().getUserColor(entry.user_id, entry.color_variation);
+    const depth       = entry._depth || 0;
+    const color       = depth > 0 ? U().lightenColor(baseColor, depth * 0.15) : baseColor;
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
     const isSelected  = S().selectedGanttIds.has(entry.id);
     const deps        = S().dependencies || [];
@@ -804,7 +808,8 @@
     if (conn.active && conn.tempLine) {
       const svgEl = document.getElementById('depArrowsSvg');
       if (!svgEl) return;
-      const rect       = ganttRows.getBoundingClientRect();
+      // Use ganttTimeline (not ganttRows) so scrollLeft is not counted twice
+      const rect       = ganttTimeline.getBoundingClientRect();
       const scrollLeft = ganttTimeline.scrollLeft;
       const scrollTop  = ganttTimeline.scrollTop;
       const mx = e.clientX - rect.left  + scrollLeft;
@@ -1136,16 +1141,19 @@
   function calcTotalHours(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
-    let total = entry.hours_estimate || 0;
     const children = S().ganttEntries.filter(e => e.parent_id === entryId);
+    if (children.length === 0) {
+      // Leaf task: count own hours only
+      return entry.hours_estimate || 0;
+    }
     let childSum = 0;
     children.forEach(child => { childSum += calcTotalHours(child.id); });
     if (entry.subtract_hours && childSum > 0) {
-      total = Math.max(0, total - childSum);
-    } else {
-      total += childSum;
+      // "remaining budget" mode: show what's left after children consume from parent
+      return Math.max(0, (entry.hours_estimate || 0) - childSum);
     }
-    return total;
+    // Default: parent hours are replaced by children's sum to avoid double-counting
+    return childSum;
   }
 
   function fmtH(h) {
@@ -1431,6 +1439,11 @@
   });
 
   function readEntryForm() {
+    let folderUrl = (document.getElementById('feFolderUrl') && document.getElementById('feFolderUrl').value.trim()) || '';
+    if (folderUrl && !/^https?:\/\//i.test(folderUrl) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(folderUrl)) {
+      // No URL scheme present (e.g. "youtube.com") – prepend https://
+      folderUrl = 'https://' + folderUrl;
+    }
     return {
       title:           (document.getElementById('feTitle') && document.getElementById('feTitle').value.trim()) || '',
       start_date:      (document.getElementById('feStart') && document.getElementById('feStart').value) || '',
@@ -1438,7 +1451,7 @@
       hours_estimate:  parseFloat((document.getElementById('feHours') && document.getElementById('feHours').value)) || 0,
       color_variation: parseInt((document.getElementById('feColorVar') && document.getElementById('feColorVar').value)) || 0,
       notes:           (document.getElementById('feNotes') && document.getElementById('feNotes').value) || '',
-      folder_url:      (document.getElementById('feFolderUrl') && document.getElementById('feFolderUrl').value.trim()) || '',
+      folder_url:      folderUrl,
     };
   }
 
