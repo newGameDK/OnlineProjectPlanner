@@ -1,6 +1,6 @@
 {
   "name": "online-project-planner",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Web-based multi-user project planner with Gantt charts, todo lists, and real-time collaboration",
   "main": "server.js",
   "scripts": {
