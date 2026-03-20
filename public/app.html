@@ -99,35 +99,36 @@
         <!-- Toolbar -->
         <div class="project-toolbar">
           <div class="toolbar-group">
-            <button id="addGanttBtn" class="btn btn-primary btn-sm">+ Task</button>
-            <button id="undoBtn" class="btn btn-secondary btn-sm" title="Undo (Ctrl+Z)">↩ Undo</button>
-            <button id="deleteSelectedBtn" class="btn btn-danger btn-sm hidden">🗑 Delete Selected</button>
+            <button id="addGanttBtn" class="btn btn-primary btn-sm" data-help="Add a new Gantt task entry to the current view">+ Task</button>
+            <button id="undoBtn" class="btn btn-secondary btn-sm" title="Undo (Ctrl+Z)" data-help="Undo the last action (Ctrl+Z)">↩ Undo</button>
+            <button id="deleteSelectedBtn" class="btn btn-danger btn-sm hidden" data-help="Delete all selected Gantt entries">🗑 Delete Selected</button>
           </div>
           <div class="toolbar-group">
             <label class="toolbar-label">View:</label>
-            <select id="viewScale" class="toolbar-select">
+            <select id="viewScale" class="toolbar-select" data-help="Change the time scale: Day (detailed), Week (default), or Month (overview)">
               <option value="day">Day</option>
               <option value="week" selected>Week</option>
               <option value="month">Month</option>
             </select>
-            <button id="zoomInBtn" class="btn btn-secondary btn-sm" title="Zoom in">+</button>
-            <button id="zoomOutBtn" class="btn btn-secondary btn-sm" title="Zoom out">−</button>
+            <button id="zoomInBtn" class="btn btn-secondary btn-sm" title="Zoom in" data-help="Zoom in to see more detail">+</button>
+            <button id="zoomOutBtn" class="btn btn-secondary btn-sm" title="Zoom out" data-help="Zoom out to see the bigger picture">−</button>
           </div>
           <div class="toolbar-group">
             <label class="toolbar-label">Start:</label>
-            <input type="date" id="chartStartDate" class="toolbar-input">
+            <input type="date" id="chartStartDate" class="toolbar-input" data-help="Set the chart start date">
             <label class="toolbar-label">End:</label>
-            <input type="date" id="chartEndDate" class="toolbar-input">
+            <input type="date" id="chartEndDate" class="toolbar-input" data-help="Set the chart end date">
           </div>
           <div class="toolbar-group">
             <label class="toolbar-label">Capacity:</label>
-            <input type="number" id="capacityInput" class="toolbar-input" style="width:70px" min="1" max="999">
+            <input type="number" id="capacityInput" class="toolbar-input" style="width:70px" min="1" max="999" data-help="Team capacity in hours per month – used for the intensity bar">
             <span class="toolbar-label">h/month</span>
           </div>
           <div class="toolbar-group" style="margin-left:auto">
-            <button id="exportCsvBtn" class="btn btn-secondary btn-sm" title="Export to Excel with visual Gantt chart">📊 Export Excel</button>
-            <button id="exportPdfBtn" class="btn btn-secondary btn-sm" title="Print / Save as PDF (A4)">🖨 Print PDF</button>
-            <button id="shareBtn" class="btn btn-secondary btn-sm" title="Share plan with a read-only link">🔗 Share</button>
+            <button id="helpModeBtn" class="btn btn-secondary btn-sm" title="Toggle help mode – hover elements for explanations">❓ Help</button>
+            <button id="exportCsvBtn" class="btn btn-secondary btn-sm" title="Export to Excel with visual Gantt chart" data-help="Export to an Excel file with a visual Gantt chart representation">📊 Export Excel</button>
+            <button id="exportPdfBtn" class="btn btn-secondary btn-sm" title="Print / Save as PDF (A4)" data-help="Print or save the Gantt chart as a PDF document (A4 landscape)">🖨 Print PDF</button>
+            <button id="shareBtn" class="btn btn-secondary btn-sm" title="Share plan with a read-only link" data-help="Generate a read-only link to share the project plan with others">🔗 Share</button>
           </div>
         </div>
 
@@ -138,35 +139,35 @@
         </div>
 
         <!-- Dependency connecting mode banner -->
-        <div id="connectingBanner" class="connecting-banner hidden">
+        <div id="connectingBanner" class="connecting-banner hidden" data-help="You are in dependency connecting mode. Click an input node (◀) on another task to create a dependency link.">
           <span>🔗 Click the <strong>input node</strong> (◀) on another entry to create a dependency</span>
-          <button id="cancelConnecting" class="btn btn-secondary btn-sm">Cancel (Esc)</button>
+          <button id="cancelConnecting" class="btn btn-secondary btn-sm" data-help="Cancel the current dependency connection (or press Escape)">Cancel (Esc)</button>
         </div>
 
         <!-- Gantt Panel -->
         <div id="ganttPanel" class="panel-content">
           <div class="gantt-container" id="ganttContainer">
             <!-- Intensity bar -->
-            <div class="intensity-bar-container" id="intensityBarContainer">
+            <div class="intensity-bar-container" id="intensityBarContainer" data-help="Intensity bar: shows scheduled hours vs team capacity per period. Green = under capacity, red = over capacity">
               <div class="gantt-tasks-header">
                 <span>Task</span>
               </div>
               <div class="gantt-timeline-header" id="intensityBarWrapper">
                 <canvas id="intensityBarCanvas"></canvas>
               </div>
-              <div class="gantt-hours-header" id="ganttHoursHeader">Total h</div>
+              <div class="gantt-hours-header" id="ganttHoursHeader" data-help="Total estimated hours per task (includes sub-task hours)">Total h</div>
             </div>
             <!-- Gantt chart body -->
             <div class="gantt-body" id="ganttBody">
-              <div class="gantt-tasks" id="ganttTaskList"></div>
-              <div class="gantt-timeline" id="ganttTimeline">
+              <div class="gantt-tasks" id="ganttTaskList" data-help="Task list: click to select, click ▶ to expand sub-entries, double-click bar to drill down into sub-chart"></div>
+              <div class="gantt-timeline" id="ganttTimeline" data-help="Timeline: drag bar body to move, drag edges to resize, right-click for options">
                 <div class="gantt-timeline-ruler" id="ganttRuler"></div>
                 <div class="gantt-timeline-rows" id="ganttRows"></div>
               </div>
-              <div class="gantt-hours-panel" id="ganttHoursPanel"></div>
+              <div class="gantt-hours-panel" id="ganttHoursPanel" data-help="Estimated hours per task (recursive sum including sub-tasks)"></div>
             </div>
           </div>
-          <div class="gantt-breadcrumb" id="ganttBreadcrumb"></div>
+          <div class="gantt-breadcrumb" id="ganttBreadcrumb" data-help="Breadcrumb: navigate back to parent charts after drilling down"></div>
         </div>
 
         <!-- Todo Panel -->
