@@ -1144,7 +1144,8 @@ function exportPDF() {
   const taskListW      = ganttTaskList.offsetWidth;
   const hoursW         = ganttHoursPanel ? ganttHoursPanel.offsetWidth : 0;
 
-  // A4 landscape usable width: 297mm − 2×8mm margins = 281mm → ~1062px at 96dpi
+  // A4 landscape usable width: 297mm − 2×8mm margins = 281mm
+  // Convert mm → px: mm × 96 (CSS reference DPI) / 25.4 (mm per inch)
   const PAGE_W = Math.round(281 * 96 / 25.4);
   const timelinePerPage = PAGE_W - taskListW - hoursW;
   const OVERLAP_PX = 40;
