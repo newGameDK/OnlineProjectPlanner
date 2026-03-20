@@ -1000,7 +1000,7 @@ if ($seg1 === 'update' && $method === 'POST') {
     // This ensures browsers fetch the latest JS/CSS after an in-app update,
     // even if the uploaded ZIP did not include cache-busting parameters.
     $htmlFiles = glob($publicDir . '/*.html');
-    if ($htmlFiles) {
+    if (is_array($htmlFiles)) {
         foreach ($htmlFiles as $htmlFile) {
             $html = file_get_contents($htmlFile);
             if ($html === false) continue;
