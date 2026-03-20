@@ -104,10 +104,10 @@
       render();
     });
     document.getElementById('zoomInBtn').addEventListener('click', () => {
-      pxPerDay = Math.min(pxPerDay * 1.4, 200); render();
+      pxPerDay = Math.min(pxPerDay * 1.2, 200); render();
     });
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
-      pxPerDay = Math.max(pxPerDay / 1.4, 4); render();
+      pxPerDay = Math.max(pxPerDay / 1.2, 4); render();
     });
     document.getElementById('chartStartDate').addEventListener('change', (e) => {
       if (e.target.value) chartStart = new Date(e.target.value + 'T00:00:00');
@@ -160,9 +160,9 @@
       // than silently doing nothing.
       if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
         if (e.deltaY < 0) {
-          pxPerDay = Math.min(pxPerDay * 1.4, 200);
+          pxPerDay = Math.min(pxPerDay * 1.2, 200);
         } else {
-          pxPerDay = Math.max(pxPerDay / 1.4, 4);
+          pxPerDay = Math.max(pxPerDay / 1.2, 4);
         }
         render();
       }
@@ -201,10 +201,12 @@
     // Toggle dependency arrows button
     const toggleDepsBtn = document.getElementById('toggleDepsBtn');
     if (toggleDepsBtn) {
+      ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
       toggleDepsBtn.classList.toggle('active', depsVisible);
       toggleDepsBtn.addEventListener('click', () => {
         depsVisible = !depsVisible;
         toggleDepsBtn.classList.toggle('active', depsVisible);
+        ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
         render();
       });
     }
@@ -1016,23 +1018,60 @@
       hitArea.classList.add('dep-arrow-hit');
       hitArea.style.pointerEvents = 'stroke';
       hitArea.style.cursor        = 'pointer';
-      hitArea.title = srcEntry.title + ' \u2192 ' + tgtEntry.title + '\nClick to delete dependency';
+      hitArea.title = srcEntry.title + ' \u2192 ' + tgtEntry.title;
 
-      const onArrowClick = (e) => {
+      // Red ✕ delete button at the bezier midpoint – appears on hover
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      const delBtn = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      delBtn.classList.add('dep-delete-btn');
+      delBtn.setAttribute('transform', `translate(${mx},${my})`);
+      delBtn.style.cursor = 'pointer';
+      delBtn.style.pointerEvents = 'all';
+
+      const delCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      delCircle.setAttribute('r', '9');
+      delCircle.setAttribute('fill', '#e53935');
+      delCircle.setAttribute('stroke', '#fff');
+      delCircle.setAttribute('stroke-width', '1.5');
+
+      const delText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      delText.setAttribute('text-anchor', 'middle');
+      delText.setAttribute('dominant-baseline', 'central');
+      delText.setAttribute('fill', '#fff');
+      delText.setAttribute('font-size', '11');
+      delText.setAttribute('font-weight', 'bold');
+      delText.textContent = '\u2715';
+
+      delBtn.appendChild(delCircle);
+      delBtn.appendChild(delText);
+      delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (confirm('Remove dependency: "' + srcEntry.title + '" \u2192 "' + tgtEntry.title + '"?')) {
-          deleteDependency(dep.id);
-        }
-      };
-      hitArea.addEventListener('click', onArrowClick);
-      path.addEventListener('click', onArrowClick);
+        deleteDependency(dep.id);
+      });
 
-      // Hover: highlight visible arrow when hit-area is hovered
-      hitArea.addEventListener('mouseenter', () => path.classList.add('dep-arrow-hover'));
-      hitArea.addEventListener('mouseleave', () => path.classList.remove('dep-arrow-hover'));
+      // Hover: show ✕ button and highlight arrow; small delay prevents flicker
+      // when moving between hitArea and delBtn.
+      let _depHoverTimer;
+      const showDepHover = () => {
+        clearTimeout(_depHoverTimer);
+        path.classList.add('dep-arrow-hover');
+        delBtn.style.opacity = '1';
+      };
+      const hideDepHover = () => {
+        _depHoverTimer = setTimeout(() => {
+          path.classList.remove('dep-arrow-hover');
+          delBtn.style.opacity = '0';
+        }, 80);
+      };
+      hitArea.addEventListener('mouseenter', showDepHover);
+      hitArea.addEventListener('mouseleave', hideDepHover);
+      delBtn.addEventListener('mouseenter', showDepHover);
+      delBtn.addEventListener('mouseleave', hideDepHover);
 
       svg.appendChild(hitArea);
       svg.appendChild(path);
+      svg.appendChild(delBtn);
     });
 
     // Keep rubber-band line on top
@@ -1404,9 +1443,11 @@
       hasChildren
         ? { icon: '\u25BC', label: 'Open sub-chart',   action: () => drillDown(entry) }
         : null,
-      entry.folder_url
-        ? { icon: '\uD83D\uDCC2', label: 'Open folder', action: () => window.open(entry.folder_url, '_blank', 'noopener') }
-        : null,
+      { icon: '\uD83D\uDCC2',
+        label: entry.folder_url ? 'Open SharePoint folder' : 'Set SharePoint folder\u2026',
+        action: () => entry.folder_url
+          ? window.open(entry.folder_url, '_blank', 'noopener')
+          : showEditEntryModal(entry) },
       { icon: '\uD83D\uDD17', label: 'Connect dependency', action: () => startConnecting(entry) },
       { icon: '\u2611', label: 'Add to Todo',           action: () => addToTodo(entry) },
       { separator: true },
