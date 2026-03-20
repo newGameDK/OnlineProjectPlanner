@@ -320,9 +320,10 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 /* Ruler */
 .gantt-ruler-cell {
   position: absolute; top: 0; height: 100%; display: flex; flex-direction: column;
-  justify-content: flex-end; padding-bottom: 2px;
+  justify-content: flex-end; padding: 0 4px 2px 4px;
   font-size: 10px; color: var(--text-muted); white-space: nowrap;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis;
+  box-sizing: border-box;
 }
 .gantt-ruler-cell.major { font-weight: 700; color: var(--text); font-size: 11px; }
 .gantt-ruler-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 5; opacity: .5; }

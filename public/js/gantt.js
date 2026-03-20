@@ -303,8 +303,17 @@
     } else if (scale === 'week') {
       forEachDay(chartStart, chartEnd, (d, i) => {
         if (d.getDay() === 1 || i === 0) {
+          // Calculate days until next Monday (or end of chart) for proper cell width
+          const daysLeft = daysBetween(d, chartEnd);
+          let cellDays;
+          if (d.getDay() === 1) {
+            cellDays = Math.min(7, daysLeft);
+          } else {
+            // Partial first week: days until next Monday
+            cellDays = Math.min((8 - d.getDay()) % 7 || 7, daysLeft);
+          }
           ganttRuler.appendChild(makeRulerCell(
-            i * pxPerDay, 7 * pxPerDay,
+            i * pxPerDay, cellDays * pxPerDay,
             'W' + getWeekNumber(d) + ' \u2013 ' + d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
             'major'
           ));
@@ -315,8 +324,10 @@
       while (cur <= chartEnd) {
         const offset = daysBetween(chartStart, cur);
         const dim    = new Date(cur.getFullYear(), cur.getMonth() + 1, 0).getDate();
+        // For partial first month, only count remaining days in that month
+        const cellDays = Math.min(dim - cur.getDate() + 1, daysBetween(cur, chartEnd));
         ganttRuler.appendChild(makeRulerCell(
-          offset * pxPerDay, dim * pxPerDay,
+          offset * pxPerDay, cellDays * pxPerDay,
           cur.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
           'major'
         ));
