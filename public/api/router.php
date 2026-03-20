@@ -129,6 +129,28 @@ function require_auth() {
     return $_SESSION['userId'];
 }
 
+function get_admin_ids() {
+    global $db;
+    $s = $db->prepare('SELECT value FROM app_settings WHERE key=?');
+    $s->execute(['admin_ids']);
+    $row = $s->fetch();
+    if (!$row) return [];
+    $ids = json_decode($row['value'], true);
+    return is_array($ids) ? $ids : [];
+}
+
+function is_admin($userId) {
+    return in_array($userId, get_admin_ids(), true);
+}
+
+function require_admin() {
+    $userId = require_auth();
+    if (!is_admin($userId)) {
+        json_out(['error' => 'Admin access required'], 403);
+    }
+    return $userId;
+}
+
 /**
  * Apply a ZIP update from a file on disk.
  * Extracts the public-folder contents, protects api/data/, and cache-busts HTML.
@@ -337,6 +359,57 @@ if ($seg1 === 'auth') {
         $s = $db->prepare('SELECT * FROM users WHERE id=?');
         $s->execute([$userId]);
         json_out(['user' => sanitize_user($s->fetch())]);
+    }
+}
+
+// =========================================================================
+// ADMIN ROUTES
+// =========================================================================
+
+if ($seg1 === 'admin') {
+
+    // GET admin/status
+    if ($seg2 === 'status' && $method === 'GET') {
+        $userId = require_auth();
+        $ids = get_admin_ids();
+        json_out(['hasAdmin' => count($ids) > 0, 'isAdmin' => in_array($userId, $ids, true)]);
+    }
+
+    // POST admin/set
+    if ($seg2 === 'set' && $method === 'POST') {
+        $userId = require_auth();
+        $targetId = $body['userId'] ?? null;
+        $action   = $body['action'] ?? null;
+        $ids = get_admin_ids();
+
+        // No admin yet → current user claims admin
+        if (count($ids) === 0) {
+            $s = $db->prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
+            $s->execute(['admin_ids', json_encode([$userId])]);
+            json_out(['ok' => true, 'isAdmin' => true]);
+        }
+
+        // Only admins can modify admin list
+        if (!in_array($userId, $ids, true)) {
+            json_out(['error' => 'Only an admin can manage admins'], 403);
+        }
+
+        if ($action === 'add' && $targetId) {
+            if (!in_array($targetId, $ids, true)) $ids[] = $targetId;
+            $s = $db->prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
+            $s->execute(['admin_ids', json_encode(array_values($ids))]);
+            json_out(['ok' => true]);
+        }
+
+        if ($action === 'remove' && $targetId) {
+            $ids = array_values(array_filter($ids, function($id) use ($targetId) { return $id !== $targetId; }));
+            if (count($ids) === 0) json_out(['error' => 'Cannot remove the last admin'], 400);
+            $s = $db->prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
+            $s->execute(['admin_ids', json_encode($ids)]);
+            json_out(['ok' => true]);
+        }
+
+        json_out(['error' => 'Invalid action'], 400);
     }
 }
 
@@ -1025,6 +1098,104 @@ if ($seg1 === 'backup' && $method === 'GET') {
 }
 
 // =========================================================================
+// IMPORT BACKUP – restore teams, projects, entries, todos, dependencies
+// =========================================================================
+
+if ($seg1 === 'backup' && $seg2 === 'import' && $method === 'POST') {
+    $userId = require_auth();
+    $backup = $body;
+
+    if (!is_array($backup) || !isset($backup['teams']) || !is_array($backup['teams'])) {
+        json_out(['error' => 'Invalid backup format'], 400);
+    }
+
+    $teamsImported = 0; $projectsImported = 0; $entriesImported = 0;
+    $todosImported = 0; $depsImported = 0;
+
+    $db->beginTransaction();
+    try {
+        foreach ($backup['teams'] as $team) {
+            $s = $db->prepare('SELECT id FROM teams WHERE id=?');
+            $s->execute([$team['id']]);
+            if (!$s->fetch()) {
+                try {
+                    $s = $db->prepare('INSERT INTO teams (id, name, owner_id, capacity_hours_month) VALUES (?,?,?,?)');
+                    $s->execute([$team['id'], $team['name'], $userId, $team['capacity_hours_month'] ?? 160]);
+                    $s = $db->prepare('INSERT OR IGNORE INTO team_members (team_id, user_id, role) VALUES (?,?,?)');
+                    $s->execute([$team['id'], $userId, 'owner']);
+                    $teamsImported++;
+                } catch (Exception $e) { continue; }
+            } else {
+                $s = $db->prepare('SELECT 1 FROM team_members WHERE team_id=? AND user_id=?');
+                $s->execute([$team['id'], $userId]);
+                if (!$s->fetch()) {
+                    $s = $db->prepare('INSERT OR IGNORE INTO team_members (team_id, user_id, role) VALUES (?,?,?)');
+                    $s->execute([$team['id'], $userId, 'member']);
+                }
+            }
+
+            foreach (($team['projects'] ?? []) as $proj) {
+                $s = $db->prepare('SELECT id FROM projects WHERE id=?');
+                $s->execute([$proj['id']]);
+                if (!$s->fetch()) {
+                    try {
+                        $s = $db->prepare('INSERT INTO projects (id, team_id, name, description, created_by) VALUES (?,?,?,?,?)');
+                        $s->execute([$proj['id'], $team['id'], $proj['name'], $proj['description'] ?? '', $userId]);
+                        $projectsImported++;
+                    } catch (Exception $e) { continue; }
+                }
+
+                foreach (($proj['entries'] ?? []) as $e) {
+                    try {
+                        $s = $db->prepare('INSERT INTO gantt_entries (id, project_id, parent_id, title, start_date, end_date, hours_estimate, color_variation, user_id, position, notes, folder_url, subtract_hours) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+                        $s->execute([
+                            $e['id'], $proj['id'], $e['parent_id'] ?? null, $e['title'],
+                            $e['start_date'], $e['end_date'], $e['hours_estimate'] ?? 0,
+                            $e['color_variation'] ?? 0, $userId, $e['position'] ?? 0,
+                            $e['notes'] ?? '', $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0
+                        ]);
+                        $entriesImported++;
+                    } catch (Exception $ex) { /* already exists */ }
+                }
+
+                foreach (($proj['todos'] ?? []) as $t) {
+                    try {
+                        $s = $db->prepare('INSERT INTO todo_items (id, project_id, gantt_entry_id, title, description, status, assignee_id, due_date, position) VALUES (?,?,?,?,?,?,?,?,?)');
+                        $s->execute([
+                            $t['id'], $proj['id'], $t['gantt_entry_id'] ?? null, $t['title'],
+                            $t['description'] ?? '', $t['status'] ?? 'todo',
+                            $t['assignee_id'] ?? null, $t['due_date'] ?? null, $t['position'] ?? 0
+                        ]);
+                        $todosImported++;
+                    } catch (Exception $ex) { /* already exists */ }
+                }
+
+                foreach (($proj['dependencies'] ?? []) as $d) {
+                    try {
+                        $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id, project_id, source_id, target_id) VALUES (?,?,?,?)');
+                        $s->execute([$d['id'], $proj['id'], $d['source_id'], $d['target_id']]);
+                        $depsImported++;
+                    } catch (Exception $ex) { /* already exists */ }
+                }
+            }
+        }
+        $db->commit();
+    } catch (Exception $e) {
+        $db->rollBack();
+        json_out(['error' => 'Import failed: ' . $e->getMessage()], 500);
+    }
+
+    json_out([
+        'ok' => true,
+        'imported' => [
+            'teams' => $teamsImported, 'projects' => $projectsImported,
+            'entries' => $entriesImported, 'todos' => $todosImported,
+            'dependencies' => $depsImported
+        ]
+    ]);
+}
+
+// =========================================================================
 // VERSION ROUTE
 // =========================================================================
 
@@ -1042,7 +1213,7 @@ if ($seg1 === 'version' && $method === 'GET') {
 // =========================================================================
 
 if ($seg1 === 'update' && $method === 'POST') {
-    require_auth();
+    require_admin();
 
     if (!class_exists('ZipArchive')) {
         json_out(['error' => 'PHP zip extension is not installed on this server'], 500);
@@ -1118,7 +1289,7 @@ if ($seg1 === 'github-releases' && $method === 'GET') {
 }
 
 if ($seg1 === 'update-from-github' && $method === 'POST') {
-    require_auth();
+    require_admin();
 
     if (!class_exists('ZipArchive')) {
         json_out(['error' => 'PHP zip extension is not installed on this server'], 500);

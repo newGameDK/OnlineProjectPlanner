@@ -147,6 +147,14 @@ try {
     $db->exec("ALTER TABLE gantt_entries ADD COLUMN subtract_hours INTEGER NOT NULL DEFAULT 0");
 } catch (Exception $e) { /* column already exists – ignore */ }
 
+// App settings table (admin user IDs etc.)
+$db->exec("
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+");
+
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
