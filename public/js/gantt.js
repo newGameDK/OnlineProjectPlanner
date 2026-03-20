@@ -963,8 +963,8 @@
     }, isSubtask), async () => {
       const vals = readEntryForm();
       if (!vals.title) return alert('Title is required');
-      const subtractHours = isSubtask && document.getElementById('feSubtractHours') &&
-                            document.getElementById('feSubtractHours').checked;
+      const subtractEl = document.getElementById('feSubtractHours');
+      const subtractHours = isSubtask && subtractEl && subtractEl.checked;
       const data = await API('POST', '/api/gantt', {
         project_id: S().currentProject.id,
         parent_id: parentId !== undefined ? parentId : currentParentId,
@@ -973,7 +973,7 @@
       S().ganttEntries.push(data.entry);
 
       // Subtract hours from parent if checkbox was checked
-      if (subtractHours && vals.hours_estimate > 0) {
+      if (subtractHours && typeof vals.hours_estimate === 'number' && vals.hours_estimate > 0) {
         const parentEntry = S().ganttEntries.find(e => e.id === parentId);
         if (parentEntry) {
           const newHours = Math.max(0, (parentEntry.hours_estimate || 0) - vals.hours_estimate);
