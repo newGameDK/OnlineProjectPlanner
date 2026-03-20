@@ -126,6 +126,20 @@
 
     ganttTimeline.addEventListener('scroll', syncIntensityScroll);
 
+    // Scroll-wheel zoom on the ruler / timeline / intensity bar
+    const wheelZoom = (e) => {
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        pxPerDay = Math.min(pxPerDay * 1.4, 200);
+      } else {
+        pxPerDay = Math.max(pxPerDay / 1.4, 4);
+      }
+      render();
+    };
+    ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
+    if (ganttRuler) ganttRuler.addEventListener('wheel', wheelZoom, { passive: false });
+    if (intensityBarWrapper) intensityBarWrapper.addEventListener('wheel', wheelZoom, { passive: false });
+
     // Global mouse/key events
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup',   onMouseUp);
@@ -1173,6 +1187,24 @@
       }
       render();
       U().closeModal();
+
+      // If this is a subtask and the parent does not already subtract hours,
+      // ask the user whether they want to enable subtraction.
+      if (data.entry.parent_id) {
+        const parent = S().ganttEntries.find(e => e.id === data.entry.parent_id);
+        if (parent && !parent.subtract_hours && (parent.hours_estimate || 0) > 0) {
+          if (confirm('Subtract this sub-task\'s hours from the parent task\'s hours?')) {
+            try {
+              const upd = await API('PUT', '/api/gantt/' + parent.id, { subtract_hours: true });
+              const pi = S().ganttEntries.findIndex(e => e.id === parent.id);
+              if (pi !== -1) S().ganttEntries[pi] = upd.entry;
+              const crumb = parentStack.find(c => c.entry.id === parent.id);
+              if (crumb) crumb.entry = upd.entry;
+              render();
+            } catch (_) { /* ignore – not critical */ }
+          }
+        }
+      }
 
       // Ask if the new entry should also be added to the todo list
       if (confirm('Add "' + data.entry.title + '" to the Todo list as well?')) {

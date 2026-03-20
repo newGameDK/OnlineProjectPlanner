@@ -511,6 +511,39 @@ function setupEventListeners() {
     }
   });
 
+  // Import backup
+  document.getElementById('importBackupBtn').addEventListener('click', () => {
+    openModal('Import Backup', `
+      <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
+        Select a previously exported backup JSON file to restore.
+        Existing data will not be overwritten — only missing items are added.
+      </p>
+      <div class="form-group">
+        <label>Select backup file</label>
+        <input type="file" id="importBackupFile" accept=".json" style="font-size:13px">
+      </div>
+    `, async () => {
+      const input = document.getElementById('importBackupFile');
+      if (!input.files.length) return alert('Please select a backup JSON file');
+      const file = input.files[0];
+      try {
+        const text = await file.text();
+        const backup = JSON.parse(text);
+        if (!backup.teams || !Array.isArray(backup.teams)) throw new Error('Invalid backup format');
+        const data = await api('POST', '/api/backup/import', backup);
+        closeModal();
+        const imp = data.imported || {};
+        alert('Import complete!\n' +
+          'Teams: ' + (imp.teams || 0) + ', Projects: ' + (imp.projects || 0) +
+          ', Entries: ' + (imp.entries || 0) + ', Todos: ' + (imp.todos || 0) +
+          ', Dependencies: ' + (imp.dependencies || 0));
+        window.location.reload();
+      } catch (e) {
+        alert('Import failed: ' + e.message);
+      }
+    });
+  });
+
   // Show version in user panel
   (async () => {
     const el = document.getElementById('appVersion');
@@ -527,7 +560,32 @@ function setupEventListeners() {
   })();
 
   // Update app
-  document.getElementById('updateBtn').addEventListener('click', () => {
+  document.getElementById('updateBtn').addEventListener('click', async () => {
+    // Check admin status before showing update UI
+    try {
+      const adminRes = await api('GET', '/api/admin/status');
+      if (!adminRes.hasAdmin) {
+        // No admin set yet – offer to become admin
+        openModal('Set Admin', `
+          <p style="font-size:13px;margin-bottom:12px">No admin has been set yet. Only admins can update the application.</p>
+          <p style="font-size:13px;margin-bottom:12px">Would you like to set yourself as the admin?</p>
+        `, async () => {
+          try {
+            await api('POST', '/api/admin/set', {});
+            closeModal();
+            alert('You are now the admin. Click Update App again to proceed.');
+          } catch (e) { alert('Failed: ' + e.message); }
+        });
+        return;
+      }
+      if (!adminRes.isAdmin) {
+        alert('Only the admin can update the application.');
+        return;
+      }
+    } catch (e) {
+      // If admin endpoints not available (older backend), fall through
+    }
+
     openModal('Update Application', `
       <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
         Install a version from GitHub or upload a ZIP manually.
@@ -1148,7 +1206,7 @@ function exportPDF() {
   // Convert mm → px: mm × 96 (CSS reference DPI) / 25.4 (mm per inch)
   const PAGE_W = Math.round(281 * 96 / 25.4);
   const timelinePerPage = PAGE_W - taskListW - hoursW;
-  const OVERLAP_PX = 40;
+  const OVERLAP_PX = Math.round(10 * 96 / 25.4); // 1 cm
   const step = Math.max(1, timelinePerPage - OVERLAP_PX);
 
   const numPages = timelineTotalW > timelinePerPage

@@ -151,6 +151,14 @@ try {
   db.exec(`ALTER TABLE gantt_entries ADD COLUMN subtract_hours INTEGER NOT NULL DEFAULT 0`);
 } catch (_) { /* column already exists – ignore */ }
 
+// App settings table (key-value store for admin user IDs etc.)
+db.exec(`
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`);
+
 // ---------------------------------------------------------------------------
 // Prepared statements
 // ---------------------------------------------------------------------------
@@ -162,6 +170,10 @@ const stmts = {
   getUserByUsername: db.prepare(`SELECT * FROM users WHERE username=?`),
   getUserByEmail: db.prepare(`SELECT * FROM users WHERE email=?`),
   updateUserColor: db.prepare(`UPDATE users SET base_color=? WHERE id=?`),
+
+  // App settings (admin management)
+  getSetting: db.prepare(`SELECT value FROM app_settings WHERE key=?`),
+  setSetting: db.prepare(`INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)`),
 
   // Teams
   createTeam: db.prepare(`INSERT INTO teams (id,name,owner_id,capacity_hours_month) VALUES (?,?,?,?)`),
@@ -202,6 +214,7 @@ const stmts = {
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
   updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
+  updateGanttSubtractHours: db.prepare(`UPDATE gantt_entries SET subtract_hours=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
@@ -812,6 +825,94 @@ app.get('/api/backup', requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Import backup – restore teams, projects, entries, todos, dependencies
+// ---------------------------------------------------------------------------
+
+app.post('/api/backup/import', requireAuth, (req, res) => {
+  const userId = req.session.userId;
+  const backup = req.body;
+
+  if (!backup || !Array.isArray(backup.teams)) {
+    return res.status(400).json({ error: 'Invalid backup format' });
+  }
+
+  let teamsImported = 0, projectsImported = 0, entriesImported = 0, todosImported = 0, depsImported = 0;
+
+  const importTx = db.transaction(() => {
+    for (const team of backup.teams) {
+      // Create or skip team
+      const existing = stmts.getTeam.get(team.id);
+      if (!existing) {
+        try {
+          stmts.createTeam.run(team.id, team.name, userId, team.capacity_hours_month || 160);
+          stmts.addTeamMember.run(team.id, userId, 'owner');
+          teamsImported++;
+        } catch (_) { continue; }
+      } else {
+        // Ensure the current user is a member
+        if (!stmts.isMember.get(team.id, userId)) {
+          stmts.addTeamMember.run(team.id, userId, 'member');
+        }
+      }
+
+      // Import projects
+      for (const proj of (team.projects || [])) {
+        const existingProj = stmts.getProject.get(proj.id);
+        if (!existingProj) {
+          try {
+            stmts.createProject.run(proj.id, team.id, proj.name, proj.description || '', userId);
+            projectsImported++;
+          } catch (_) { continue; }
+        }
+
+        // Import gantt entries
+        for (const e of (proj.entries || [])) {
+          try {
+            stmts.createGantt.run(
+              e.id, proj.id, e.parent_id || null, e.title,
+              e.start_date, e.end_date, e.hours_estimate || 0,
+              e.color_variation || 0, userId, e.position || 0,
+              e.notes || '', e.folder_url || ''
+            );
+            if (e.subtract_hours) {
+              stmts.updateGanttSubtractHours.run(e.subtract_hours ? 1 : 0, e.id);
+            }
+            entriesImported++;
+          } catch (_) { /* already exists */ }
+        }
+
+        // Import todos
+        for (const t of (proj.todos || [])) {
+          try {
+            stmts.createTodo.run(
+              t.id, proj.id, t.gantt_entry_id || null, t.title,
+              t.description || '', t.status || 'todo',
+              t.assignee_id || null, t.due_date || null, t.position || 0
+            );
+            todosImported++;
+          } catch (_) { /* already exists */ }
+        }
+
+        // Import dependencies
+        for (const d of (proj.dependencies || [])) {
+          try {
+            stmts.createDep.run(d.id, proj.id, d.source_id, d.target_id);
+            depsImported++;
+          } catch (_) { /* already exists */ }
+        }
+      }
+    }
+  });
+
+  importTx();
+
+  res.json({
+    ok: true,
+    imported: { teams: teamsImported, projects: projectsImported, entries: entriesImported, todos: todosImported, dependencies: depsImported }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Version route
 // ---------------------------------------------------------------------------
 
@@ -824,6 +925,66 @@ app.get('/api/version', (_req, res) => {
     } catch { /* fall through */ }
   }
   res.json({ version: 'unknown' });
+});
+
+// ---------------------------------------------------------------------------
+// Admin management
+// ---------------------------------------------------------------------------
+
+function isAdmin(userId) {
+  const row = stmts.getSetting.get('admin_ids');
+  if (!row) return false;
+  try { return JSON.parse(row.value).includes(userId); } catch { return false; }
+}
+
+function getAdminIds() {
+  const row = stmts.getSetting.get('admin_ids');
+  if (!row) return [];
+  try { return JSON.parse(row.value); } catch { return []; }
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+  if (!isAdmin(req.session.userId)) return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
+// GET /api/admin/status – anyone can check if an admin exists and whether they are admin
+app.get('/api/admin/status', requireAuth, (req, res) => {
+  const ids = getAdminIds();
+  res.json({ hasAdmin: ids.length > 0, isAdmin: ids.includes(req.session.userId) });
+});
+
+// POST /api/admin/set – become admin (only when no admin exists) or add/remove admins (admin only)
+app.post('/api/admin/set', requireAuth, (req, res) => {
+  const { userId: targetId, action } = req.body;  // action: 'add' | 'remove'
+  const ids = getAdminIds();
+
+  // If no admin exists yet, allow the current user to claim admin
+  if (ids.length === 0) {
+    stmts.setSetting.run('admin_ids', JSON.stringify([req.session.userId]));
+    return res.json({ ok: true, isAdmin: true });
+  }
+
+  // Only existing admins can modify admin list
+  if (!ids.includes(req.session.userId)) {
+    return res.status(403).json({ error: 'Only an admin can manage admins' });
+  }
+
+  if (action === 'add' && targetId) {
+    if (!ids.includes(targetId)) ids.push(targetId);
+    stmts.setSetting.run('admin_ids', JSON.stringify(ids));
+    return res.json({ ok: true });
+  }
+
+  if (action === 'remove' && targetId) {
+    const updated = ids.filter(id => id !== targetId);
+    if (updated.length === 0) return res.status(400).json({ error: 'Cannot remove the last admin' });
+    stmts.setSetting.run('admin_ids', JSON.stringify(updated));
+    return res.json({ ok: true });
+  }
+
+  res.status(400).json({ error: 'Invalid action' });
 });
 
 // ---------------------------------------------------------------------------
@@ -939,7 +1100,7 @@ function applyZipUpdate(zipPath) {
 }
 
 // Upload a ZIP to update the application
-app.post('/api/update', requireAuth, (req, res) => {
+app.post('/api/update', requireAdmin, (req, res) => {
   if (!multerImported) {
     return res.status(501).json({
       error: 'File upload is not supported on this Node.js deployment. ' +
@@ -1023,7 +1184,7 @@ app.get('/api/github-releases', (_req, res) => {
   });
 });
 
-app.post('/api/update-from-github', requireAuth, (req, res) => {
+app.post('/api/update-from-github', requireAdmin, (req, res) => {
   const { url } = req.body || {};
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'Missing download URL' });
