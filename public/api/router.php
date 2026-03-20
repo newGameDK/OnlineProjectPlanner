@@ -996,6 +996,30 @@ if ($seg1 === 'update' && $method === 'POST') {
         unlink($uploadedFile);
     }
 
+    // ---- Cache-bust: update ?v= query strings in HTML files ----
+    // This ensures browsers fetch the latest JS/CSS after an in-app update,
+    // even if the uploaded ZIP did not include cache-busting parameters.
+    $htmlFiles = glob($publicDir . '/*.html');
+    if (is_array($htmlFiles)) {
+        foreach ($htmlFiles as $htmlFile) {
+            $html = file_get_contents($htmlFile);
+            if ($html === false) continue;
+            // Update or add ?v= on local (relative) CSS/JS references
+            $updated = preg_replace_callback(
+                '/((?:href|src)\s*=\s*["\'])([^"\']+\.(css|js))(\?v=[^"\']*)?(["\'])/i',
+                function ($m) use ($newVersion) {
+                    // Skip external URLs (contain ://)
+                    if (strpos($m[2], '://') !== false) return $m[0];
+                    return $m[1] . $m[2] . '?v=' . $newVersion . $m[5];
+                },
+                $html
+            );
+            if ($updated !== null && $updated !== $html) {
+                file_put_contents($htmlFile, $updated);
+            }
+        }
+    }
+
     json_out([
         'ok'        => true,
         'version'   => $newVersion,

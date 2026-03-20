@@ -513,14 +513,17 @@ function setupEventListeners() {
 
   // Show version in user panel
   (async () => {
+    const el = document.getElementById('appVersion');
     try {
-      const res = await fetch('version.json', { cache: 'no-cache' });
+      const res = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        const el = document.getElementById('appVersion');
-        if (el) el.textContent = 'v' + data.version;
+        if (el && data.version) el.textContent = 'v' + data.version;
       }
-    } catch {}
+    } catch {
+      // version.json missing or unreadable – not critical
+      if (el) el.textContent = '';
+    }
   })();
 
   // Update app
@@ -579,8 +582,14 @@ function setupEventListeners() {
         // Hide the OK button after success
         document.getElementById('modalOk').style.display = 'none';
 
-        // Reload after brief delay so user sees success message
-        setTimeout(() => { window.location.reload(true); }, 2000);
+        // Reload after brief delay so user sees success message.
+        // Use a cache-busting query parameter to ensure the browser
+        // fetches all resources fresh after the update.
+        setTimeout(() => {
+          const url = new URL(window.location.href);
+          url.searchParams.set('_updated', Date.now());
+          window.location.href = url.toString();
+        }, 2000);
       } catch (e) {
         progressBar.style.width = '100%';
         progressBar.style.background = 'var(--danger)';

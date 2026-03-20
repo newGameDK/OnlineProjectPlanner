@@ -146,12 +146,15 @@ document.getElementById('joinBtn').addEventListener('click', async () => {
 
 // Show version on login screen
 (async () => {
+  const el = document.getElementById('authVersion');
   try {
-    const res = await fetch('version.json', { cache: 'no-cache' });
+    const res = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
     if (res.ok) {
       const data = await res.json();
-      const el = document.getElementById('authVersion');
-      if (el) el.textContent = 'v' + data.version;
+      if (el && data.version) el.textContent = 'v' + data.version;
     }
-  } catch {}
+  } catch {
+    // version.json missing or unreadable – not critical
+    if (el) el.textContent = '';
+  }
 })();
