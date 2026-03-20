@@ -408,12 +408,22 @@
       bar.appendChild(folderBtn);
     }
 
-    // Sub-chart indicator
+    // Sub-chart indicator (clickable expand/collapse)
+    let barIndicator = null;
     if (hasChildren) {
+      const isExpanded = expandedIds.has(entry.id);
       const ind = document.createElement('span');
       ind.className   = 'has-children-indicator';
-      ind.textContent = '\u25BC';
+      ind.textContent = isExpanded ? '\u25BC' : '\u25B6';
+      ind.title       = isExpanded ? 'Collapse sub-entries' : 'Expand sub-entries';
+      ind.addEventListener('mousedown', (e) => e.stopPropagation());
+      ind.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (expandedIds.has(entry.id)) { expandedIds.delete(entry.id); } else { expandedIds.add(entry.id); }
+        render();
+      });
       bar.appendChild(ind);
+      barIndicator = ind;
     }
 
     // ── Left resize handle ─────────────────────────────────────────────────
@@ -475,7 +485,8 @@
     // ── Bar body drag (move) ───────────────────────────────────────────────
     bar.addEventListener('mousedown', (e) => {
       if (e.target === hLeft || e.target === hRight ||
-          e.target === inputNode || e.target === outputNode) return;
+          e.target === inputNode || e.target === outputNode ||
+          e.target === barIndicator) return;
       e.preventDefault();
       startDrag(e, 'move', entry, bar, container);
     });
