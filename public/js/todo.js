@@ -14,6 +14,7 @@
 
   let currentFilter = 'all';
   let todoDepsVisible = false;  // show dependency badges on cards
+  let _dragDropReady  = false;  // column drop-zones set up once per DOM
 
   window.todoModule = {
     render,
@@ -38,6 +39,8 @@
     renderColumn('todoListTodo',        byStatus.todo);
     renderColumn('todoListInProgress',  byStatus.in_progress);
     renderColumn('todoListDone',        byStatus.done);
+
+    setupDragDrop();
   }
 
   function filteredTodos() {
@@ -139,6 +142,16 @@
     `;
 
     card.addEventListener('click', () => showEditModal(todo));
+    card.draggable = true;
+    card.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', String(todo.id));
+      e.dataTransfer.effectAllowed = 'move';
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      document.querySelectorAll('.todo-list').forEach(l => l.classList.remove('drag-over'));
+    });
     card.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       U().showContextMenu(e.pageX, e.pageY, [
@@ -152,6 +165,42 @@
     });
 
     return card;
+  }
+
+  // =========================================================================
+  // Drag-and-drop between columns
+  // =========================================================================
+
+  function setupDragDrop() {
+    if (_dragDropReady) return;
+    _dragDropReady = true;
+
+    document.querySelectorAll('.todo-list').forEach(list => {
+      list.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        list.classList.add('drag-over');
+      });
+      list.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        list.classList.add('drag-over');
+      });
+      list.addEventListener('dragleave', (e) => {
+        if (!e.relatedTarget || !list.contains(e.relatedTarget)) {
+          list.classList.remove('drag-over');
+        }
+      });
+      list.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        list.classList.remove('drag-over');
+        const todoId  = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const newStatus = list.closest('.todo-column')?.dataset.status;
+        if (!todoId || !newStatus) return;
+        const todo = S().todos.find(t => t.id === todoId);
+        if (!todo || todo.status === newStatus) return;
+        await updateStatus(todo, newStatus);
+      });
+    });
   }
 
   // =========================================================================

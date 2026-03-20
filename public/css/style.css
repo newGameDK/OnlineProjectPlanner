@@ -419,6 +419,8 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   padding: 10px 12px; cursor: pointer; transition: box-shadow .12s;
 }
 .todo-card:hover { box-shadow: var(--shadow); }
+.todo-card.dragging { opacity: 0.45; box-shadow: none; cursor: grabbing; }
+.todo-list.drag-over { background: var(--primary-light); outline: 2px dashed var(--primary); outline-offset: -2px; border-radius: var(--radius-sm); }
 .todo-card-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .todo-card-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
 .todo-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -550,6 +552,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .gantt-bar:hover .dep-node,
 .dep-node.always-visible { opacity: 1; }
+.deps-hidden .dep-node { display: none !important; }
 .dep-node.input-node  { left: -7px;  background: #1565C0; }
 .dep-node.output-node { right: -7px; background: #2e7d32; }
 .dep-node:hover { transform: translateY(-50%) scale(1.3); }
@@ -571,6 +574,10 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 #depArrowsSvg path.dep-arrow-hit {
   pointer-events: stroke; cursor: pointer;
+}
+.dep-delete-btn {
+  opacity: 0;
+  transition: opacity .15s;
 }
 
 /* =====================================================================
