@@ -33,7 +33,7 @@ OnlineProjectPlanner/
 │   └── api/
 │       ├── router.php             ← PHP API entry point – handles all /api/* routes
 │       ├── db.php                 ← SQLite database initialisation and schema
-│       ├── .htaccess              ← (Optional) mod_rewrite fallback for clean URLs
+│       ├── .htaccess              ← (Optional) mod_rewrite for clean URLs – rules disabled by default
 │       └── data/
 │           ├── .htaccess          ← Blocks direct HTTP access to the data folder
 │           └── planner.db         ← SQLite database (auto-created on first request)
@@ -252,7 +252,7 @@ Initialises the SQLite database. Included by `router.php`.
 ---
 
 ### `public/api/.htaccess`
-Optional Apache rewrite rule. Rewrites `api/<path>` to `api/router.php?_route=<path>` **only when mod_rewrite is available**. Because `PHP_ROUTER = true` in `config.js`, the frontend never relies on this – it always calls `router.php` directly. This file is a convenience for setups where clean URLs are preferred.
+Optional Apache rewrite rules. When uncommented, rewrites `api/<path>` to `api/router.php?_route=<path>` using mod_rewrite. **The rules are disabled (commented out) by default** because `PHP_ROUTER = true` in `config.js` makes the frontend call `router.php` directly. Active rewrite rules can cause 500 Internal Server errors on shared-hosting plans where `AllowOverride` does not include `FileInfo`. Uncomment only if you set `PHP_ROUTER = false` and your host supports mod_rewrite in `.htaccess` files.
 
 ---
 
@@ -305,7 +305,7 @@ PORT=8080 npm start  # custom port
    └── api/
        ├── router.php
        ├── db.php
-       ├── .htaccess
+       ├── .htaccess            ← Optional; rewrite rules disabled by default
        └── data/
            └── .htaccess
    ```
@@ -314,6 +314,7 @@ PORT=8080 npm start  # custom port
    ```json
    {"ok":true}
    ```
+   If you see a blank page, a 500 error, or an HTML error page, the `api/.htaccess` file may be causing issues — delete it and try again.
 
 4. **If the health check fails**, open `https://yourdomain.com/api/router.php?_route=diag` to see a diagnostics report:
    ```json
@@ -338,13 +339,14 @@ PORT=8080 npm start  # custom port
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| "Cannot reach the backend API" banner | `api/` folder not uploaded, PHP not enabled, or `api/.htaccess` causing 500 error | Re-upload `api/` folder; confirm PHP ≥ 7.3 is enabled; try opening `api/router.php?_route=health` directly in the browser. If you see a blank page or 500 error, delete `api/.htaccess` and try again. |
 | Health check returns HTML, not JSON | PHP fatal error in db.php | Check `diag` endpoint; enable `pdo_sqlite`; fix `data/` permissions |
 | Login works but session is lost on next request | Session cookie path conflict | Already fixed in the current code (cookie path set to `/`) |
-| "Cannot reach the backend API" banner | `api/` folder not uploaded, or PHP not enabled | Re-upload `api/` folder; confirm PHP is enabled in your hosting control panel |
 | `diag` shows `data_dir_writable: false` | FTP permissions too restrictive | Right-click `api/data/` in your FTP client → change permissions to `755` |
-| `.htaccess` causes 500 error | Server has `AllowOverride None` | Safe to delete `api/.htaccess` – it is not needed when `PHP_ROUTER = true`. The root `.htaccess` handles cache control but is also optional. |
+| `.htaccess` causes 500 error | Server has `AllowOverride None` or restrictive override settings | The `api/.htaccess` rewrite rules are now disabled by default. If you still get 500 errors, delete both `.htaccess` files (`api/.htaccess` and the root `.htaccess`) — they are optional when `PHP_ROUTER = true`. |
 | Version number not shown on login page | Browser serving cached old JS files | Hard refresh (`Ctrl+Shift+R`), or ensure the root `.htaccess` file was uploaded (some FTP clients hide dotfiles) |
 | Uploaded new files but still see old version | Browser cache / missing `.htaccess` | Check that `version.json` shows the correct version in the browser, then do a hard refresh |
+| Error banner shows "PHP 7.3 or newer is required" | Hosting is running an older PHP version | Update PHP to 7.3+ in your hosting control panel. Most shared hosts allow you to select the PHP version. |
 
 ### Subdirectory installation
 
