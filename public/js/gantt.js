@@ -1121,14 +1121,23 @@
   // =========================================================================
   function visibleEntries() {
     const all   = S().ganttEntries;
-    const roots = all.filter(e => e.parent_id === currentParentId);
+
+    // Build parent → children map once (O(n) instead of repeated O(n) filters)
+    const childrenOf = {};
+    all.forEach(e => {
+      const pid = e.parent_id;
+      if (!childrenOf[pid]) childrenOf[pid] = [];
+      childrenOf[pid].push(e);
+    });
+
+    const roots  = childrenOf[currentParentId] || [];
     const result = [];
 
     function addWithChildren(entry, depth) {
       entry._depth = depth;           // transient, used for indent
       result.push(entry);
       if (expandedIds.has(entry.id)) {
-        const kids = all.filter(e => e.parent_id === entry.id);
+        const kids = childrenOf[entry.id] || [];
         kids.forEach(child => addWithChildren(child, depth + 1));
       }
     }
