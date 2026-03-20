@@ -294,7 +294,6 @@
       row.appendChild(grip);
 
       // Indent placeholder
-      const depth = entry._depth || 0;
       const ind = document.createElement('span');
       ind.className = 'gantt-task-indent';
       ind.style.width = (depth * 16) + 'px';
