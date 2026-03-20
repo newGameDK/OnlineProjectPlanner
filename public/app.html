@@ -102,7 +102,6 @@
           <div class="toolbar-group">
             <button id="addGanttBtn" class="btn btn-primary btn-sm" data-help="Add a new Gantt task entry to the current view">+ Task</button>
             <button id="undoBtn" class="btn btn-secondary btn-sm" title="Undo (Ctrl+Z)" data-help="Undo the last action (Ctrl+Z)">↩ Undo</button>
-            <button id="deleteSelectedBtn" class="btn btn-danger btn-sm hidden" data-help="Delete all selected Gantt entries">🗑 Delete Selected</button>
           </div>
           <div class="toolbar-group">
             <label class="toolbar-label">View:</label>
@@ -159,13 +158,18 @@
               </div>
               <div class="gantt-hours-header" id="ganttHoursHeader" data-help="Total estimated hours per task (includes sub-task hours)">Total h</div>
             </div>
+            <!-- Ruler row (above body so task list and timeline rows stay aligned) -->
+            <div class="gantt-ruler-row">
+              <div class="gantt-ruler-task-spacer"></div>
+              <div class="gantt-ruler-clip">
+                <div class="gantt-timeline-ruler" id="ganttRuler"></div>
+              </div>
+              <div class="gantt-ruler-hours-spacer"></div>
+            </div>
             <!-- Gantt chart body -->
             <div class="gantt-body" id="ganttBody">
               <div class="gantt-tasks" id="ganttTaskList" data-help="Task list: click to select, click ▶ to expand sub-entries, double-click bar to drill down into sub-chart"></div>
               <div class="gantt-timeline-col" id="ganttTimelineCol">
-                <div class="gantt-ruler-clip">
-                  <div class="gantt-timeline-ruler" id="ganttRuler"></div>
-                </div>
                 <div class="gantt-timeline" id="ganttTimeline" data-help="Timeline: drag bar body to move, drag edges to resize, right-click for options">
                   <div class="gantt-timeline-rows" id="ganttRows"></div>
                 </div>
