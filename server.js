@@ -214,6 +214,7 @@ const stmts = {
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
   updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
+  updateGanttSubtractHours: db.prepare(`UPDATE gantt_entries SET subtract_hours=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
@@ -874,7 +875,7 @@ app.post('/api/backup/import', requireAuth, (req, res) => {
               e.notes || '', e.folder_url || ''
             );
             if (e.subtract_hours) {
-              db.prepare('UPDATE gantt_entries SET subtract_hours=? WHERE id=?').run(e.subtract_hours ? 1 : 0, e.id);
+              stmts.updateGanttSubtractHours.run(e.subtract_hours ? 1 : 0, e.id);
             }
             entriesImported++;
           } catch (_) { /* already exists */ }
