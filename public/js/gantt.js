@@ -73,7 +73,7 @@
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal };
+  window.ganttModule = { init, render, showAddEntryModal, collapseAll };
 
   // =========================================================================
   // Init
@@ -204,7 +204,7 @@
       if (hasChildren) {
         exp.className = 'gantt-task-expand' + (isExpanded ? ' expanded' : '');
         exp.textContent = isExpanded ? '\u25BC' : '\u25B6';
-        exp.title = isExpanded ? 'Collapse sub-entries' : 'Expand sub-entries (double-click to drill down)';
+        exp.title = isExpanded ? 'Collapse sub-entries' : 'Expand sub-entries';
         exp.addEventListener('click', (e) => {
           e.stopPropagation();
           if (isExpanded) { expandedIds.delete(entry.id); } else { expandedIds.add(entry.id); }
@@ -346,7 +346,7 @@
       rowBg.className     = 'gantt-row-bg';
       rowBg.style.height  = ROW_H + 'px';
       rowBg.dataset.id    = entry.id;
-      rowBg.addEventListener('dblclick', () => drillDown(entry));
+      rowBg.addEventListener('dblclick', () => toggleExpand(entry));
 
       const bar = buildBar(entry);
       if (bar) rowBg.appendChild(bar);
@@ -408,11 +408,18 @@
       bar.appendChild(folderBtn);
     }
 
-    // Sub-chart indicator
+    // Expand/collapse button on bar (for entries with children)
     if (hasChildren) {
+      const isExp = expandedIds.has(entry.id);
       const ind = document.createElement('span');
-      ind.className   = 'has-children-indicator';
-      ind.textContent = '\u25BC';
+      ind.className   = 'has-children-indicator clickable' + (isExp ? ' expanded' : '');
+      ind.textContent = isExp ? '\u25B2' : '\u25BC';
+      ind.title       = isExp ? 'Collapse sub-tasks' : 'Expand sub-tasks';
+      ind.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleExpand(entry);
+      });
+      ind.addEventListener('mousedown', (e) => e.stopPropagation());
       bar.appendChild(ind);
     }
 
@@ -480,7 +487,7 @@
       startDrag(e, 'move', entry, bar, container);
     });
 
-    bar.addEventListener('dblclick', (e) => { e.stopPropagation(); drillDown(entry); });
+    bar.addEventListener('dblclick', (e) => { e.stopPropagation(); toggleExpand(entry); });
     bar.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       showEntryContextMenu(e.pageX, e.pageY, entry);
@@ -915,7 +922,26 @@
   }
 
   // =========================================================================
-  // Sub-Gantt Drill-Down
+  // Inline expand / collapse (replaces drill-down)
+  // =========================================================================
+  function toggleExpand(entry) {
+    const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
+    if (!hasChildren) return;
+    if (expandedIds.has(entry.id)) {
+      expandedIds.delete(entry.id);
+    } else {
+      expandedIds.add(entry.id);
+    }
+    render();
+  }
+
+  function collapseAll() {
+    expandedIds.clear();
+    render();
+  }
+
+  // =========================================================================
+  // Sub-Gantt Drill-Down  (kept for breadcrumb navigation if needed)
   // =========================================================================
   function drillDown(entry) {
     parentStack.push({ entry, label: entry.title });
@@ -929,19 +955,42 @@
   function showAddEntryModal(parentId) {
     const today    = toDateStr(new Date());
     const nextWeek = toDateStr(addDays(new Date(), 7));
+    const isSubtask = parentId !== undefined && parentId !== null;
 
     U().openModal('Add Gantt Entry', buildEntryFormHtml({
       title: '', start_date: today, end_date: nextWeek,
       hours_estimate: '', color_variation: 0, notes: '', folder_url: '',
-    }), async () => {
+    }, isSubtask), async () => {
       const vals = readEntryForm();
       if (!vals.title) return alert('Title is required');
+      const subtractEl = document.getElementById('feSubtractHours');
+      const subtractHours = isSubtask && subtractEl && subtractEl.checked;
       const data = await API('POST', '/api/gantt', {
         project_id: S().currentProject.id,
         parent_id: parentId !== undefined ? parentId : currentParentId,
         ...vals,
       });
       S().ganttEntries.push(data.entry);
+
+      // Subtract hours from parent if checkbox was checked
+      if (subtractHours && typeof vals.hours_estimate === 'number' && vals.hours_estimate > 0) {
+        const parentEntry = S().ganttEntries.find(e => e.id === parentId);
+        if (parentEntry) {
+          const newHours = Math.max(0, (parentEntry.hours_estimate || 0) - vals.hours_estimate);
+          const updated = await API('PUT', '/api/gantt/' + parentId, {
+            ...parentEntry,
+            hours_estimate: newHours,
+          });
+          const pidx = S().ganttEntries.findIndex(e => e.id === parentId);
+          if (pidx !== -1) S().ganttEntries[pidx] = updated.entry;
+        }
+      }
+
+      // Auto-expand parent so the new subtask is visible
+      if (isSubtask) {
+        expandedIds.add(parentId);
+      }
+
       render();
       U().closeModal();
 
@@ -964,7 +1013,7 @@
     });
   }
 
-  function buildEntryFormHtml(entry) {
+  function buildEntryFormHtml(entry, isSubtask) {
     const vars = U().generateColorVariations((S().user && S().user.base_color) || '#2196F3');
     const swatches = vars.map((c, i) =>
       '<div class="color-var-swatch' + (entry.color_variation === i ? ' selected' : '') +
@@ -984,6 +1033,12 @@
       '<div class="form-group"><label>Hours Estimate</label>' +
         '<input type="number" id="feHours" value="' + (entry.hours_estimate || '') + '" min="0" step="0.5" placeholder="0">' +
       '</div>' +
+      (isSubtask
+        ? '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+            '<input type="checkbox" id="feSubtractHours" style="width:auto;margin:0">' +
+            '<label for="feSubtractHours" style="margin:0;cursor:pointer">Subtract hours from parent task</label>' +
+          '</div>'
+        : '') +
       '<div class="form-group"><label>Phase / Colour Variation</label>' +
         '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
         '<input type="hidden" id="feColorVar" value="' + (entry.color_variation || 0) + '">' +
@@ -1034,11 +1089,14 @@
   // =========================================================================
   function showEntryContextMenu(x, y, entry) {
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
+    const isExpanded  = expandedIds.has(entry.id);
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
       { icon: '+',      label: 'Add sub-task',          action: () => showAddEntryModal(entry.id) },
       hasChildren
-        ? { icon: '\u25BC', label: 'Open sub-chart',   action: () => drillDown(entry) }
+        ? { icon: isExpanded ? '\u25B2' : '\u25BC',
+            label: isExpanded ? 'Collapse sub-tasks' : 'Expand sub-tasks',
+            action: () => toggleExpand(entry) }
         : null,
       entry.folder_url
         ? { icon: '\uD83D\uDCC2', label: 'Open folder', action: () => window.open(entry.folder_url, '_blank', 'noopener') }

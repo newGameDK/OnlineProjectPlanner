@@ -675,6 +675,11 @@ function setupEventListeners() {
     window.ganttModule?.showAddEntryModal();
   });
 
+  // Collapse all expanded sub-tasks
+  document.getElementById('collapseAllBtn').addEventListener('click', () => {
+    window.ganttModule?.collapseAll();
+  });
+
   // Undo
   document.getElementById('undoBtn').addEventListener('click', performUndo);
   document.addEventListener('keydown', (e) => {
