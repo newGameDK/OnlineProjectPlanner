@@ -59,6 +59,8 @@
     containerEl: null,
     ghostEl: null,
     snappedDays: 0,
+    origLeftPx: 0,      // original CSS left (px) for pixel-precise drag
+    origWidthPx: 0,     // original CSS width (px)
   };
 
   // ── connecting state ──────────────────────────────────────────────────────
@@ -81,6 +83,37 @@
   // ─── DOM refs ─────────────────────────────────────────────────────────────
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
+
+  /**
+   * Get the display colour for an entry.  When inline-expanded (depth > 0)
+   * the colour is derived from the root visible ancestor, lightened by depth.
+   */
+  function getEntryColor(entry) {
+    const depth = entry._depth || 0;
+    if (depth > 0 && entry.parent_id) {
+      // Walk up to the visible root ancestor (depth 0) to get the base colour.
+      let ancestor = entry;
+      let walked = 0;
+      while (ancestor.parent_id && walked < depth) {
+        const parent = S().ganttEntries.find(e => e.id === ancestor.parent_id);
+        if (!parent) break;
+        ancestor = parent;
+        walked++;
+      }
+      const baseColor = U().getUserColor(ancestor.user_id, ancestor.color_variation);
+      return U().lightenColor(baseColor, depth * 0.15);
+    }
+    return U().getUserColor(entry.user_id, entry.color_variation);
+  }
+
+  /**
+   * Ensure a URL has a protocol scheme so it is not treated as a relative path.
+   */
+  function ensureAbsoluteUrl(url) {
+    if (!url) return url;
+    if (/^https?:\/\//i.test(url) || /^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return url;
+    return 'https://' + url;
+  }
 
   // =========================================================================
   // Public API
@@ -160,8 +193,9 @@
     });
 
     // Scroll-wheel: horizontal two-finger swipe pans the timeline at 1/3 speed;
-    // vertical scroll zooms. Both components are handled independently so a
-    // slightly diagonal swipe pans correctly instead of accidentally zooming.
+    // vertical scroll zooms toward the cursor position. Both components are
+    // handled independently so a slightly diagonal swipe pans correctly instead
+    // of accidentally zooming.
     const wheelZoom = (e) => {
       e.preventDefault();
       // Any horizontal component → pan the timeline at 1/3 speed
@@ -169,15 +203,24 @@
         ganttTimeline.scrollLeft += e.deltaX / 3;
       }
       // Vertical component only when the gesture is not primarily horizontal → zoom.
-      // Using >= ensures a pure vertical or equal-diagonal swipe still zooms rather
-      // than silently doing nothing.
       if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+        // Cursor position relative to the timeline content (in "day" units)
+        const rect     = ganttTimeline.getBoundingClientRect();
+        const cursorX  = e.clientX - rect.left;           // px within visible area
+        const contentX = ganttTimeline.scrollLeft + cursorX; // px within content
+        const dayAtCursor = contentX / pxPerDay;
+
+        const oldPx = pxPerDay;
         if (e.deltaY < 0) {
           pxPerDay = Math.min(pxPerDay * 1.04, 200);
         } else {
           pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit());
         }
-        render();
+        if (pxPerDay !== oldPx) {
+          // Keep the same day under the cursor after the scale change
+          ganttTimeline.scrollLeft = dayAtCursor * pxPerDay - cursorX;
+          render();
+        }
       }
     };
     ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
@@ -188,7 +231,15 @@
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup',   onMouseUp);
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && conn.active) cancelConnecting();
+      if (e.key === 'Escape') {
+        if (conn.active) { cancelConnecting(); return; }
+        // Go back one drill-down level
+        if (parentStack.length && !document.querySelector('.modal.show')) {
+          parentStack.pop();
+          currentParentId = parentStack.length ? parentStack[parentStack.length - 1].entry.id : null;
+          render();
+        }
+      }
     });
 
     const cancelBtn = document.getElementById('cancelConnecting');
@@ -272,9 +323,8 @@
     ganttTaskList.innerHTML = '';
     entries.forEach(entry => {
       const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
-      const baseColor = U().getUserColor(entry.user_id, entry.color_variation);
       const depth = entry._depth || 0;
-      const color = depth > 0 ? U().lightenColor(baseColor, depth * 0.15) : baseColor;
+      const color = getEntryColor(entry);
 
       const row = document.createElement('div');
       row.className = 'gantt-task-row' + (S().selectedGanttIds.has(entry.id) ? ' selected' : '');
@@ -333,7 +383,7 @@
       if (entry.folder_url) {
         const folderLink = document.createElement('a');
         folderLink.className = 'gantt-folder-link';
-        folderLink.href      = entry.folder_url;
+        folderLink.href      = ensureAbsoluteUrl(entry.folder_url);
         folderLink.target    = '_blank';
         folderLink.rel       = 'noopener noreferrer';
         folderLink.title     = 'Open folder: ' + entry.folder_url;
@@ -617,9 +667,7 @@
     const left  = leftDays  * pxPerDay;
     const width = widthDays * pxPerDay;
 
-    const baseColor   = U().getUserColor(entry.user_id, entry.color_variation);
-    const depth       = entry._depth || 0;
-    const color       = depth > 0 ? U().lightenColor(baseColor, depth * 0.15) : baseColor;
+    const color       = getEntryColor(entry);
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
     const isSelected  = S().selectedGanttIds.has(entry.id);
     const deps        = S().dependencies || [];
@@ -652,7 +700,7 @@
     if (entry.folder_url) {
       const folderBtn = document.createElement('a');
       folderBtn.className = 'gantt-bar-folder-btn';
-      folderBtn.href      = entry.folder_url;
+      folderBtn.href      = ensureAbsoluteUrl(entry.folder_url);
       folderBtn.target    = '_blank';
       folderBtn.rel       = 'noopener noreferrer';
       folderBtn.title     = 'Open folder';
@@ -783,6 +831,8 @@
     drag.ghostEl     = barEl;
     drag.containerEl = containerEl;
     drag.snappedDays = 0;
+    drag.origLeftPx  = parseFloat(containerEl.style.left)  || 0;
+    drag.origWidthPx = parseFloat(containerEl.style.width) || 0;
 
     barEl.style.opacity    = '0.75';
     barEl.style.cursor     = type === 'move' ? 'grabbing' : 'col-resize';
@@ -791,14 +841,32 @@
   }
 
   function onMouseMove(e) {
-    // ── drag live preview ──────────────────────────────────────────────────
+    // ── drag live preview (pixel-precise, snaps on release) ────────────────
     if (drag.active) {
-      const deltaX    = e.pageX - drag.startX;
+      const deltaX = e.pageX - drag.startX;
+
+      // Move/resize the bar at pixel precision so the edge stays at the cursor
+      if (drag.type === 'move') {
+        drag.containerEl.style.left = (drag.origLeftPx + deltaX) + 'px';
+      } else if (drag.type === 'resize-left') {
+        const newLeft  = drag.origLeftPx  + deltaX;
+        const newWidth = drag.origWidthPx - deltaX;
+        if (newWidth >= MIN_DAYS * pxPerDay) {
+          drag.containerEl.style.left  = newLeft  + 'px';
+          drag.containerEl.style.width = newWidth + 'px';
+        }
+      } else if (drag.type === 'resize-right') {
+        const newWidth = drag.origWidthPx + deltaX;
+        if (newWidth >= MIN_DAYS * pxPerDay) {
+          drag.containerEl.style.width = newWidth + 'px';
+        }
+      }
+
+      // Update tooltip with day-snapped dates
       const deltaDays = Math.round(deltaX / pxPerDay);
       if (deltaDays !== drag.snappedDays) {
         drag.snappedDays = deltaDays;
         const { newStart, newEnd } = calcDragDates(deltaDays);
-        updateBarVisual(drag.containerEl, newStart, newEnd);
         if (drag.ghostEl) drag.ghostEl.title = newStart + ' \u2192 ' + newEnd;
       }
     }
@@ -841,6 +909,9 @@
     drag.ghostEl = null; drag.containerEl = null;
 
     if (deltaDays !== 0) {
+      // Expand chart date range if entry moved/resized outside it
+      expandChartRange({ start_date: newStart, end_date: newEnd });
+
       try {
         const updated = await API('PUT', '/api/gantt/' + entryId, {
           start_date: newStart, end_date: newEnd,
@@ -1124,10 +1195,13 @@
       ganttHoursPanel.appendChild(row);
     });
 
-    // Update panel header with view total
+    // Update panel header with view total (only root-level visible entries
+    // to avoid double-counting inline-expanded children).
     const header = document.getElementById('ganttHoursHeader');
     if (header) {
-      const t = entries.reduce((sum, e) => sum + calcTotalHours(e.id), 0);
+      const t = entries
+        .filter(e => (e._depth || 0) === 0)
+        .reduce((sum, e) => sum + calcTotalHours(e.id), 0);
       header.textContent = t > 0 ? fmtH(t) : 'Total h';
       header.title       = t > 0 ? fmtH(t) + ' total hours in this view' : 'Total hours';
     }
@@ -1177,8 +1251,15 @@
     const hoursPerPeriod = capacity * (periodDays / 30);
 
     const hoursPerDay = new Float64Array(totalDays + 1);
+    // Build a set of entry IDs that have children so we can skip them and
+    // avoid double-counting parent + child hours in the intensity bar.
+    const parentIdsSet = new Set();
+    S().ganttEntries.forEach(e => { if (e.parent_id) parentIdsSet.add(e.parent_id); });
+
     S().ganttEntries.forEach(entry => {
       if (!entry.hours_estimate) return;
+      // Skip parent entries – their children already represent the hours
+      if (parentIdsSet.has(entry.id)) return;
       const s  = parseDate(entry.start_date);
       const en = parseDate(entry.end_date);
       if (!s || !en) return;
@@ -1337,6 +1418,7 @@
       });
       S().ganttEntries.push(data.entry);
       await expandParentDates(data.entry);
+      expandChartRange(data.entry);
       // Auto-expand the parent so the new child is visible inline
       if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
         expandedIds.add(data.entry.parent_id);
@@ -1378,6 +1460,7 @@
       if (idx !== -1) {
         S().ganttEntries[idx] = data.entry;
         await expandParentDates(data.entry);
+        expandChartRange(data.entry);
       }
       render();
       U().closeModal();
@@ -1414,7 +1497,7 @@
           '<input type="url" id="feFolderUrl" value="' + U().escHtml(entry.folder_url || '') + '" ' +
             'placeholder="https://…sharepoint.com/…  or any URL" style="flex:1">' +
           (entry.folder_url
-            ? '<a href="' + U().escHtml(entry.folder_url) + '" target="_blank" rel="noopener" ' +
+            ? '<a href="' + U().escHtml(ensureAbsoluteUrl(entry.folder_url)) + '" target="_blank" rel="noopener" ' +
               'class="btn btn-secondary btn-sm" title="Open folder">\uD83D\uDCC2 Open</a>'
             : '') +
         '</div>' +
@@ -1468,7 +1551,7 @@
       { icon: '\uD83D\uDCC2',
         label: entry.folder_url ? 'Open SharePoint folder' : 'Set SharePoint folder\u2026',
         action: () => entry.folder_url
-          ? window.open(entry.folder_url, '_blank', 'noopener')
+          ? window.open(ensureAbsoluteUrl(entry.folder_url), '_blank', 'noopener')
           : showEditEntryModal(entry) },
       { icon: '\uD83D\uDD17', label: 'Connect dependency', action: () => startConnecting(entry) },
       { icon: '\u2611', label: 'Add to Todo',           action: () => addToTodo(entry) },
@@ -1531,6 +1614,25 @@
   // =========================================================================
   // Date helpers
   // =========================================================================
+
+  /** Expand the visible chart date range if the given entry falls outside it. */
+  function expandChartRange(entry) {
+    const s  = parseDate(entry.start_date);
+    const en = parseDate(entry.end_date);
+    let changed = false;
+    if (s && chartStart && s < chartStart) {
+      chartStart = new Date(s);
+      chartStart.setDate(chartStart.getDate() - 7);
+      changed = true;
+    }
+    if (en && chartEnd && en > chartEnd) {
+      chartEnd = new Date(en);
+      chartEnd.setDate(chartEnd.getDate() + 14);
+      changed = true;
+    }
+    return changed;
+  }
+
   function parseDate(str) {
     if (!str) return null;
     const d = new Date(str + 'T00:00:00');
