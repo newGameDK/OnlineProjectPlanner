@@ -204,6 +204,7 @@
       grip.className = 'gantt-task-grip';
       grip.textContent = '\u2261';  // ≡
       grip.title = 'Drag to move under another task';
+      grip.setAttribute('aria-label', 'Drag to move under another task');
       grip.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -337,6 +338,7 @@
     // Highlight drop target
     const rows = ganttTaskList.querySelectorAll('.gantt-task-row');
     rows.forEach(r => r.classList.remove('reparent-target', 'reparent-root-target'));
+    ganttTaskList.classList.remove('reparent-root-target');
 
     const target = document.elementFromPoint(e.clientX, e.clientY);
     if (!target) return;
@@ -344,7 +346,8 @@
     if (targetRow && targetRow.dataset.id !== reparentDrag.entryId) {
       targetRow.classList.add('reparent-target');
     } else if (ganttTaskList.contains(target) && !targetRow) {
-      // Hovering over task list but not on a row — treat as "make root"
+      // Hovering over task list but not on a row — show root drop indicator
+      ganttTaskList.classList.add('reparent-root-target');
     }
   }
 
@@ -364,6 +367,7 @@
 
     const rows = ganttTaskList.querySelectorAll('.gantt-task-row');
     rows.forEach(r => r.classList.remove('reparent-target', 'reparent-root-target'));
+    ganttTaskList.classList.remove('reparent-root-target');
 
     const entryId = reparentDrag.entryId;
     reparentDrag.active  = false;
@@ -389,13 +393,19 @@
     if (!entry) return;
     if (entry.parent_id === newParentId) return;
 
-    // Prevent dropping onto own descendant (circular)
+    // Prevent dropping onto own descendant (circular) – build child map once
     if (newParentId) {
-      const isDescendant = (parentId, checkId) => {
-        const children = S().ganttEntries.filter(e => e.parent_id === checkId);
-        for (const child of children) {
-          if (child.id === parentId) return true;
-          if (isDescendant(parentId, child.id)) return true;
+      const childrenOf = {};
+      S().ganttEntries.forEach(e => {
+        const pid = e.parent_id || '__root__';
+        if (!childrenOf[pid]) childrenOf[pid] = [];
+        childrenOf[pid].push(e);
+      });
+      const isDescendant = (targetId, ancestorId) => {
+        const kids = childrenOf[ancestorId] || [];
+        for (const child of kids) {
+          if (child.id === targetId) return true;
+          if (isDescendant(targetId, child.id)) return true;
         }
         return false;
       };

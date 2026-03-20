@@ -308,6 +308,11 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   outline: 2px dashed var(--primary);
   outline-offset: -2px;
 }
+.gantt-tasks.reparent-root-target {
+  outline: 2px dashed var(--text-muted);
+  outline-offset: -2px;
+  background: rgba(0,0,0,0.03);
+}
 
 /* Gantt timeline rows */
 .gantt-row-bg {
