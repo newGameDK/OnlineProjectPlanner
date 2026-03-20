@@ -27,6 +27,7 @@
   // ─── constants ────────────────────────────────────────────────────────────
   const ROW_H    = 40;  // px – must match CSS --row-h
   const MIN_DAYS = 1;   // minimum bar width in days
+  const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
 
   // ─── state refs (injected from app.js) ───────────────────────────────────
   const S   = () => window.appState;
@@ -37,6 +38,7 @@
   let parentStack     = [];   // breadcrumb: [{entry, label}, …]
   let currentParentId = null;
   let expandedIds     = new Set(); // inline-expanded entries (show children)
+  let depsVisible     = true;  // whether dependency arrows are shown
 
   let scale    = 'week';
   let pxPerDay = 28;
@@ -116,25 +118,54 @@
       render();
     });
 
-    // Sync task-list and hours-panel vertical scroll together
+    // 3-way scroll sync: task list ↔ timeline rows ↔ hours panel.
+    // A sync-lock prevents cascading scroll events when we set scrollTop
+    // programmatically (setting scrollTop to its current value is a no-op).
+    let _scrollSyncing = false;
     ganttTaskList.addEventListener('scroll', () => {
+      if (_scrollSyncing) return;
+      _scrollSyncing = true;
+      ganttTimeline.scrollTop = ganttTaskList.scrollTop;
       ganttHoursPanel.scrollTop = ganttTaskList.scrollTop;
+      _scrollSyncing = false;
     });
     ganttHoursPanel.addEventListener('scroll', () => {
+      if (_scrollSyncing) return;
+      _scrollSyncing = true;
       ganttTaskList.scrollTop = ganttHoursPanel.scrollTop;
+      ganttTimeline.scrollTop = ganttHoursPanel.scrollTop;
+      _scrollSyncing = false;
+    });
+    ganttTimeline.addEventListener('scroll', () => {
+      syncIntensityScroll();
+      syncRulerScroll();
+      if (_scrollSyncing) return;
+      _scrollSyncing = true;
+      ganttTaskList.scrollTop = ganttTimeline.scrollTop;
+      ganttHoursPanel.scrollTop = ganttTimeline.scrollTop;
+      _scrollSyncing = false;
     });
 
-    ganttTimeline.addEventListener('scroll', syncIntensityScroll);
-
-    // Scroll-wheel zoom on the ruler / timeline / intensity bar
+    // Scroll-wheel: horizontal two-finger swipe pans the timeline at 1/3 speed;
+    // vertical scroll zooms. Both components are handled independently so a
+    // slightly diagonal swipe pans correctly instead of accidentally zooming.
     const wheelZoom = (e) => {
       e.preventDefault();
-      if (e.deltaY < 0) {
-        pxPerDay = Math.min(pxPerDay * 1.4, 200);
-      } else {
-        pxPerDay = Math.max(pxPerDay / 1.4, 4);
+      // Any horizontal component → pan the timeline at 1/3 speed
+      if (e.deltaX !== 0) {
+        ganttTimeline.scrollLeft += e.deltaX / 3;
       }
-      render();
+      // Vertical component only when the gesture is not primarily horizontal → zoom.
+      // Using >= ensures a pure vertical or equal-diagonal swipe still zooms rather
+      // than silently doing nothing.
+      if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+        if (e.deltaY < 0) {
+          pxPerDay = Math.min(pxPerDay * 1.4, 200);
+        } else {
+          pxPerDay = Math.max(pxPerDay / 1.4, 4);
+        }
+        render();
+      }
     };
     ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
     if (ganttRuler) ganttRuler.addEventListener('wheel', wheelZoom, { passive: false });
@@ -149,6 +180,34 @@
 
     const cancelBtn = document.getElementById('cancelConnecting');
     if (cancelBtn) cancelBtn.addEventListener('click', cancelConnecting);
+
+    // Cancel connecting by clicking empty timeline space
+    ganttTimeline.addEventListener('click', (e) => {
+      if (!conn.active) return;
+      if (!e.target.closest('.gantt-bar-container')) cancelConnecting();
+    });
+
+    // Cancel connecting by clicking empty space in task list
+    ganttTaskList.addEventListener('click', (e) => {
+      if (!conn.active) return;
+      if (!e.target.closest('.gantt-task-row')) cancelConnecting();
+    });
+
+    // Cancel connecting on right-click anywhere
+    document.addEventListener('contextmenu', (e) => {
+      if (conn.active) { e.preventDefault(); cancelConnecting(); }
+    });
+
+    // Toggle dependency arrows button
+    const toggleDepsBtn = document.getElementById('toggleDepsBtn');
+    if (toggleDepsBtn) {
+      toggleDepsBtn.classList.toggle('active', depsVisible);
+      toggleDepsBtn.addEventListener('click', () => {
+        depsVisible = !depsVisible;
+        toggleDepsBtn.classList.toggle('active', depsVisible);
+        render();
+      });
+    }
 
     // ── Help mode toggle ───────────────────────────────────────────────────
     const helpBtn = document.getElementById('helpModeBtn');
@@ -290,8 +349,16 @@
       actions.appendChild(makeBtn('\uD83D\uDDD1', 'Delete', () => deleteEntry(entry)));
       row.appendChild(actions);
 
-      // Selection
+      // Selection / connecting
       row.addEventListener('click', (e) => {
+        // When in connecting mode, clicking a task list row finishes the connection
+        if (conn.active) {
+          if (conn.sourceId !== entry.id) {
+            e.stopPropagation();
+            finishConnecting(entry);
+          }
+          return;
+        }
         if (e.shiftKey) {
           S().selectedGanttIds.has(entry.id)
             ? S().selectedGanttIds.delete(entry.id)
@@ -305,6 +372,8 @@
       });
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        // contextmenu is handled globally when connecting; skip here
+        if (conn.active) return;
         showEntryContextMenu(e.pageX, e.pageY, entry);
       });
 
@@ -499,6 +568,9 @@
       line.style.left = (daysBetween(chartStart, today) * pxPerDay) + 'px';
       ganttRuler.appendChild(line);
     }
+
+    // Re-sync ruler horizontal position after rebuilding content
+    syncRulerScroll();
   }
 
   function makeRulerCell(left, width, label, cls) {
@@ -657,6 +729,7 @@
 
     // ── Bar body drag (move) ───────────────────────────────────────────────
     bar.addEventListener('mousedown', (e) => {
+      if (conn.active) return; // don't start drag during connecting mode
       if (e.target === hLeft || e.target === hRight ||
           e.target === inputNode || e.target === outputNode ||
           e.target === barIndicator) return;
@@ -664,10 +737,24 @@
       startDrag(e, 'move', entry, bar, container);
     });
 
-    bar.addEventListener('dblclick', (e) => { e.stopPropagation(); drillDown(entry); });
+    bar.addEventListener('dblclick', (e) => {
+      if (conn.active) return;
+      e.stopPropagation();
+      drillDown(entry);
+    });
     bar.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      // contextmenu is handled globally when connecting; skip here
+      if (conn.active) return;
       showEntryContextMenu(e.pageX, e.pageY, entry);
+    });
+
+    // When in connecting mode, clicking anywhere on this bar finishes the connection
+    container.addEventListener('click', (e) => {
+      if (conn.active && conn.sourceId !== entry.id) {
+        e.stopPropagation();
+        finishConnecting(entry);
+      }
     });
 
     container.appendChild(bar);
@@ -793,6 +880,7 @@
   function startConnecting(entry) {
     conn.active   = true;
     conn.sourceId = entry.id;
+    document.body.classList.add('connecting-mode');
 
     // Source point: right edge of bar at row vertical centre
     const rowIdx = rowIndexMap[entry.id] !== undefined ? rowIndexMap[entry.id] : 0;
@@ -841,6 +929,7 @@
       conn.tempLine.parentNode.removeChild(conn.tempLine);
     }
     conn.active = false; conn.sourceId = null; conn.tempLine = null;
+    document.body.classList.remove('connecting-mode');
     const banner = document.getElementById('connectingBanner');
     if (banner) banner.classList.add('hidden');
   }
@@ -867,6 +956,9 @@
 
     // Remove old static arrows + defs (keep rubber-band temp line if present)
     Array.from(svg.querySelectorAll('.dep-arrow, .dep-arrow-hit, defs')).forEach(el => el.remove());
+
+    // When arrows are hidden, stop here (rubber-band temp line stays if connecting)
+    if (!depsVisible) return;
 
     // Arrowhead marker definition
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
@@ -899,9 +991,9 @@
       const y1 = srcIdx * ROW_H + ROW_H / 2;
       const y2 = tgtIdx * ROW_H + ROW_H / 2;
 
-      // Bezier curve between output and input
+      // Gentler bezier curve (reduced control-point factor vs the old 0.5)
       const dx   = Math.abs(x2 - x1);
-      const cpx  = Math.max(dx * 0.5, 30);
+      const cpx  = Math.max(dx * 0.25, MIN_BEZIER_CP);
       const d    = 'M ' + x1 + ' ' + y1 +
                    ' C ' + (x1 + cpx) + ' ' + y1 + ',' +
                    (x2 - cpx) + ' ' + y2 + ',' +
@@ -1072,6 +1164,14 @@
   function syncIntensityScroll() {
     if (intensityBarWrapper) {
       intensityBarWrapper.style.marginLeft = '-' + ganttTimeline.scrollLeft + 'px';
+    }
+  }
+
+  // Shift the ruler content horizontally to match the timeline's horizontal scroll.
+  // The ruler lives in a clip wrapper (overflow:hidden) so this simulates native scroll.
+  function syncRulerScroll() {
+    if (ganttRuler) {
+      ganttRuler.style.marginLeft = '-' + ganttTimeline.scrollLeft + 'px';
     }
   }
 

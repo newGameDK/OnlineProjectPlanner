@@ -250,11 +250,15 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   width: var(--task-col-w); flex-shrink: 0; overflow-y: auto; overflow-x: hidden;
   border-right: 1px solid var(--border); background: var(--surface);
 }
-.gantt-timeline { flex: 1; overflow: auto; position: relative; }
-.gantt-timeline-ruler {
-  position: sticky; top: 0; z-index: 10; background: var(--surface2);
-  border-bottom: 1px solid var(--border); height: 48px; flex-shrink: 0;
+/* Column that holds the ruler header + scrollable rows side by side */
+.gantt-timeline-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+/* Clip area for the ruler – hides the part that is scrolled out of view */
+.gantt-ruler-clip {
+  height: 48px; overflow: hidden; flex-shrink: 0; position: relative;
+  background: var(--surface2); border-bottom: 1px solid var(--border);
 }
+.gantt-timeline { flex: 1; overflow: auto; position: relative; }
+.gantt-timeline-ruler { position: relative; height: 48px; }
 .gantt-timeline-rows { position: relative; }
 
 /* Task rows */
@@ -570,7 +574,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 
 /* =====================================================================
-   Connecting mode banner
+   Connecting mode – cursor feedback on interactive elements
    ===================================================================== */
 .connecting-banner {
   display: flex; align-items: center; justify-content: space-between;
@@ -578,6 +582,35 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   font-size: 13px; color: #1b5e20; flex-shrink: 0;
 }
 .connecting-banner strong { font-weight: 700; }
+/* Highlight clickable targets while in connecting mode */
+body.connecting-mode .gantt-bar-container:not([data-id]) { cursor: pointer; }
+body.connecting-mode .gantt-bar { cursor: pointer; }
+body.connecting-mode .gantt-task-row { cursor: pointer; }
+body.connecting-mode .gantt-bar-container:hover .gantt-bar {
+  outline: 2px solid rgba(46,125,50,0.8); outline-offset: 1px;
+}
+body.connecting-mode .gantt-task-row:hover {
+  outline: 2px solid rgba(46,125,50,0.6); outline-offset: -1px;
+}
+
+/* =====================================================================
+   Toggle button active state (used for Deps and Help buttons)
+   ===================================================================== */
+.btn.active { background: var(--primary); color: #fff; }
+.btn.active:hover { filter: brightness(0.9); }
+
+/* =====================================================================
+   Todo card dependency badges
+   ===================================================================== */
+.todo-card-deps {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;
+}
+.todo-card-dep {
+  font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
+}
+.todo-card-dep-in  { background: #e3f2fd; color: #1565C0; } /* depends on (blocked by) */
+.todo-card-dep-out { background: #f3e5f5; color: #6a1b9a; } /* blocks others */
 
 /* =====================================================================
    Scrollbar styling

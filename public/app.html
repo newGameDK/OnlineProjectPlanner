@@ -126,6 +126,7 @@
             <span class="toolbar-label">h/month</span>
           </div>
           <div class="toolbar-group" style="margin-left:auto">
+            <button id="toggleDepsBtn" class="btn btn-secondary btn-sm active" title="Show/hide dependency arrows" data-help="Toggle dependency arrows between tasks on/off">🔗 Deps</button>
             <button id="helpModeBtn" class="btn btn-secondary btn-sm" title="Toggle help mode – hover elements for explanations">❓ Help</button>
             <button id="exportCsvBtn" class="btn btn-secondary btn-sm" title="Export to Excel with visual Gantt chart" data-help="Export to an Excel file with a visual Gantt chart representation">📊 Export Excel</button>
             <button id="exportPdfBtn" class="btn btn-secondary btn-sm" title="Print / Save as PDF (A4)" data-help="Print or save the Gantt chart as a PDF document (A4 landscape)">🖨 Print PDF</button>
@@ -140,8 +141,8 @@
         </div>
 
         <!-- Dependency connecting mode banner -->
-        <div id="connectingBanner" class="connecting-banner hidden" data-help="You are in dependency connecting mode. Click an input node (◀) on another task to create a dependency link.">
-          <span>🔗 Click the <strong>input node</strong> (◀) on another entry to create a dependency</span>
+        <div id="connectingBanner" class="connecting-banner hidden" data-help="Click any task bar or task list row to finish the connection. Right-click or click empty space to cancel.">
+          <span>🔗 Click <strong>any task</strong> to connect dependency — right-click or click empty space to cancel</span>
           <button id="cancelConnecting" class="btn btn-secondary btn-sm" data-help="Cancel the current dependency connection (or press Escape)">Cancel (Esc)</button>
         </div>
 
@@ -161,9 +162,13 @@
             <!-- Gantt chart body -->
             <div class="gantt-body" id="ganttBody">
               <div class="gantt-tasks" id="ganttTaskList" data-help="Task list: click to select, click ▶ to expand sub-entries, double-click bar to drill down into sub-chart"></div>
-              <div class="gantt-timeline" id="ganttTimeline" data-help="Timeline: drag bar body to move, drag edges to resize, right-click for options">
-                <div class="gantt-timeline-ruler" id="ganttRuler"></div>
-                <div class="gantt-timeline-rows" id="ganttRows"></div>
+              <div class="gantt-timeline-col" id="ganttTimelineCol">
+                <div class="gantt-ruler-clip">
+                  <div class="gantt-timeline-ruler" id="ganttRuler"></div>
+                </div>
+                <div class="gantt-timeline" id="ganttTimeline" data-help="Timeline: drag bar body to move, drag edges to resize, right-click for options">
+                  <div class="gantt-timeline-rows" id="ganttRows"></div>
+                </div>
               </div>
               <div class="gantt-hours-panel" id="ganttHoursPanel" data-help="Estimated hours per task (recursive sum including sub-tasks)"></div>
             </div>
@@ -175,6 +180,7 @@
         <div id="todoPanel" class="panel-content hidden">
           <div class="todo-toolbar">
             <button id="addTodoBtn" class="btn btn-primary btn-sm">+ Todo</button>
+            <button id="todoDepsBtn" class="btn btn-secondary btn-sm" title="Show/hide dependency links on cards" data-help="Toggle dependency indicators on todo cards">🔗 Deps</button>
             <div class="todo-filters">
               <button class="todo-filter active" data-status="all">All</button>
               <button class="todo-filter" data-status="todo">To Do</button>
