@@ -968,7 +968,7 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
 
 if ($seg1 === 'backup' && $method === 'GET') {
     require_auth();
-    $userId = $_SESSION['user_id'];
+    $userId = $_SESSION['userId'];
 
     $s = $db->prepare('SELECT * FROM users WHERE id=?');
     $s->execute([$userId]);
