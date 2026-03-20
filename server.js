@@ -1027,13 +1027,19 @@ app.post('/api/update-from-github', requireAuth, (req, res) => {
   const tmpFile = path.join(uploadDir, 'github_update_' + Date.now() + '.zip');
 
   // Download the ZIP from GitHub (follows redirects)
+  const cleanup = () => { try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch {} };
   const download = (downloadUrl, redirects) => {
     if (redirects > 5) {
-      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      cleanup();
       return res.status(502).json({ error: 'Too many redirects' });
     }
 
-    const proto = downloadUrl.startsWith('https') ? https : http;
+    let parsedUrl;
+    try { parsedUrl = new URL(downloadUrl); } catch {
+      cleanup();
+      return res.status(502).json({ error: 'Invalid redirect URL' });
+    }
+    const proto = parsedUrl.protocol === 'https:' ? https : http;
     proto.get(downloadUrl, { headers: { 'User-Agent': 'OnlineProjectPlanner' } }, (ghRes) => {
       // Follow redirects
       if (ghRes.statusCode >= 300 && ghRes.statusCode < 400 && ghRes.headers.location) {
