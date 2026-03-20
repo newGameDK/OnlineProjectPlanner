@@ -555,6 +555,21 @@ if ($seg1 === 'teams') {
             $s->execute([$teamId]);
             json_out(['team' => $s->fetch()]);
         }
+
+        // DELETE teams/:id
+        // Cascades to team_members, invitations, projects, gantt_entries, etc. via ON DELETE CASCADE.
+        if ($seg3 === '' && $method === 'DELETE') {
+            $userId = require_auth();
+            $s = $db->prepare('SELECT * FROM teams WHERE id=?');
+            $s->execute([$teamId]);
+            $team = $s->fetch();
+            if (!$team) json_out(['error' => 'Team not found'], 404);
+            if ($team['owner_id'] !== $userId) json_out(['error' => 'Only owner can delete team'], 403);
+
+            $s = $db->prepare('DELETE FROM teams WHERE id=?');
+            $s->execute([$teamId]);
+            json_out(['ok' => true]);
+        }
     }
 }
 
@@ -996,7 +1011,7 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
     $projectId = $seg2;
     if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
 
-    $s = $db->prepare('SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 50');
+    $s = $db->prepare('SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 200');
     $s->execute([$projectId, $userId]);
     $history = $s->fetchAll();
     if (empty($history)) json_out(['error' => 'Nothing to undo'], 400);

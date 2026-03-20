@@ -179,6 +179,7 @@ const stmts = {
   createTeam: db.prepare(`INSERT INTO teams (id,name,owner_id,capacity_hours_month) VALUES (?,?,?,?)`),
   getTeam: db.prepare(`SELECT * FROM teams WHERE id=?`),
   updateTeamCapacity: db.prepare(`UPDATE teams SET capacity_hours_month=? WHERE id=?`),
+  deleteTeam: db.prepare(`DELETE FROM teams WHERE id=?`),
   getUserTeams: db.prepare(`
     SELECT t.*, tm.role FROM teams t
     JOIN team_members tm ON t.id=tm.team_id
@@ -228,7 +229,7 @@ const stmts = {
 
   // Undo
   addUndo: db.prepare(`INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)`),
-  getUndoForUser: db.prepare(`SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 50`),
+  getUndoForUser: db.prepare(`SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 200`),
   deleteUndo: db.prepare(`DELETE FROM undo_history WHERE id=?`),
 
   // Dependencies
@@ -414,6 +415,24 @@ app.put('/api/teams/:id', requireAuth, (req, res) => {
   const updated = stmts.getTeam.get(team.id);
   broadcastToTeam(team.id, { type: 'team_updated', team: updated });
   res.json({ team: updated });
+});
+
+app.delete('/api/teams/:id', requireAuth, (req, res) => {
+  const team = stmts.getTeam.get(req.params.id);
+  if (!team) return res.status(404).json({ error: 'Team not found' });
+  if (team.owner_id !== req.session.userId) return res.status(403).json({ error: 'Only owner can delete team' });
+  const members = stmts.getTeamMembers.all(team.id);
+  // Notify members before deleting so the team_members cascade hasn't run yet
+  members.forEach(m => {
+    const conns = userConnections.get(m.id);
+    if (conns) {
+      conns.forEach(ws => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'team_deleted', team_id: team.id }));
+      });
+    }
+  });
+  stmts.deleteTeam.run(team.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/teams/:id/invite', requireAuth, (req, res) => {

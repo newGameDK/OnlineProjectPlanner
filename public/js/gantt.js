@@ -85,6 +85,17 @@
   // =========================================================================
   window.ganttModule = { init, render, showAddEntryModal };
 
+  // ── Help mode toggle (attached once, outside init) ────────────────────────
+  (function attachHelpToggle() {
+    const helpBtn = document.getElementById('helpModeBtn');
+    if (helpBtn) {
+      helpBtn.addEventListener('click', () => {
+        document.body.classList.toggle('help-mode');
+        helpBtn.classList.toggle('active');
+      });
+    }
+  })();
+
   // =========================================================================
   // Init
   // =========================================================================
@@ -104,10 +115,10 @@
       render();
     });
     document.getElementById('zoomInBtn').addEventListener('click', () => {
-      pxPerDay = Math.min(pxPerDay * 1.2, 200); render();
+      pxPerDay = Math.min(pxPerDay * 1.04, 200); render();
     });
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
-      pxPerDay = Math.max(pxPerDay / 1.2, 4); render();
+      pxPerDay = Math.max(pxPerDay / 1.04, 4); render();
     });
     document.getElementById('chartStartDate').addEventListener('change', (e) => {
       if (e.target.value) chartStart = new Date(e.target.value + 'T00:00:00');
@@ -160,9 +171,9 @@
       // than silently doing nothing.
       if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
         if (e.deltaY < 0) {
-          pxPerDay = Math.min(pxPerDay * 1.2, 200);
+          pxPerDay = Math.min(pxPerDay * 1.04, 200);
         } else {
-          pxPerDay = Math.max(pxPerDay / 1.2, 4);
+          pxPerDay = Math.max(pxPerDay / 1.04, 4);
         }
         render();
       }
@@ -208,15 +219,6 @@
         toggleDepsBtn.classList.toggle('active', depsVisible);
         ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
         render();
-      });
-    }
-
-    // ── Help mode toggle ───────────────────────────────────────────────────
-    const helpBtn = document.getElementById('helpModeBtn');
-    if (helpBtn) {
-      helpBtn.addEventListener('click', () => {
-        document.body.classList.toggle('help-mode');
-        helpBtn.classList.toggle('active');
       });
     }
 
