@@ -991,13 +991,39 @@ function setupEventListeners() {
 }
 
 async function performUndo() {
-  if (!state.currentProject) return;
   try {
-    const data = await api('POST', `/api/undo/${state.currentProject.id}`);
-    // Re-fetch full gantt to be safe
-    const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
-    state.ganttEntries = gdata.entries;
-    window.ganttModule?.render();
+    if (state.currentProject) {
+      // Try project-scoped gantt undo first
+      try {
+        await api('POST', `/api/undo/${state.currentProject.id}`);
+        const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
+        state.ganttEntries = gdata.entries;
+        window.ganttModule?.render();
+        return;
+      } catch (_) {
+        // Nothing to undo in current project – fall through to global undo
+      }
+    }
+    // No current project or nothing left to undo in current project:
+    // check for a team/project deletion to restore
+    const globalResult = await api('POST', '/api/undo-global');
+    if (globalResult.undone === 'delete_project' && globalResult.project) {
+      const proj = globalResult.project;
+      const tid = proj.team_id;
+      if (!state.projects[tid]) state.projects[tid] = [];
+      if (!state.projects[tid].find(p => p.id === proj.id)) {
+        state.projects[tid].push(proj);
+      }
+      renderProjectsList();
+      await selectProject(proj);
+    } else if (globalResult.undone === 'delete_team' && globalResult.team) {
+      const team = globalResult.team;
+      if (!state.teams.find(t => t.id === team.id)) {
+        state.teams.push(team);
+      }
+      renderTeamsList();
+      await selectTeam(team);
+    }
   } catch (e) {
     console.warn('Undo failed:', e.message);
   }

@@ -193,10 +193,10 @@
       list.addEventListener('drop', async (e) => {
         e.preventDefault();
         list.classList.remove('drag-over');
-        const todoId  = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const todoId  = e.dataTransfer.getData('text/plain');
         const newStatus = list.closest('.todo-column')?.dataset.status;
         if (!todoId || !newStatus) return;
-        const todo = S().todos.find(t => t.id === todoId);
+        const todo = S().todos.find(t => String(t.id) === todoId);
         if (!todo || todo.status === newStatus) return;
         await updateStatus(todo, newStatus);
       });

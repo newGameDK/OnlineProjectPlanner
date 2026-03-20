@@ -155,6 +155,18 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 ");
 
+// Global undo history (not project-scoped; survives team/project deletion)
+$db->exec("
+CREATE TABLE IF NOT EXISTS global_undo_history (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  action_data TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+");
+
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------

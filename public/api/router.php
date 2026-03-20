@@ -129,6 +129,32 @@ function require_auth() {
     return $_SESSION['userId'];
 }
 
+/**
+ * Restore gantt entries, todos, and dependencies for a project snapshot.
+ * @param PDO   $db   Database connection
+ * @param array $data Array with 'entries', 'todos', 'dependencies' keys
+ */
+function restore_project_contents($db, $data) {
+    foreach (($data['entries'] ?? []) as $e) {
+        try {
+            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '']);
+        } catch (Exception $ex) {}
+    }
+    foreach (($data['todos'] ?? []) as $t) {
+        try {
+            $s = $db->prepare('INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position) VALUES (?,?,?,?,?,?,?,?,?)');
+            $s->execute([$t['id'], $t['project_id'], $t['gantt_entry_id'] ?? null, $t['title'], $t['description'] ?? '', $t['status'] ?? 'todo', $t['assignee_id'] ?? null, $t['due_date'] ?? null, $t['position'] ?? 0]);
+        } catch (Exception $ex) {}
+    }
+    foreach (($data['dependencies'] ?? []) as $d) {
+        try {
+            $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)');
+            $s->execute([$d['id'], $d['project_id'], $d['source_id'], $d['target_id']]);
+        } catch (Exception $ex) {}
+    }
+}
+
 function get_admin_ids() {
     global $db;
     $s = $db->prepare('SELECT value FROM app_settings WHERE key=?');
@@ -566,6 +592,36 @@ if ($seg1 === 'teams') {
             if (!$team) json_out(['error' => 'Team not found'], 404);
             if ($team['owner_id'] !== $userId) json_out(['error' => 'Only owner can delete team'], 403);
 
+            // Snapshot the full team for undo before cascade deletion removes everything
+            $s = $db->prepare('SELECT u.id, u.username, u.email, u.base_color, tm.role, tm.joined_at FROM team_members tm JOIN users u ON tm.user_id=u.id WHERE tm.team_id=?');
+            $s->execute([$teamId]);
+            $members = $s->fetchAll();
+
+            $s = $db->prepare('SELECT * FROM projects WHERE team_id=? ORDER BY created_at ASC');
+            $s->execute([$teamId]);
+            $projects = $s->fetchAll();
+
+            $projectSnapshots = [];
+            foreach ($projects as $proj) {
+                $s = $db->prepare('SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC');
+                $s->execute([$proj['id']]);
+                $entries = $s->fetchAll();
+
+                $s = $db->prepare('SELECT * FROM todo_items WHERE project_id=? ORDER BY position ASC, created_at ASC');
+                $s->execute([$proj['id']]);
+                $todos = $s->fetchAll();
+
+                $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE project_id=?');
+                $s->execute([$proj['id']]);
+                $deps = $s->fetchAll();
+
+                $projectSnapshots[] = ['project' => $proj, 'entries' => $entries, 'todos' => $todos, 'dependencies' => $deps];
+            }
+
+            $teamSnapshot = ['team' => $team, 'members' => $members, 'projects' => $projectSnapshots];
+            $s = $db->prepare('INSERT INTO global_undo_history (id,user_id,action_type,action_data) VALUES (?,?,?,?)');
+            $s->execute([uuid_v4(), $userId, 'delete_team', json_encode($teamSnapshot)]);
+
             $s = $db->prepare('DELETE FROM teams WHERE id=?');
             $s->execute([$teamId]);
             json_out(['ok' => true]);
@@ -669,6 +725,23 @@ if ($seg1 === 'projects') {
             $project = $s->fetch();
             if (!$project) json_out(['error' => 'Not found'], 404);
             if (!is_member($db, $project['team_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
+
+            // Snapshot the full project for undo before cascade deletion removes everything
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC');
+            $s->execute([$projectId]);
+            $entries = $s->fetchAll();
+
+            $s = $db->prepare('SELECT * FROM todo_items WHERE project_id=? ORDER BY position ASC, created_at ASC');
+            $s->execute([$projectId]);
+            $todos = $s->fetchAll();
+
+            $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE project_id=?');
+            $s->execute([$projectId]);
+            $deps = $s->fetchAll();
+
+            $projectSnapshot = ['project' => $project, 'entries' => $entries, 'todos' => $todos, 'dependencies' => $deps];
+            $s = $db->prepare('INSERT INTO global_undo_history (id,user_id,action_type,action_data) VALUES (?,?,?,?)');
+            $s->execute([uuid_v4(), $userId, 'delete_project', json_encode($projectSnapshot)]);
 
             $s = $db->prepare('DELETE FROM projects WHERE id=?');
             $s->execute([$projectId]);
@@ -1051,8 +1124,67 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
 }
 
 // =========================================================================
-// BACKUP ROUTE
+// GLOBAL UNDO ROUTE (team/project-level deletion)
 // =========================================================================
+
+if ($seg1 === 'undo-global' && $seg2 === '' && $method === 'POST') {
+    $userId = require_auth();
+
+    $s = $db->prepare('SELECT * FROM global_undo_history WHERE user_id=? ORDER BY created_at DESC LIMIT 1');
+    $s->execute([$userId]);
+    $action = $s->fetch();
+    if (!$action) json_out(['error' => 'Nothing to undo'], 400);
+
+    $data = json_decode($action['action_data'], true);
+    $s = $db->prepare('DELETE FROM global_undo_history WHERE id=?');
+    $s->execute([$action['id']]);
+
+    $result = [];
+    if ($action['action_type'] === 'delete_project') {
+        $p = $data['project'];
+        // Restore project
+        try {
+            $s = $db->prepare('INSERT INTO projects (id,team_id,name,description,created_by) VALUES (?,?,?,?,?)');
+            $s->execute([$p['id'], $p['team_id'], $p['name'], $p['description'] ?? '', $p['created_by']]);
+            $s = $db->prepare('UPDATE projects SET share_token=?,created_at=?,updated_at=? WHERE id=?');
+            $s->execute([$p['share_token'] ?? null, $p['created_at'], $p['updated_at'], $p['id']]);
+        } catch (Exception $ex) { /* already exists */ }
+        restore_project_contents($db, $data);
+        $s = $db->prepare('SELECT * FROM projects WHERE id=?');
+        $s->execute([$p['id']]);
+        $result = ['undone' => 'delete_project', 'project' => $s->fetch()];
+    } elseif ($action['action_type'] === 'delete_team') {
+        $t = $data['team'];
+        // Restore team
+        try {
+            $s = $db->prepare('INSERT INTO teams (id,name,owner_id,capacity_hours_month) VALUES (?,?,?,?)');
+            $s->execute([$t['id'], $t['name'], $t['owner_id'], $t['capacity_hours_month'] ?? 160]);
+        } catch (Exception $ex) { /* already exists */ }
+        // Restore members
+        foreach (($data['members'] ?? []) as $m) {
+            try {
+                $s = $db->prepare('INSERT OR IGNORE INTO team_members (team_id,user_id,role) VALUES (?,?,?)');
+                $s->execute([$t['id'], $m['id'], $m['role'] ?? 'member']);
+            } catch (Exception $ex) {}
+        }
+        // Restore each project with its data
+        foreach (($data['projects'] ?? []) as $pd) {
+            $p = $pd['project'];
+            try {
+                $s = $db->prepare('INSERT INTO projects (id,team_id,name,description,created_by) VALUES (?,?,?,?,?)');
+                $s->execute([$p['id'], $p['team_id'], $p['name'], $p['description'] ?? '', $p['created_by']]);
+                $s = $db->prepare('UPDATE projects SET share_token=?,created_at=?,updated_at=? WHERE id=?');
+                $s->execute([$p['share_token'] ?? null, $p['created_at'], $p['updated_at'], $p['id']]);
+            } catch (Exception $ex) {}
+            restore_project_contents($db, $pd);
+        }
+        $s = $db->prepare('SELECT * FROM teams WHERE id=?');
+        $s->execute([$t['id']]);
+        $result = ['undone' => 'delete_team', 'team' => $s->fetch()];
+    }
+
+    json_out($result);
+}
 
 if ($seg1 === 'backup' && $method === 'GET') {
     require_auth();

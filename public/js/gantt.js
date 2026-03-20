@@ -65,7 +65,9 @@
   const conn = {
     active: false,
     sourceId: null,
-    tempLine: null,     // SVG <line> for rubber-band
+    tempLine: null,     // SVG <path> for rubber-band
+    sx: 0,              // source x (right edge of bar)
+    sy: 0,              // source y (vertical centre of row)
   };
 
   // ── reparent drag state ────────────────────────────────────────────────────
@@ -118,7 +120,7 @@
       pxPerDay = Math.min(pxPerDay * 1.04, 200); render();
     });
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
-      pxPerDay = Math.max(pxPerDay / 1.04, 4); render();
+      pxPerDay = Math.max(pxPerDay / 1.04, 0.5); render();
     });
     document.getElementById('chartStartDate').addEventListener('change', (e) => {
       if (e.target.value) chartStart = new Date(e.target.value + 'T00:00:00');
@@ -173,7 +175,7 @@
         if (e.deltaY < 0) {
           pxPerDay = Math.min(pxPerDay * 1.04, 200);
         } else {
-          pxPerDay = Math.max(pxPerDay / 1.04, 4);
+          pxPerDay = Math.max(pxPerDay / 1.04, 0.5);
         }
         render();
       }
@@ -807,8 +809,12 @@
       const scrollTop  = ganttTimeline.scrollTop;
       const mx = e.clientX - rect.left  + scrollLeft;
       const my = e.clientY - rect.top   + scrollTop;
-      conn.tempLine.setAttribute('x2', mx);
-      conn.tempLine.setAttribute('y2', my);
+      const sx = conn.sx;
+      const sy = conn.sy;
+      const dx   = mx - sx;
+      const cpx  = Math.max(Math.abs(dx) * 0.4, 40);
+      conn.tempLine.setAttribute('d',
+        `M ${sx} ${sy} C ${sx + cpx} ${sy}, ${mx - cpx} ${my}, ${mx} ${my}`);
     }
   }
 
@@ -891,18 +897,20 @@
     const endDate = parseDate(entry.end_date);
     const sx = Math.max(0, daysBetween(chartStart, endDate)) * pxPerDay;
     const sy = rowIdx * ROW_H + ROW_H / 2;
+    conn.sx = sx;
+    conn.sy = sy;
 
-    // Create SVG rubber-band line
+    // Create SVG rubber-band bezier path
     const svgEl = ensureDepSvg();
-    const line  = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', sx); line.setAttribute('y1', sy);
-    line.setAttribute('x2', sx); line.setAttribute('y2', sy);
-    line.setAttribute('stroke', 'rgba(46,125,50,0.85)');
-    line.setAttribute('stroke-width', '2');
-    line.setAttribute('stroke-dasharray', '6 3');
-    line.setAttribute('marker-end', 'url(#depArrow)');
-    svgEl.appendChild(line);
-    conn.tempLine = line;
+    const path  = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${sx} ${sy} C ${sx + 40} ${sy}, ${sx + 40} ${sy}, ${sx} ${sy}`);
+    path.setAttribute('stroke', 'rgba(46,125,50,0.85)');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-dasharray', '6 3');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('marker-end', 'url(#depArrow)');
+    svgEl.appendChild(path);
+    conn.tempLine = path;
 
     const banner = document.getElementById('connectingBanner');
     if (banner) banner.classList.remove('hidden');
