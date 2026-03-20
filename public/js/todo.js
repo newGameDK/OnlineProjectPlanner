@@ -13,11 +13,13 @@
   const U  = () => window.appUtils;
 
   let currentFilter = 'all';
+  let todoDepsVisible = false;  // show dependency badges on cards
 
   window.todoModule = {
     render,
     setFilter,
     showAddModal,
+    setDepsVisible,
   };
 
   // =========================================================================
@@ -49,6 +51,11 @@
     render();
   }
 
+  function setDepsVisible(visible) {
+    todoDepsVisible = visible;
+    render();
+  }
+
   // =========================================================================
   // Column rendering
   // =========================================================================
@@ -77,6 +84,26 @@
       }
     }
 
+    // Dependency badges (shown when todoDepsVisible is true and the card has a linked Gantt entry)
+    let depsHtml = '';
+    if (todoDepsVisible && todo.gantt_entry_id) {
+      const deps = S().dependencies || [];
+      // Tasks that must finish before this one (this task depends on them)
+      deps.filter(d => d.target_id === todo.gantt_entry_id).forEach(d => {
+        const srcEntry = S().ganttEntries.find(e => e.id === d.source_id);
+        if (srcEntry) {
+          depsHtml += `<span class="todo-card-dep todo-card-dep-in" title="Depends on: ${U().escHtml(srcEntry.title)}">⬆ ${U().escHtml(srcEntry.title)}</span>`;
+        }
+      });
+      // Tasks that are blocked by this one (they depend on this task)
+      deps.filter(d => d.source_id === todo.gantt_entry_id).forEach(d => {
+        const tgtEntry = S().ganttEntries.find(e => e.id === d.target_id);
+        if (tgtEntry) {
+          depsHtml += `<span class="todo-card-dep todo-card-dep-out" title="Blocks: ${U().escHtml(tgtEntry.title)}">⬇ ${U().escHtml(tgtEntry.title)}</span>`;
+        }
+      });
+    }
+
     // Due date
     let dueLabel = '';
     if (todo.due_date) {
@@ -102,6 +129,7 @@
     card.innerHTML = `
       <div class="todo-card-title">${U().escHtml(todo.title)}</div>
       ${todo.description ? `<div class="todo-card-desc">${U().escHtml(todo.description)}</div>` : ''}
+      ${depsHtml ? `<div class="todo-card-deps">${depsHtml}</div>` : ''}
       <div class="todo-card-meta">
         <span class="todo-card-tag">${statusLabel(todo.status)}</span>
         ${dueLabel}

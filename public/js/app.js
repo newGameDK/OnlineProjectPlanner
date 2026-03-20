@@ -69,6 +69,9 @@ function hslToHex(h, s, l) {
 // Application State
 // ==========================================================================
 
+// Maximum number of older (rollback) releases shown in the update modal.
+const MAX_ROLLBACK_VERSIONS = 5;
+
 const state = {
   user: null,
   teams: [],
@@ -622,22 +625,68 @@ function setupEventListeners() {
       const selectEl  = document.getElementById('ghReleaseSelect');
       const installBtn = document.getElementById('ghInstallBtn');
       try {
+        // Read the currently installed version so we can exclude it from the list
+        let currentVersion = '';
+        try {
+          const vRes = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
+          if (vRes.ok) { const vData = await vRes.json(); currentVersion = vData.version || ''; }
+        } catch { /* ignore – version unknown */ }
+
         const res = await fetch(apiUrl('/api/github-releases'), { credentials: 'include' });
         if (!res.ok) throw new Error('Could not fetch releases');
         const releases = await res.json();
         if (!releases.length) { loadingEl.textContent = 'No releases found'; return; }
 
         selectEl.innerHTML = '';
-        for (const r of releases) {
+
+        // GitHub returns releases newest-first.  Find where the installed version sits
+        // so we can split the list into "newer" (updates) and "older" (rollback).
+        const currentIdx = releases.findIndex(r => r.tag.replace(/^v/, '') === currentVersion);
+
+        let newerGroup = null;
+        let olderGroup = null;
+        let olderCount = 0;
+
+        for (let i = 0; i < releases.length; i++) {
+          const r = releases[i];
           const asset = r.assets.find(a => a.name.endsWith('.zip'));
           if (!asset) continue;
+
+          const releaseVersion = r.tag.replace(/^v/, '');
+          // Skip the currently installed version
+          if (currentVersion && releaseVersion === currentVersion) continue;
+
+          const isOlder = currentIdx >= 0 && i > currentIdx;
+          if (isOlder) {
+            // Limit how far back the user can roll back
+            if (olderCount >= MAX_ROLLBACK_VERSIONS) continue;
+            olderCount++;
+            if (!olderGroup) {
+              olderGroup = document.createElement('optgroup');
+              olderGroup.label = 'Older versions \u2014 rollback';
+              selectEl.appendChild(olderGroup);
+            }
+          } else {
+            // Newer than current (or position unknown) – these are updates
+            if (!newerGroup && currentIdx >= 0) {
+              newerGroup = document.createElement('optgroup');
+              newerGroup.label = 'Newer versions \u2014 update';
+              selectEl.insertBefore(newerGroup, olderGroup || null);
+            }
+          }
+
           const opt = document.createElement('option');
           opt.value = asset.download_url;
           const size = asset.size ? ' (' + (asset.size / 1024 / 1024).toFixed(1) + ' MB)' : '';
           opt.textContent = r.name + size;
-          selectEl.appendChild(opt);
+          (isOlder ? olderGroup : (newerGroup || selectEl)).appendChild(opt);
         }
-        if (!selectEl.options.length) { loadingEl.textContent = 'No ZIP assets found in releases'; return; }
+        if (!selectEl.options.length) {
+          loadingEl.textContent = currentVersion
+            ? 'You are already on the latest version (v' + currentVersion + ')'
+            : 'No ZIP assets found in releases';
+          return;
+        }
         loadingEl.style.display = 'none';
         selectEl.style.display = '';
         installBtn.style.display = '';
@@ -852,6 +901,15 @@ function setupEventListeners() {
     if (!state.currentProject) return;
     window.todoModule?.showAddModal();
   });
+
+  // Toggle dep indicators on todo cards
+  const todoDepsBtn = document.getElementById('todoDepsBtn');
+  if (todoDepsBtn) {
+    todoDepsBtn.addEventListener('click', () => {
+      const visible = todoDepsBtn.classList.toggle('active');
+      window.todoModule?.setDepsVisible(visible);
+    });
+  }
 
   // Export CSV
   document.getElementById('exportCsvBtn').addEventListener('click', (e) => { e.stopPropagation(); exportCSV(); });
