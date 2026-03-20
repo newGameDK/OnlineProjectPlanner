@@ -1159,7 +1159,7 @@
       if (idx !== -1) S().ganttEntries[idx] = data.entry;
       // Recursively expand grandparent if needed
       await expandParentDates(data.entry);
-    } catch (_) { /* non-critical */ }
+    } catch (err) { console.warn('expandParentDates:', err); }
   }
   // =========================================================================
   async function addToTodo(entry) {
