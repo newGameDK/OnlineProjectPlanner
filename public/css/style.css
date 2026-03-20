@@ -623,6 +623,23 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 
   body.print-gantt .gantt-row-bg { page-break-inside: avoid; }
 
+  /* Multi-page horizontal tiling */
+  body.print-gantt .print-multi-wrapper { display: block; }
+  body.print-gantt .print-page-section { overflow: hidden; }
+  body.print-gantt .print-page-section + .print-page-section { page-break-before: always; }
+  body.print-gantt .print-page-label {
+    font-size: 8px; color: #999; text-align: right; padding: 0 4px 2px;
+  }
+  .print-overlap-mark {
+    position: absolute; top: 0; bottom: 0;
+    border-left: 2px dashed #aaa; z-index: 100;
+    pointer-events: none;
+  }
+  .print-overlap-mark span {
+    position: absolute; top: 2px; left: -6px;
+    font-size: 10px; color: #aaa; line-height: 1;
+  }
+
   /* Preserve background colors and images when printing */
   body.print-gantt * {
     -webkit-print-color-adjust: exact !important;

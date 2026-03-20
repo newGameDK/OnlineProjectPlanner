@@ -1115,7 +1115,14 @@ async function exportCSV() {
 function exportPDF() {
   if (!state.currentProject) return alert('Open a project first.');
 
-  // Temporarily remove overflow restrictions so the full chart prints
+  const ganttContainer = document.getElementById('ganttContainer');
+  const ganttTimeline  = document.getElementById('ganttTimeline');
+  const ganttTaskList  = document.getElementById('ganttTaskList');
+  const ganttHoursPanel = document.getElementById('ganttHoursPanel');
+  const ganttBody      = document.getElementById('ganttBody');
+  const intensityBar   = document.getElementById('intensityBarContainer');
+
+  // Temporarily remove overflow restrictions so we can measure full dimensions
   const ids = ['ganttTimeline', 'ganttTaskList', 'ganttHoursPanel'];
   const saved = ids.map(id => {
     const el = document.getElementById(id);
@@ -1127,23 +1134,160 @@ function exportPDF() {
     return s;
   }).filter(Boolean);
 
-  const body = document.querySelector('.gantt-body');
-  const savedBodyOverflow = body ? body.style.overflow : '';
-  if (body) body.style.overflow = 'visible';
+  const savedBodyOverflow = ganttBody ? ganttBody.style.overflow : '';
+  if (ganttBody) ganttBody.style.overflow = 'visible';
 
   document.body.classList.add('print-gantt');
 
-  const afterPrint = () => {
+  // --- Measure content dimensions ---
+  const timelineTotalW = ganttTimeline.scrollWidth;
+  const taskListW      = ganttTaskList.offsetWidth;
+  const hoursW         = ganttHoursPanel ? ganttHoursPanel.offsetWidth : 0;
+
+  // A4 landscape usable width: 297mm − 2×8mm margins = 281mm
+  // Convert mm → px: mm × 96 (CSS reference DPI) / 25.4 (mm per inch)
+  const PAGE_W = Math.round(281 * 96 / 25.4);
+  const timelinePerPage = PAGE_W - taskListW - hoursW;
+  const OVERLAP_PX = 40;
+  const step = Math.max(1, timelinePerPage - OVERLAP_PX);
+
+  const numPages = timelineTotalW > timelinePerPage
+    ? Math.max(1, Math.ceil((timelineTotalW - OVERLAP_PX) / step))
+    : 1;
+
+  // --- Shared cleanup helper ---
+  let wrapper = null;
+  const cleanup = () => {
     document.body.classList.remove('print-gantt');
     saved.forEach(s => {
       s.el.style.overflow  = s.overflow;
       s.el.style.height    = s.height;
       s.el.style.maxHeight = s.maxHeight;
     });
-    if (body) body.style.overflow = savedBodyOverflow;
-    window.removeEventListener('afterprint', afterPrint);
+    if (ganttBody) ganttBody.style.overflow = savedBodyOverflow;
+    if (wrapper) {
+      wrapper.remove();
+      ganttContainer.style.display = '';
+    }
   };
 
+  if (numPages <= 1) {
+    // Single page – just print as before
+    const afterPrint = () => { cleanup(); window.removeEventListener('afterprint', afterPrint); };
+    window.addEventListener('afterprint', afterPrint);
+    window.print();
+    return;
+  }
+
+  // --- Multi-page: build horizontally-tiled print pages ---
+  wrapper = document.createElement('div');
+  wrapper.className = 'print-multi-wrapper';
+
+  // Snapshot the intensity bar canvas to an image (cloneNode does not copy canvas pixels)
+  let canvasDataUrl = null;
+  const origCanvas = intensityBar ? intensityBar.querySelector('canvas') : null;
+  if (origCanvas) {
+    try { canvasDataUrl = origCanvas.toDataURL(); } catch (_) { /* tainted canvas, skip */ }
+  }
+
+  for (let p = 0; p < numPages; p++) {
+    const offset = p * step;
+
+    const page = document.createElement('div');
+    page.className = 'print-page-section';
+
+    // Page label
+    const label = document.createElement('div');
+    label.className = 'print-page-label';
+    label.textContent = 'Page ' + (p + 1) + ' / ' + numPages;
+    page.appendChild(label);
+
+    // --- Intensity bar clone ---
+    if (intensityBar) {
+      const iClone = intensityBar.cloneNode(true);
+      iClone.removeAttribute('id');
+      // Replace cloned canvas with image snapshot
+      if (canvasDataUrl) {
+        const clonedCanvas = iClone.querySelector('canvas');
+        if (clonedCanvas) {
+          const img = document.createElement('img');
+          img.src = canvasDataUrl;
+          img.style.display = 'block';
+          img.style.marginLeft = (-offset) + 'px';
+          clonedCanvas.parentNode.replaceChild(img, clonedCanvas);
+        }
+      }
+      const tlHeader = iClone.querySelector('.gantt-timeline-header');
+      if (tlHeader) {
+        tlHeader.style.overflow = 'hidden';
+        tlHeader.style.width = timelinePerPage + 'px';
+        tlHeader.style.flex = 'none';
+      }
+      page.appendChild(iClone);
+    }
+
+    // --- Gantt body row ---
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.overflow = 'hidden';
+
+    // Task list
+    const taskC = ganttTaskList.cloneNode(true);
+    taskC.removeAttribute('id');
+    row.appendChild(taskC);
+
+    // Timeline viewport (clips to one page-width)
+    const vp = document.createElement('div');
+    vp.style.width = timelinePerPage + 'px';
+    vp.style.overflow = 'hidden';
+    vp.style.flexShrink = '0';
+    vp.style.position = 'relative';
+
+    const tlC = ganttTimeline.cloneNode(true);
+    tlC.removeAttribute('id');
+    tlC.style.overflow = 'visible';
+    tlC.style.marginLeft = (-offset) + 'px';
+    vp.appendChild(tlC);
+
+    // Overlap alignment marks (dashed lines)
+    if (p > 0) {
+      const mark = document.createElement('div');
+      mark.className = 'print-overlap-mark';
+      mark.style.left = OVERLAP_PX + 'px';
+      const scissors = document.createElement('span');
+      scissors.textContent = '✂';
+      mark.appendChild(scissors);
+      vp.appendChild(mark);
+    }
+    if (p < numPages - 1) {
+      const mark = document.createElement('div');
+      mark.className = 'print-overlap-mark';
+      mark.style.right = OVERLAP_PX + 'px';
+      mark.style.left = 'auto';
+      const scissors = document.createElement('span');
+      scissors.textContent = '✂';
+      mark.appendChild(scissors);
+      vp.appendChild(mark);
+    }
+
+    row.appendChild(vp);
+
+    // Hours panel
+    if (ganttHoursPanel) {
+      const hpC = ganttHoursPanel.cloneNode(true);
+      hpC.removeAttribute('id');
+      row.appendChild(hpC);
+    }
+
+    page.appendChild(row);
+    wrapper.appendChild(page);
+  }
+
+  // Hide original gantt, insert print pages
+  ganttContainer.style.display = 'none';
+  ganttContainer.parentNode.insertBefore(wrapper, ganttContainer);
+
+  const afterPrint = () => { cleanup(); window.removeEventListener('afterprint', afterPrint); };
   window.addEventListener('afterprint', afterPrint);
   window.print();
 }
