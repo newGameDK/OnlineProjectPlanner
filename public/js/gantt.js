@@ -36,6 +36,7 @@
   // ─── module state ─────────────────────────────────────────────────────────
   let parentStack     = [];   // breadcrumb: [{entry, label}, …]
   let currentParentId = null;
+  let expandedIds     = new Set(); // inline-expanded entries (show children)
 
   let scale    = 'week';
   let pxPerDay = 28;
@@ -127,6 +128,15 @@
     const cancelBtn = document.getElementById('cancelConnecting');
     if (cancelBtn) cancelBtn.addEventListener('click', cancelConnecting);
 
+    // ── Help mode toggle ───────────────────────────────────────────────────
+    const helpBtn = document.getElementById('helpModeBtn');
+    if (helpBtn) {
+      helpBtn.addEventListener('click', () => {
+        document.body.classList.toggle('help-mode');
+        helpBtn.classList.toggle('active');
+      });
+    }
+
     parentStack     = [];
     currentParentId = null;
     chartStart      = null;
@@ -182,17 +192,24 @@
       row.dataset.id = entry.id;
 
       // Indent placeholder
+      const depth = entry._depth || 0;
       const ind = document.createElement('span');
       ind.className = 'gantt-task-indent';
-      ind.style.width = '0px';
+      ind.style.width = (depth * 16) + 'px';
       row.appendChild(ind);
 
       // Expand indicator
+      const isExpanded = expandedIds.has(entry.id);
       const exp = document.createElement('span');
       if (hasChildren) {
-        exp.className = 'gantt-task-expand';
-        exp.textContent = '\u25B6';
-        exp.title = 'Double-click bar to open sub-chart';
+        exp.className = 'gantt-task-expand' + (isExpanded ? ' expanded' : '');
+        exp.textContent = isExpanded ? '\u25BC' : '\u25B6';
+        exp.title = isExpanded ? 'Collapse sub-entries' : 'Expand sub-entries (double-click to drill down)';
+        exp.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (isExpanded) { expandedIds.delete(entry.id); } else { expandedIds.add(entry.id); }
+          render();
+        });
       } else {
         exp.style.cssText = 'width:16px;display:inline-block;flex-shrink:0';
       }
@@ -342,8 +359,9 @@
     const end   = parseDate(entry.end_date);
     if (!start || !end || start > chartEnd || end < chartStart) return null;
 
-    const leftDays  = Math.max(0, daysBetween(chartStart, start));
-    const widthDays = Math.max(MIN_DAYS, daysBetween(start, end));
+    const clippedStart = start < chartStart ? chartStart : start;
+    const leftDays  = daysBetween(chartStart, clippedStart);
+    const widthDays = Math.max(MIN_DAYS, daysBetween(clippedStart, end));
     const left  = leftDays  * pxPerDay;
     const width = widthDays * pxPerDay;
 
@@ -402,6 +420,7 @@
     const hLeft = document.createElement('div');
     hLeft.className = 'gantt-bar-handle left';
     hLeft.title     = 'Drag to change start date';
+    hLeft.dataset.help = 'Drag left edge to change the start date';
     hLeft.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
       startDrag(e, 'resize-left', entry, bar, container);
@@ -412,6 +431,7 @@
     const hRight = document.createElement('div');
     hRight.className = 'gantt-bar-handle right';
     hRight.title     = 'Drag to change end date';
+    hRight.dataset.help = 'Drag right edge to change the end date';
     hRight.addEventListener('mousedown', (e) => {
       e.preventDefault(); e.stopPropagation();
       startDrag(e, 'resize-right', entry, bar, container);
@@ -422,6 +442,7 @@
     const inputNode = document.createElement('div');
     inputNode.className = 'dep-node input-node' + (hasDepsIn ? ' always-visible' : '');
     inputNode.title     = 'Input: this task depends on another (click while connecting)';
+    inputNode.dataset.help = 'Input node (◀): click here while in connecting mode to set this task as a dependency target';
     inputNode.textContent = '\u25C4';
 
     inputNode.addEventListener('click', (e) => {
@@ -442,6 +463,7 @@
     const outputNode = document.createElement('div');
     outputNode.className = 'dep-node output-node' + (hasDepsOut ? ' always-visible' : '');
     outputNode.title     = 'Output: click to connect a dependency to another task';
+    outputNode.dataset.help = 'Output node (▶): click to start connecting a dependency arrow from this task to another';
     outputNode.textContent = '\u25BA';
 
     outputNode.addEventListener('click', (e) => {
@@ -565,8 +587,9 @@
     if (!containerEl) return;
     const s  = parseDate(newStart);
     const en = parseDate(newEnd);
-    const leftDays  = Math.max(0, daysBetween(chartStart, s));
-    const widthDays = Math.max(MIN_DAYS, daysBetween(s, en));
+    const cs = s < chartStart ? chartStart : s;
+    const leftDays  = daysBetween(chartStart, cs);
+    const widthDays = Math.max(MIN_DAYS, daysBetween(cs, en));
     containerEl.style.left  = (leftDays  * pxPerDay) + 'px';
     containerEl.style.width = (widthDays * pxPerDay) + 'px';
   }
@@ -1097,7 +1120,21 @@
   // Visible entries + auto chart range
   // =========================================================================
   function visibleEntries() {
-    return S().ganttEntries.filter(e => e.parent_id === currentParentId);
+    const all   = S().ganttEntries;
+    const roots = all.filter(e => e.parent_id === currentParentId);
+    const result = [];
+
+    function addWithChildren(entry, depth) {
+      entry._depth = depth;           // transient, used for indent
+      result.push(entry);
+      if (expandedIds.has(entry.id)) {
+        const kids = all.filter(e => e.parent_id === entry.id);
+        kids.forEach(child => addWithChildren(child, depth + 1));
+      }
+    }
+
+    roots.forEach(r => addWithChildren(r, 0));
+    return result;
   }
 
   function autoSetChartRange(entries) {
