@@ -171,6 +171,19 @@ CREATE TABLE IF NOT EXISTS global_undo_history (
 );
 `);
 
+// Redo history (project-scoped; mirrors undo_history structure)
+db.exec(`
+CREATE TABLE IF NOT EXISTS redo_history (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  action_data TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+`);
+
 // ---------------------------------------------------------------------------
 // Prepared statements
 // ---------------------------------------------------------------------------
@@ -244,6 +257,12 @@ const stmts = {
   addUndo: db.prepare(`INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)`),
   getUndoForUser: db.prepare(`SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 200`),
   deleteUndo: db.prepare(`DELETE FROM undo_history WHERE id=?`),
+
+  // Redo
+  addRedo: db.prepare(`INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)`),
+  getRedoForUser: db.prepare(`SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1`),
+  deleteRedo: db.prepare(`DELETE FROM redo_history WHERE id=?`),
+  clearRedoForProject: db.prepare(`DELETE FROM redo_history WHERE project_id=? AND user_id=?`),
 
   // Global undo (team/project-level operations that survive deletion)
   addGlobalUndo: db.prepare(`INSERT INTO global_undo_history (id,user_id,action_type,action_data) VALUES (?,?,?,?)`),
@@ -636,7 +655,8 @@ app.post('/api/gantt', requireAuth, (req, res) => {
   const entry = stmts.getGantt.get(id);
   const teamId = projectTeamId(project_id);
 
-  // Save undo action
+  // Save undo action; clear any stale redo history for this project/user
+  stmts.clearRedoForProject.run(project_id, req.session.userId);
   stmts.addUndo.run(uuidv4(), project_id, req.session.userId, 'create_gantt', JSON.stringify({ entry }));
 
   broadcastToTeam(teamId, { type: 'gantt_created', entry });
@@ -665,7 +685,8 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
     }
   }
 
-  // Save undo action before update
+  // Save undo action before update; clear any stale redo history for this project/user
+  stmts.clearRedoForProject.run(existing.project_id, req.session.userId);
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
 
   const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours } = req.body;
@@ -694,7 +715,8 @@ app.delete('/api/gantt/:id', requireAuth, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
   if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
-  // Save undo action
+  // Save undo action; clear any stale redo history for this project/user
+  stmts.clearRedoForProject.run(existing.project_id, req.session.userId);
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'delete_gantt', JSON.stringify({ entry: existing }));
 
   stmts.deleteGantt.run(existing.id);
@@ -820,14 +842,22 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
 
   let result = {};
   if (action.action_type === 'create_gantt') {
-    // Undo creation = delete
+    // Undo creation = delete; save entry to redo so it can be recreated
+    const entryBeforeDelete = stmts.getGantt.get(data.entry.id);
+    if (entryBeforeDelete) {
+      stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'create_gantt', JSON.stringify({ entry: entryBeforeDelete }));
+    }
     stmts.deleteGantt.run(data.entry.id);
     const teamId = projectTeamId(req.params.projectId);
     broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: data.entry.id, project_id: req.params.projectId });
     result = { undone: 'create_gantt', entry_id: data.entry.id };
   } else if (action.action_type === 'update_gantt') {
-    // Undo update = restore previous state
+    // Undo update = restore previous state; save current state to redo
     const e = data.entry;
+    const currentEntry = stmts.getGantt.get(e.id);
+    if (currentEntry) {
+      stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'update_gantt', JSON.stringify({ entry: currentEntry }));
+    }
     db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`)
       .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, now(), e.id);
     const entry = stmts.getGantt.get(e.id);
@@ -835,8 +865,9 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
     result = { undone: 'update_gantt', entry };
   } else if (action.action_type === 'delete_gantt') {
-    // Undo deletion = recreate
+    // Undo deletion = recreate; save to redo so it can be deleted again
     const e = data.entry;
+    stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt', JSON.stringify({ entry: e }));
     try {
       stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
         e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
@@ -845,6 +876,66 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_created', entry });
     result = { undone: 'delete_gantt', entry };
+  }
+
+  res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// Redo route
+// ---------------------------------------------------------------------------
+
+app.post('/api/redo/:projectId', requireAuth, (req, res) => {
+  if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+  const redoAction = stmts.getRedoForUser.get(req.params.projectId, req.session.userId);
+  if (!redoAction) return res.status(400).json({ error: 'Nothing to redo' });
+
+  const data = JSON.parse(redoAction.action_data);
+  stmts.deleteRedo.run(redoAction.id);
+
+  let result = {};
+  if (redoAction.action_type === 'create_gantt') {
+    // Redo: recreate the entry that was originally created then undone
+    const e = data.entry;
+    try {
+      stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
+        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+    } catch (_) { /* already exists */ }
+    const entry = stmts.getGantt.get(e.id);
+    const teamId = projectTeamId(req.params.projectId);
+    if (entry) broadcastToTeam(teamId, { type: 'gantt_created', entry });
+    // Save new undo action so user can undo this redo
+    stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'create_gantt', JSON.stringify({ entry }));
+    result = { redone: 'create_gantt', entry };
+  } else if (redoAction.action_type === 'update_gantt') {
+    // Redo: re-apply the update (restore to the state stored in redo data)
+    const e = data.entry;
+    const currentEntry = stmts.getGantt.get(e.id);
+    if (currentEntry) {
+      // Save current state as undo so user can undo this redo
+      stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'update_gantt', JSON.stringify({ entry: currentEntry }));
+      db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`)
+        .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, now(), e.id);
+      const entry = stmts.getGantt.get(e.id);
+      const teamId = projectTeamId(req.params.projectId);
+      if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
+      result = { redone: 'update_gantt', entry };
+    } else {
+      result = { redone: 'update_gantt', entry: null };
+    }
+  } else if (redoAction.action_type === 'delete_gantt') {
+    // Redo: delete the entry again
+    const e = data.entry;
+    const currentEntry = stmts.getGantt.get(e.id);
+    if (currentEntry) {
+      // Save undo action so user can undo this redo
+      stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt', JSON.stringify({ entry: currentEntry }));
+      stmts.deleteGantt.run(e.id);
+      const teamId = projectTeamId(req.params.projectId);
+      broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: e.id, project_id: req.params.projectId });
+    }
+    result = { redone: 'delete_gantt', entry_id: e.id };
   }
 
   res.json(result);

@@ -818,7 +818,9 @@ if ($seg1 === 'gantt') {
         $s->execute([$id]);
         $entry = $s->fetch();
 
-        // Save undo
+        // Save undo; clear stale redo history
+        $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+        $s->execute([$project_id, $userId]);
         $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
         $s->execute([uuid_v4(), $project_id, $userId, 'create_gantt', json_encode(['entry' => $entry])]);
 
@@ -865,7 +867,9 @@ if ($seg1 === 'gantt') {
                 }
             }
 
-            // Save undo
+            // Save undo; clear stale redo history
+            $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+            $s->execute([$existing['project_id'], $userId]);
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
 
@@ -899,7 +903,9 @@ if ($seg1 === 'gantt') {
             if (!$existing) json_out(['error' => 'Not found'], 404);
             if (!can_access_project($db, $existing['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
 
-            // Save undo
+            // Save undo; clear stale redo history
+            $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+            $s->execute([$existing['project_id'], $userId]);
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'delete_gantt', json_encode(['entry' => $existing])]);
 
@@ -1097,11 +1103,27 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
 
     $result = [];
     if ($action['action_type'] === 'create_gantt') {
+        // Undo creation = delete; save entry to redo so it can be recreated
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s->execute([$data['entry']['id']]);
+        $entryBeforeDelete = $s->fetch();
+        if ($entryBeforeDelete) {
+            $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $projectId, $userId, 'create_gantt', json_encode(['entry' => $entryBeforeDelete])]);
+        }
         $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
         $s->execute([$data['entry']['id']]);
         $result = ['undone' => 'create_gantt', 'entry_id' => $data['entry']['id']];
     } elseif ($action['action_type'] === 'update_gantt') {
+        // Undo update = restore previous state; save current state to redo
         $e = $data['entry'];
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s->execute([$e['id']]);
+        $currentEntry = $s->fetch();
+        if ($currentEntry) {
+            $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
+        }
         $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
         $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, now_ms(), $e['id']]);
 
@@ -1109,7 +1131,10 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $s->execute([$e['id']]);
         $result = ['undone' => 'update_gantt', 'entry' => $s->fetch()];
     } elseif ($action['action_type'] === 'delete_gantt') {
+        // Undo deletion = recreate; save to redo so it can be deleted again
         $e = $data['entry'];
+        $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $e])]);
         try {
             $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
             $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '']);
@@ -1118,6 +1143,76 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);
         $result = ['undone' => 'delete_gantt', 'entry' => $s->fetch()];
+    }
+
+    json_out($result);
+}
+
+// =========================================================================
+// REDO ROUTE
+// =========================================================================
+
+if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
+    $userId = require_auth();
+    $projectId = $seg2;
+    if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
+
+    $s = $db->prepare('SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1');
+    $s->execute([$projectId, $userId]);
+    $redoAction = $s->fetch();
+    if (!$redoAction) json_out(['error' => 'Nothing to redo'], 400);
+
+    $data = json_decode($redoAction['action_data'], true);
+    $s = $db->prepare('DELETE FROM redo_history WHERE id=?');
+    $s->execute([$redoAction['id']]);
+
+    $result = [];
+    if ($redoAction['action_type'] === 'create_gantt') {
+        // Redo: recreate the entry that was originally created then undone
+        $e = $data['entry'];
+        try {
+            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '']);
+        } catch (Exception $ex) { /* already exists */ }
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s->execute([$e['id']]);
+        $entry = $s->fetch();
+        // Save new undo action so user can undo this redo
+        $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'create_gantt', json_encode(['entry' => $entry])]);
+        $result = ['redone' => 'create_gantt', 'entry' => $entry];
+    } elseif ($redoAction['action_type'] === 'update_gantt') {
+        // Redo: re-apply the update (restore to the state stored in redo data)
+        $e = $data['entry'];
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s->execute([$e['id']]);
+        $currentEntry = $s->fetch();
+        if ($currentEntry) {
+            // Save current state as undo so user can undo this redo
+            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
+            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
+            $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, now_ms(), $e['id']]);
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $s->execute([$e['id']]);
+            $result = ['redone' => 'update_gantt', 'entry' => $s->fetch()];
+        } else {
+            $result = ['redone' => 'update_gantt', 'entry' => null];
+        }
+    } elseif ($redoAction['action_type'] === 'delete_gantt') {
+        // Redo: delete the entry again
+        $e = $data['entry'];
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s->execute([$e['id']]);
+        $currentEntry = $s->fetch();
+        if ($currentEntry) {
+            // Save undo action so user can undo this redo
+            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $currentEntry])]);
+            $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
+            $s->execute([$e['id']]);
+        }
+        $result = ['redone' => 'delete_gantt', 'entry_id' => $e['id']];
     }
 
     json_out($result);
