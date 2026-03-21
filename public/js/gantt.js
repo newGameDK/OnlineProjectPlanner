@@ -1199,7 +1199,7 @@
     if (header) {
       const t = entries
         .filter(e => (e._depth || 0) === 0)
-        .reduce((sum, e) => sum + calcTotalHours(e.id), 0);
+        .reduce((sum, e) => sum + calcTreeTotal(e.id), 0);
       header.textContent = t > 0 ? fmtH(t) : 'Total h';
       header.title       = t > 0 ? fmtH(t) + ' total hours in this view' : 'Total hours';
     }
@@ -1219,12 +1219,28 @@
     }
     let childSum = 0;
     children.forEach(child => { childSum += calcTotalHours(child.id); });
-    if (entry.subtract_hours && childSum > 0) {
-      // "remaining budget" mode: show what's left after children consume from parent
-      return Math.max(0, (entry.hours_estimate || 0) - childSum);
+    const own = entry.hours_estimate || 0;
+    if (own > 0) {
+      // Parent has an hour budget: children withdraw from it
+      return Math.max(0, own - childSum);
     }
-    // Default: parent hours are replaced by children's sum to avoid double-counting
+    // No budget on parent: show sum of children
     return childSum;
+  }
+
+  /**
+   * Total hours for an entire tree (parent budget or child sum, whichever is
+   * larger). Used for the header "Total h" so the number reflects the full
+   * project scope instead of only the remaining budget.
+   */
+  function calcTreeTotal(entryId) {
+    const entry = S().ganttEntries.find(e => e.id === entryId);
+    if (!entry) return 0;
+    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
+    if (children.length === 0) return entry.hours_estimate || 0;
+    let childSum = 0;
+    children.forEach(child => { childSum += calcTreeTotal(child.id); });
+    return Math.max(entry.hours_estimate || 0, childSum);
   }
 
   function fmtH(h) {
@@ -1249,20 +1265,27 @@
     const hoursPerPeriod = capacity * (periodDays / 30);
 
     const hoursPerDay = new Float64Array(totalDays + 1);
-    // Build a set of entry IDs that have children so we can skip them and
-    // avoid double-counting parent + child hours in the intensity bar.
+    // Build a set of entry IDs that have children so we can handle
+    // parent budget remaining vs leaf hours correctly.
     const parentIdsSet = new Set();
     S().ganttEntries.forEach(e => { if (e.parent_id) parentIdsSet.add(e.parent_id); });
 
     S().ganttEntries.forEach(entry => {
       if (!entry.hours_estimate) return;
-      // Skip parent entries – their children already represent the hours
-      if (parentIdsSet.has(entry.id)) return;
+      const isParent = parentIdsSet.has(entry.id);
+      let h;
+      if (isParent) {
+        // Parent with budget: only spread the remaining (budget − children) hours
+        h = calcTotalHours(entry.id);          // already clamped to ≥ 0
+        if (h <= 0) return;                    // children consumed the whole budget
+      } else {
+        h = entry.hours_estimate;
+      }
       const s  = parseDate(entry.start_date);
       const en = parseDate(entry.end_date);
       if (!s || !en) return;
       const span   = Math.max(1, daysBetween(s, en));
-      const dailyH = entry.hours_estimate / span;
+      const dailyH = h / span;
       for (let d = 0; d < totalDays; d++) {
         const day = addDays(chartStart, d);
         if (day >= s && day < en) hoursPerDay[d] += dailyH;
@@ -1360,31 +1383,6 @@
         ganttBreadcrumb.appendChild(cur);
       }
     });
-
-    // Subtract hours checkbox – only shown when drilled into a parent
-    const parentEntry = S().ganttEntries.find(e => e.id === currentParentId);
-    if (parentEntry) {
-      const lbl = document.createElement('label');
-      lbl.className = 'gantt-bc-subtract';
-      lbl.title = 'Subtract sub-task hours from the parent task\'s hours estimate';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = !!parentEntry.subtract_hours;
-      cb.addEventListener('change', async () => {
-        try {
-          const data = await API('PUT', '/api/gantt/' + parentEntry.id, { subtract_hours: cb.checked });
-          const idx = S().ganttEntries.findIndex(e => e.id === parentEntry.id);
-          if (idx !== -1) S().ganttEntries[idx] = data.entry;
-          // Update the breadcrumb stack entry too
-          const crumb = parentStack.find(c => c.entry.id === parentEntry.id);
-          if (crumb) crumb.entry = data.entry;
-          render();
-        } catch (_) { cb.checked = !cb.checked; }
-      });
-      lbl.appendChild(cb);
-      lbl.appendChild(document.createTextNode(' Subtract hours from parent'));
-      ganttBreadcrumb.appendChild(lbl);
-    }
   }
 
   // =========================================================================
@@ -1423,24 +1421,6 @@
       }
       render();
       U().closeModal();
-
-      // If this is a subtask and the parent does not already subtract hours,
-      // ask the user whether they want to enable subtraction.
-      if (data.entry.parent_id) {
-        const parent = S().ganttEntries.find(e => e.id === data.entry.parent_id);
-        if (parent && !parent.subtract_hours && (parent.hours_estimate || 0) > 0) {
-          if (confirm('Subtract this sub-task\'s hours from the parent task\'s hours?')) {
-            try {
-              const upd = await API('PUT', '/api/gantt/' + parent.id, { subtract_hours: true });
-              const pi = S().ganttEntries.findIndex(e => e.id === parent.id);
-              if (pi !== -1) S().ganttEntries[pi] = upd.entry;
-              const crumb = parentStack.find(c => c.entry.id === parent.id);
-              if (crumb) crumb.entry = upd.entry;
-              render();
-            } catch (_) { /* ignore – not critical */ }
-          }
-        }
-      }
 
       // Ask if the new entry should also be added to the todo list
       if (confirm('Add "' + data.entry.title + '" to the Todo list as well?')) {
