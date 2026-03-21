@@ -183,7 +183,8 @@ CREATE TABLE IF NOT EXISTS redo_history (
   action_type TEXT NOT NULL,
   action_data TEXT NOT NULL,
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
-  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 `);
 
@@ -289,6 +290,7 @@ const stmts = {
 
   // Comments
   createComment: db.prepare(`INSERT INTO gantt_comments (id,entry_id,project_id,user_id,message) VALUES (?,?,?,?,?)`),
+  getCommentById: db.prepare(`SELECT c.*,u.username,u.base_color FROM gantt_comments c JOIN users u ON c.user_id=u.id WHERE c.id=?`),
   getEntryComments: db.prepare(`SELECT c.*,u.username,u.base_color FROM gantt_comments c JOIN users u ON c.user_id=u.id WHERE c.entry_id=? ORDER BY c.created_at ASC`),
   deleteComment: db.prepare(`DELETE FROM gantt_comments WHERE id=? AND user_id=?`),
   getProjectComments: db.prepare(`SELECT c.*,u.username FROM gantt_comments c JOIN users u ON c.user_id=u.id WHERE c.project_id=? ORDER BY c.created_at DESC`),
@@ -1070,13 +1072,16 @@ app.post('/api/gantt/:id/comments', requireAuth, (req, res) => {
   if (!message || !message.trim()) return res.status(400).json({ error: 'Message required' });
   const id = uuidv4();
   stmts.createComment.run(id, req.params.id, entry.project_id, req.session.userId, message.trim());
-  const [comment] = stmts.getEntryComments.all(req.params.id).filter(c => c.id === id);
+  const comment = stmts.getCommentById.get(id);
   const teamId = projectTeamId(entry.project_id);
   broadcastToTeam(teamId, { type: 'comment_created', comment, entry_id: req.params.id });
   res.json({ comment });
 });
 
 app.delete('/api/gantt/comments/:commentId', requireAuth, (req, res) => {
+  const existing = db.prepare(`SELECT * FROM gantt_comments WHERE id=?`).get(req.params.commentId);
+  if (!existing) return res.status(404).json({ error: 'Comment not found' });
+  if (existing.user_id !== req.session.userId) return res.status(403).json({ error: 'Forbidden' });
   stmts.deleteComment.run(req.params.commentId, req.session.userId);
   res.json({ ok: true });
 });
