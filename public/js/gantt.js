@@ -49,6 +49,18 @@
   // rowIndexMap: entryId -> rowIndex (rebuilt on each render)
   let rowIndexMap = {};
 
+  // ── clipboard state ────────────────────────────────────────────────────────
+  let clipboardData = null; // { entries: [...], rootId, cut: bool }
+
+  // ── timeline selection drag state ─────────────────────────────────────────
+  const timelineSel = {
+    active: false,
+    startDay: 0,
+    endDay: 0,
+    mouseStartX: 0,
+    overlayEl: null,
+  };
+
   // ── drag state ────────────────────────────────────────────────────────────
   const drag = {
     active: false,
@@ -85,6 +97,7 @@
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
 
+
   /**
    * Get the display colour for an entry.  When inline-expanded (depth > 0)
    * the colour is derived from the root visible ancestor, lightened by depth.
@@ -117,7 +130,7 @@
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal };
+  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
@@ -228,6 +241,7 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         if (conn.active) { cancelConnecting(); return; }
+        if (timelineSel.overlayEl) { clearTimelineSelection(); return; }
         // Go back one drill-down level
         if (parentStack.length && !document.querySelector('.modal.show')) {
           parentStack.pop();
@@ -242,8 +256,14 @@
 
     // Cancel connecting by clicking empty timeline space
     ganttTimeline.addEventListener('click', (e) => {
-      if (!conn.active) return;
-      if (!e.target.closest('.gantt-bar-container')) cancelConnecting();
+      if (conn.active) {
+        if (!e.target.closest('.gantt-bar-container')) cancelConnecting();
+        return;
+      }
+      // Clear date-range selection when clicking on an empty spot
+      if (!e.target.closest('.gantt-bar-container') && !e.target.closest('.gantt-time-selection')) {
+        clearTimelineSelection();
+      }
     });
 
     // Cancel connecting by clicking empty space in task list
@@ -311,7 +331,40 @@
     // Right-click on empty timeline space → add task at clicked date
     ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
 
+    // Left-button drag on empty timeline → date-range selection
+    ganttTimeline.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (conn.active || drag.active) return;
+      if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
+
+      // Clear any existing selection
+      clearTimelineSelection();
+
+      const rect = ganttTimeline.getBoundingClientRect();
+      const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
+      const day  = Math.floor(x / pxPerDay);
+
+      timelineSel.active     = true;
+      timelineSel.startDay   = day;
+      timelineSel.endDay     = day;
+      timelineSel.mouseStartX = e.pageX;
+
+      const overlay = document.createElement('div');
+      overlay.className = 'gantt-time-selection';
+      overlay.style.cssText = 'left:' + (day * pxPerDay) + 'px;width:' + pxPerDay + 'px;top:0;height:100%;';
+      ganttRows.appendChild(overlay);
+      timelineSel.overlayEl = overlay;
+    });
+
     render();
+  }
+
+  function clearTimelineSelection() {
+    if (timelineSel.overlayEl && timelineSel.overlayEl.parentNode) {
+      timelineSel.overlayEl.parentNode.removeChild(timelineSel.overlayEl);
+    }
+    timelineSel.active    = false;
+    timelineSel.overlayEl = null;
   }
 
   function autoScale() {
@@ -340,17 +393,34 @@
 
     e.preventDefault();
 
-    const rect       = ganttTimeline.getBoundingClientRect();
-    const x          = e.clientX - rect.left + ganttTimeline.scrollLeft;
-    const dayOffset  = Math.floor(x / pxPerDay);
-    const clickDate  = addDays(chartStart, dayOffset);
-    const dateStr    = toDateStr(clickDate);
-    const endDateStr = toDateStr(addDays(clickDate, 7));
+    const rect      = ganttTimeline.getBoundingClientRect();
+    const x         = e.clientX - rect.left + ganttTimeline.scrollLeft;
+    const dayOffset = Math.floor(x / pxPerDay);
+    const clickDate = addDays(chartStart, dayOffset);
+    const dateStr   = toDateStr(clickDate);
 
-    U().showContextMenu(e.pageX, e.pageY, [
-      { icon: '+', label: 'Add task here (' + dateStr + ')',
-        action: () => showAddEntryModal(undefined, dateStr, endDateStr) },
-    ]);
+    const items = [];
+
+    // If a range selection is active, offer to add a task spanning that range
+    if (timelineSel.overlayEl) {
+      const selStart = Math.min(timelineSel.startDay, timelineSel.endDay);
+      const selEnd   = Math.max(timelineSel.startDay, timelineSel.endDay);
+      const selStartStr = toDateStr(addDays(chartStart, selStart));
+      const selEndStr   = toDateStr(addDays(chartStart, selEnd + 1));
+      items.push({ icon: '+', label: 'Add task for selection (' + selStartStr + ' – ' + selEndStr + ')',
+        action: () => { clearTimelineSelection(); showAddEntryModal(undefined, selStartStr, selEndStr); } });
+      items.push({ separator: true });
+    }
+
+    items.push({ icon: '+', label: 'Add task here (' + dateStr + ')',
+      action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7))) });
+
+    if (clipboardData) {
+      items.push({ icon: '📋', label: 'Paste task here',
+        action: () => pasteEntries(dateStr) });
+    }
+
+    U().showContextMenu(e.pageX, e.pageY, items);
   }
 
   // =========================================================================
@@ -717,6 +787,11 @@
       if (bar) rowBg.appendChild(bar);
       ganttRows.appendChild(rowBg);
     });
+
+    // Re-attach selection overlay (cleared by innerHTML = '') if still active
+    if (timelineSel.overlayEl) {
+      ganttRows.appendChild(timelineSel.overlayEl);
+    }
   }
 
   function buildBar(entry) {
@@ -758,6 +833,15 @@
     label.className   = 'gantt-bar-label';
     label.textContent = entry.title;
     bar.appendChild(label);
+
+    // Hours badge on bar
+    const totalH = calcTotalHours(entry.id);
+    if (totalH > 0) {
+      const hoursBadge = document.createElement('span');
+      hoursBadge.className   = 'gantt-bar-hours';
+      hoursBadge.textContent = fmtH(totalH);
+      bar.appendChild(hoursBadge);
+    }
 
     // Folder link icon on the bar (only when URL is set)
     if (entry.folder_url) {
@@ -934,6 +1018,18 @@
       }
     }
 
+    // ── timeline date-range selection ──────────────────────────────────────
+    if (timelineSel.active && timelineSel.overlayEl && ganttTimeline) {
+      const rect = ganttTimeline.getBoundingClientRect();
+      const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
+      const day  = Math.floor(x / pxPerDay);
+      timelineSel.endDay = day;
+      const s = Math.min(timelineSel.startDay, day);
+      const en = Math.max(timelineSel.startDay, day);
+      timelineSel.overlayEl.style.left  = (s * pxPerDay) + 'px';
+      timelineSel.overlayEl.style.width = ((en - s + 1) * pxPerDay) + 'px';
+    }
+
     // ── rubber-band connecting line ────────────────────────────────────────
     if (conn.active && conn.tempLine) {
       const svgEl = document.getElementById('depArrowsSvg');
@@ -954,6 +1050,16 @@
   }
 
   async function onMouseUp(e) {
+    // ── finalize timeline selection ────────────────────────────────────────
+    if (timelineSel.active) {
+      timelineSel.active = false;
+      // If barely moved (< 5px), treat as a click and clear selection
+      if (Math.abs(e.pageX - timelineSel.mouseStartX) < 5) {
+        clearTimelineSelection();
+      }
+      // else: leave the overlay visible so the user can right-click it
+    }
+
     if (!drag.active) return;
 
     document.body.style.cursor    = '';
@@ -1528,6 +1634,27 @@
       '" data-idx="' + i + '" style="background:' + c + '" title="Phase ' + (i + 1) + '"></div>'
     ).join('');
 
+    // For parent entries: compute child hours and show a hint below the hours input
+    const childEntries = entry.id ? S().ganttEntries.filter(e => e.parent_id === entry.id) : [];
+    let childHoursHtml = '';
+    if (childEntries.length > 0) {
+      let childSum = 0;
+      childEntries.forEach(c => { childSum += calcTotalHours(c.id); });
+      if (childSum > 0) {
+        const own = +(entry.hours_estimate) || 0;
+        if (own > 0) {
+          const remaining = Math.max(0, own - childSum);
+          childHoursHtml = '<small style="color:var(--text-muted);font-size:11px;margin-top:3px;display:block">' +
+            'Sub-tasks use ' + fmtH(childSum) + ' \u2014 ' + fmtH(remaining) + ' remaining of your ' + fmtH(own) + ' budget' +
+            '</small>';
+        } else {
+          childHoursHtml = '<small style="color:var(--text-muted);font-size:11px;margin-top:3px;display:block">' +
+            'Sub-tasks total: ' + fmtH(childSum) +
+            '</small>';
+        }
+      }
+    }
+
     return '<div class="form-group">' +
       '<label>Title</label>' +
       '<input type="text" id="feTitle" value="' + U().escHtml(entry.title || '') + '" placeholder="Task name">' +
@@ -1540,6 +1667,7 @@
       '</div>' +
       '<div class="form-group"><label>Hours Estimate</label>' +
         '<input type="number" id="feHours" value="' + (entry.hours_estimate || '') + '" min="0" step="0.5" placeholder="0">' +
+        childHoursHtml +
       '</div>' +
       '<div class="form-group"><label>Phase / Colour Variation</label>' +
         '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
@@ -1549,7 +1677,7 @@
         '<label>Folder Link (optional)</label>' +
         '<div style="display:flex;gap:6px;align-items:center">' +
           '<input type="url" id="feFolderUrl" value="' + U().escHtml(entry.folder_url || '') + '" ' +
-            'placeholder="https://…sharepoint.com/…  or any URL" style="flex:1">' +
+            'placeholder="https://\u2026sharepoint.com/\u2026  or any URL" style="flex:1">' +
           (entry.folder_url
             ? '<a href="' + U().escHtml(ensureAbsoluteUrl(entry.folder_url)) + '" target="_blank" rel="noopener" ' +
               'class="btn btn-secondary btn-sm" title="Open folder">\uD83D\uDCC2 Open</a>'
@@ -1602,6 +1730,13 @@
       hasChildren
         ? { icon: '\u25BC', label: 'Open sub-chart',   action: () => drillDown(entry) }
         : null,
+      { separator: true },
+      { icon: '\uD83D\uDCCB', label: 'Copy',            action: () => copyEntry(entry, false) },
+      { icon: '\u2702',       label: 'Cut',             action: () => copyEntry(entry, true) },
+      clipboardData
+        ? { icon: '\uD83D\uDCCB', label: 'Paste here', action: () => pasteEntries(entry.start_date) }
+        : null,
+      { separator: true },
       { icon: '\uD83D\uDCC2',
         label: entry.folder_url ? 'Open SharePoint folder' : 'Set SharePoint folder\u2026',
         action: () => entry.folder_url
@@ -1612,6 +1747,102 @@
       { separator: true },
       { icon: '\uD83D\uDDD1', label: 'Delete',          action: () => deleteEntry(entry), danger: true },
     ].filter(Boolean));
+  }
+
+  // =========================================================================
+  // Copy / Paste
+  // =========================================================================
+  function collectSubtree(entryId) {
+    const entry = S().ganttEntries.find(e => e.id === entryId);
+    if (!entry) return [];
+    let result = [Object.assign({}, entry)];
+    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
+    children.forEach(child => { result = result.concat(collectSubtree(child.id)); });
+    return result;
+  }
+
+  function copyEntry(entry, cut) {
+    clipboardData = { entries: collectSubtree(entry.id), rootId: entry.id, cut };
+  }
+
+  /** Called from app.js keyboard handler – copies the first selected entry */
+  function copySelected(cut) {
+    const id = S().selectedGanttIds.size > 0 ? [...S().selectedGanttIds][0] : null;
+    if (!id) return;
+    const entry = S().ganttEntries.find(e => e.id === id);
+    if (entry) copyEntry(entry, cut);
+  }
+
+  /** Called from app.js keyboard handler – pastes at today */
+  function pasteAtDate() {
+    if (!clipboardData) return;
+    pasteEntries(toDateStr(new Date()));
+  }
+
+  async function pasteEntries(pasteStartDate) {
+    if (!clipboardData || !S().currentProject) return;
+    const { entries, rootId, cut } = clipboardData;
+    const root = entries.find(e => e.id === rootId);
+    if (!root) return;
+
+    // Calculate day offset from original root start to paste position
+    const rootStart  = parseDate(root.start_date);
+    const pasteStart = parseDate(pasteStartDate);
+    const dayOffset  = daysBetween(rootStart, pasteStart);
+
+    // Sort entries so parents come before their children
+    const sorted = [];
+    const addSorted = (id) => {
+      const e = entries.find(x => x.id === id);
+      if (!e || sorted.includes(e)) return;
+      sorted.push(e);
+      entries.filter(x => x.parent_id === id).forEach(c => addSorted(c.id));
+    };
+    addSorted(rootId);
+
+    const idMap = {}; // old id → new id
+    for (const e of sorted) {
+      const newParentId = e.id === rootId
+        ? currentParentId  // paste root at current chart level
+        : (idMap[e.parent_id] !== undefined ? idMap[e.parent_id] : null);
+      const newStart = toDateStr(addDays(parseDate(e.start_date), dayOffset));
+      const newEnd   = toDateStr(addDays(parseDate(e.end_date),   dayOffset));
+      try {
+        const data = await API('POST', '/api/gantt', {
+          project_id:      S().currentProject.id,
+          parent_id:       newParentId,
+          title:           e.title,
+          start_date:      newStart,
+          end_date:        newEnd,
+          hours_estimate:  e.hours_estimate,
+          color_variation: e.color_variation,
+          notes:           e.notes,
+          folder_url:      e.folder_url,
+        });
+        idMap[e.id] = data.entry.id;
+        S().ganttEntries.push(data.entry);
+        expandChartRange(data.entry);
+        if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
+          expandedIds.add(data.entry.parent_id);
+        }
+      } catch (err) {
+        console.error('Paste failed for entry "' + e.title + '":', err);
+      }
+    }
+
+    if (cut) {
+      // Delete originals in reverse order (children before parents)
+      for (const e of [...sorted].reverse()) {
+        try {
+          await API('DELETE', '/api/gantt/' + e.id);
+          S().ganttEntries = S().ganttEntries.filter(x => x.id !== e.id);
+          S().dependencies = S().dependencies.filter(d => d.source_id !== e.id && d.target_id !== e.id);
+        } catch (_) { /* ignore */ }
+      }
+      clipboardData = null; // cut can only be pasted once
+    }
+
+    render();
   }
 
   // =========================================================================

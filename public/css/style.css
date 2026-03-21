@@ -395,7 +395,13 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .gantt-bar:hover { filter: brightness(0.92); }
 .gantt-bar.selected { outline: 2px solid rgba(0,0,0,.6); outline-offset: 1px; }
-.gantt-bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.gantt-bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; flex: 1; min-width: 0; }
+.gantt-bar-hours { font-size: 10px; opacity: 0.85; margin-left: 4px; white-space: nowrap; flex-shrink: 0; pointer-events: none; }
+.gantt-time-selection {
+  position: absolute; pointer-events: none; z-index: 2;
+  background: rgba(33, 150, 243, 0.18); border: 1.5px solid rgba(33, 150, 243, 0.55);
+  border-radius: 3px; top: 0; height: 100%;
+}
 .gantt-bar-handle {
   position: absolute; top: 0; width: 8px; height: 100%; cursor: col-resize;
   background: rgba(0,0,0,.15); opacity: 0;
