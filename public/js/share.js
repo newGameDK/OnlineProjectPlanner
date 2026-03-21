@@ -512,6 +512,12 @@ function calcTotalHours(entryId) {
   return childSum;
 }
 
+/**
+ * Total hours for an entire tree (parent budget or child sum, whichever is
+ * larger). Used for the header total so the number reflects the full project
+ * scope instead of only the remaining budget.  When a parent has no budget
+ * (hours_estimate is 0 or null) the child sum is returned.
+ */
 function calcTreeTotal(entryId) {
   const entry = S.entries.find(e => e.id === entryId);
   if (!entry) return 0;

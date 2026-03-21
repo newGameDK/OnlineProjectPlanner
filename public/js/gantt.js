@@ -1231,7 +1231,8 @@
   /**
    * Total hours for an entire tree (parent budget or child sum, whichever is
    * larger). Used for the header "Total h" so the number reflects the full
-   * project scope instead of only the remaining budget.
+   * project scope instead of only the remaining budget.  When a parent has
+   * no budget (hours_estimate is 0 or null) the child sum is returned.
    */
   function calcTreeTotal(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
