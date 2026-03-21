@@ -932,9 +932,12 @@ function setupEventListeners() {
 
   // Undo
   document.getElementById('undoBtn').addEventListener('click', performUndo);
+  // Redo
+  document.getElementById('redoBtn').addEventListener('click', performRedo);
   document.addEventListener('keydown', (e) => {
     const inText  = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); performUndo(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); performRedo(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(false); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'x' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(true); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !inText) { e.preventDefault(); window.ganttModule?.pasteAtDate(); }
@@ -1142,6 +1145,18 @@ async function performUndo() {
     }
   } catch (e) {
     console.warn('Undo failed:', e.message);
+  }
+}
+
+async function performRedo() {
+  if (!state.currentProject) return;
+  try {
+    await api('POST', `/api/redo/${state.currentProject.id}`);
+    const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
+    state.ganttEntries = gdata.entries;
+    window.ganttModule?.render();
+  } catch (e) {
+    console.warn('Redo failed:', e.message);
   }
 }
 

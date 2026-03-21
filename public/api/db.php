@@ -167,6 +167,19 @@ CREATE TABLE IF NOT EXISTS global_undo_history (
 );
 ");
 
+// Redo history (project-scoped; mirrors undo_history structure)
+$db->exec("
+CREATE TABLE IF NOT EXISTS redo_history (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  action_data TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+");
+
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
