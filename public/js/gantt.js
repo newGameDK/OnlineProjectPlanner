@@ -477,7 +477,7 @@
   // ─── task list (left column) ──────────────────────────────────────────────
   function renderTaskList(entries) {
     ganttTaskList.innerHTML = '';
-    entries.forEach(entry => {
+    entries.forEach((entry, idx) => {
       const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
       const depth = entry._depth || 0;
       const color = getEntryColor(entry);
@@ -548,10 +548,28 @@
         row.appendChild(folderLink);
       }
 
+      // ── Move up/down buttons (↑ ↓) – shown on hover ──────────────────────
+      const moveBtns = document.createElement('div');
+      moveBtns.className = 'gantt-task-move-btns';
+      const btnUp   = document.createElement('button');
+      btnUp.className   = 'gantt-task-move-btn';
+      btnUp.textContent = '▲';
+      btnUp.title       = 'Move up (within siblings)';
+      btnUp.addEventListener('click', (e) => { e.stopPropagation(); moveEntry(entry, -1, entries); });
+      const btnDown = document.createElement('button');
+      btnDown.className   = 'gantt-task-move-btn';
+      btnDown.textContent = '▼';
+      btnDown.title       = 'Move down (within siblings)';
+      btnDown.addEventListener('click', (e) => { e.stopPropagation(); moveEntry(entry, +1, entries); });
+      moveBtns.appendChild(btnUp);
+      moveBtns.appendChild(btnDown);
+      row.appendChild(moveBtns);
+
       // Action buttons (visible on hover)
       const actions = document.createElement('div');
       actions.className = 'gantt-task-actions';
       actions.appendChild(makeBtn('\u270F', 'Edit',         () => showEditEntryModal(entry)));
+      actions.appendChild(makeBtn('\uD83D\uDCAC', 'Comments', () => showCommentsModal(entry)));
 
       const hasTodo = S().todos.some(t => t.gantt_entry_id === entry.id);
       const todoBtn = makeBtn(hasTodo ? '\u2713' : '\u2611', 'Add to Todo', () => { if (!hasTodo) addToTodo(entry); });
@@ -561,6 +579,71 @@
       actions.appendChild(makeBtn('+',      'Add sub-task', () => showAddEntryModal(entry.id)));
       actions.appendChild(makeBtn('\uD83D\uDDD1', 'Delete', () => deleteEntry(entry)));
       row.appendChild(actions);
+
+      // ── Drag-to-reorder within same parent ───────────────────────────────
+      row.setAttribute('draggable', 'true');
+      row.addEventListener('dragstart', (e) => {
+        e.stopPropagation();
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', entry.id);
+        row.classList.add('reorder-dragging');
+      });
+      row.addEventListener('dragend', () => {
+        row.classList.remove('reorder-dragging');
+        ganttTaskList.querySelectorAll('.gantt-task-row').forEach(r => {
+          r.classList.remove('reorder-drag-over-above', 'reorder-drag-over-below');
+        });
+      });
+      row.addEventListener('dragover', (e) => {
+        const draggingId = e.dataTransfer.getData('text/plain') || '';
+        if (!draggingId || draggingId === entry.id) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const rect = row.getBoundingClientRect();
+        const above = e.clientY < rect.top + rect.height / 2;
+        ganttTaskList.querySelectorAll('.gantt-task-row').forEach(r => {
+          r.classList.remove('reorder-drag-over-above', 'reorder-drag-over-below');
+        });
+        row.classList.add(above ? 'reorder-drag-over-above' : 'reorder-drag-over-below');
+      });
+      row.addEventListener('dragleave', () => {
+        row.classList.remove('reorder-drag-over-above', 'reorder-drag-over-below');
+      });
+      row.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const dragId = e.dataTransfer.getData('text/plain');
+        row.classList.remove('reorder-drag-over-above', 'reorder-drag-over-below');
+        if (!dragId || dragId === entry.id) return;
+
+        const dragEntry  = S().ganttEntries.find(x => x.id === dragId);
+        const dropEntry  = entry;
+        if (!dragEntry) return;
+        // Only reorder within same parent
+        if (dragEntry.parent_id !== dropEntry.parent_id) return;
+
+        const rect  = row.getBoundingClientRect();
+        const above = e.clientY < rect.top + rect.height / 2;
+
+        // Rebuild position order among siblings
+        const siblings = entries.filter(en => (en.parent_id || null) === (dropEntry.parent_id || null));
+        const withoutDrag = siblings.filter(s => s.id !== dragId);
+        const dropIdx     = withoutDrag.findIndex(s => s.id === dropEntry.id);
+        const insertIdx   = above ? dropIdx : dropIdx + 1;
+        withoutDrag.splice(insertIdx, 0, dragEntry);
+
+        const positions = withoutDrag.map((s, i) => ({ id: s.id, position: i }));
+        try {
+          await API('PUT', '/api/gantt/positions', { positions });
+          positions.forEach(({ id, position }) => {
+            const e2 = S().ganttEntries.find(x => x.id === id);
+            if (e2) e2.position = position;
+          });
+          // Re-sort ganttEntries so the change is reflected in next render
+          S().ganttEntries.sort((a, b) => (a.position || 0) - (b.position || 0) || (a.created_at || 0) - (b.created_at || 0));
+          render();
+        } catch (err) { console.error('Reorder failed:', err); }
+      });
 
       // Selection / connecting
       row.addEventListener('click', (e) => {
@@ -592,6 +675,40 @@
 
       ganttTaskList.appendChild(row);
     });
+  }
+
+  // ── Move entry up/down within its siblings ─────────────────────────────────
+  async function moveEntry(entry, direction, visibleEntries) {
+    const siblings = visibleEntries.filter(e => (e.parent_id || null) === (entry.parent_id || null));
+    const idx = siblings.findIndex(e => e.id === entry.id);
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= siblings.length) return;
+
+    // Swap positions
+    const a = siblings[idx];
+    const b = siblings[newIdx];
+    const aPos = a.position || 0;
+    const bPos = b.position || 0;
+
+    // If positions are the same, assign based on current visible order
+    const newPosA = newIdx < idx ? bPos : bPos;
+    const newPosB = idx  < newIdx ? aPos : aPos;
+
+    const positions = siblings.map((s, i) => {
+      if (s.id === a.id) return { id: s.id, position: newIdx };
+      if (s.id === b.id) return { id: s.id, position: idx };
+      return { id: s.id, position: i };
+    });
+
+    try {
+      await API('PUT', '/api/gantt/positions', { positions });
+      positions.forEach(({ id, position }) => {
+        const e2 = S().ganttEntries.find(x => x.id === id);
+        if (e2) e2.position = position;
+      });
+      S().ganttEntries.sort((a2, b2) => (a2.position || 0) - (b2.position || 0) || (a2.created_at || 0) - (b2.created_at || 0));
+      render();
+    } catch (err) { console.error('moveEntry failed:', err); }
   }
 
   function makeBtn(icon, title, fn) {
@@ -849,7 +966,18 @@
     }
     bar.title = entry.title + '\n' + entry.start_date + ' \u2192 ' + entry.end_date +
                 (entry.hours_estimate ? '\n' + entry.hours_estimate + 'h estimated' : '') +
+                (entry.progress ? '\n' + entry.progress + '% complete' : '') +
                 (entry.notes ? '\n\n' + entry.notes : '');
+
+    // Progress bar overlay (shown when progress > 0)
+    const progress = +(entry.progress) || 0;
+    if (progress > 0) {
+      const pgBar = document.createElement('div');
+      pgBar.className = 'gantt-bar-progress';
+      pgBar.style.width = Math.min(100, progress) + '%';
+      if (progress >= 100) pgBar.style.borderRadius = 'var(--radius-sm)';
+      bar.appendChild(pgBar);
+    }
 
     // Label
     const label = document.createElement('span');
@@ -857,13 +985,13 @@
     label.textContent = entry.title;
     bar.appendChild(label);
 
-    // Hours badge on bar
+    // Hours badge on bar + progress badge
     const totalH = calcTotalHours(entry.id);
-    if (totalH > 0) {
-      const hoursBadge = document.createElement('span');
-      hoursBadge.className   = 'gantt-bar-hours';
-      hoursBadge.textContent = fmtH(totalH);
-      bar.appendChild(hoursBadge);
+    if (totalH > 0 || progress > 0) {
+      const badge = document.createElement('span');
+      badge.className   = 'gantt-bar-hours';
+      badge.textContent = (totalH > 0 ? fmtH(totalH) : '') + (progress > 0 ? (totalH > 0 ? ' · ' : '') + progress + '%' : '');
+      bar.appendChild(badge);
     }
 
     // Folder link icon on the bar (only when URL is set)
@@ -1714,9 +1842,14 @@
         '<div class="form-group" style="flex:1"><label>End Date</label>' +
           '<input type="date" id="feEnd" value="' + (entry.end_date || '') + '"></div>' +
       '</div>' +
-      '<div class="form-group"><label>Hours Estimate</label>' +
-        '<input type="number" id="feHours" value="' + (entry.hours_estimate || '') + '" min="0" step="0.5" placeholder="0">' +
-        childHoursHtml +
+      '<div style="display:flex;gap:12px">' +
+        '<div class="form-group" style="flex:1"><label>Hours Estimate</label>' +
+          '<input type="number" id="feHours" value="' + (entry.hours_estimate || '') + '" min="0" step="0.5" placeholder="0">' +
+          childHoursHtml +
+        '</div>' +
+        '<div class="form-group" style="flex:1"><label>Progress (%)</label>' +
+          '<input type="number" id="feProgress" value="' + (+(entry.progress) || 0) + '" min="0" max="100" step="5" placeholder="0">' +
+        '</div>' +
       '</div>' +
       '<div class="form-group"><label>Phase / Colour Variation</label>' +
         '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
@@ -1765,6 +1898,7 @@
       color_variation: parseInt((document.getElementById('feColorVar') && document.getElementById('feColorVar').value)) || 0,
       notes:           (document.getElementById('feNotes') && document.getElementById('feNotes').value) || '',
       folder_url:      folderUrl,
+      progress:        Math.min(100, Math.max(0, parseInt((document.getElementById('feProgress') && document.getElementById('feProgress').value)) || 0)),
     };
   }
 
@@ -1775,6 +1909,7 @@
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
+      { icon: '\uD83D\uDCAC', label: 'Comments',       action: () => showCommentsModal(entry) },
       { icon: '+',      label: 'Add sub-task',          action: () => showAddEntryModal(entry.id) },
       hasChildren
         ? { icon: '\u25BC', label: 'Open sub-chart',   action: () => drillDown(entry) }
@@ -1943,6 +2078,87 @@
     S().todos.push(data.todo);
     if (window.todoModule) window.todoModule.render();
     render();
+  }
+
+  // =========================================================================
+  // Comments Modal
+  // =========================================================================
+  async function showCommentsModal(entry) {
+    const renderComments = async (container) => {
+      try {
+        const data = await API('GET', '/api/gantt/' + entry.id + '/comments');
+        const comments = data.comments || [];
+        container.innerHTML = '';
+        if (!comments.length) {
+          container.innerHTML = '<div class="comment-empty">No comments yet. Be the first!</div>';
+          return;
+        }
+        comments.forEach(c => {
+          const item = document.createElement('div');
+          item.className = 'comment-item';
+          const ts = new Date(c.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          const isOwn = c.user_id === S().user?.id;
+          item.innerHTML =
+            '<div class="comment-item-header">' +
+              '<div class="comment-avatar" style="background:' + (c.base_color || '#2196F3') + '">' + (c.username || '?')[0].toUpperCase() + '</div>' +
+              '<span class="comment-author">' + U().escHtml(c.username || 'Unknown') + '</span>' +
+              '<span class="comment-time">' + ts + '</span>' +
+              (isOwn ? '<button class="comment-delete" data-id="' + c.id + '" title="Delete comment">✕</button>' : '') +
+            '</div>' +
+            '<div class="comment-body">' + U().escHtml(c.message) + '</div>';
+          container.appendChild(item);
+        });
+      } catch (err) {
+        container.innerHTML = '<div class="comment-empty" style="color:var(--danger)">Failed to load comments</div>';
+      }
+    };
+
+    U().openModal('💬 Comments – ' + entry.title,
+      '<div class="comments-list" id="commentsList"><div class="comment-empty">Loading…</div></div>' +
+      '<div class="comment-input-row">' +
+        '<input type="text" id="commentInput" placeholder="Write a comment…" style="flex:1">' +
+        '<button id="commentSendBtn" class="btn btn-primary btn-sm">Send</button>' +
+      '</div>',
+      null, 'Close');
+
+    // Hide Save button, use Close instead
+    document.getElementById('modalOk').style.display = 'none';
+
+    const list = document.getElementById('commentsList');
+    if (list) renderComments(list);
+
+    // Send button
+    setTimeout(() => {
+      const sendBtn = document.getElementById('commentSendBtn');
+      const input   = document.getElementById('commentInput');
+      if (!sendBtn || !input) return;
+
+      const send = async () => {
+        const msg = input.value.trim();
+        if (!msg) return;
+        input.value = '';
+        try {
+          await API('POST', '/api/gantt/' + entry.id + '/comments', { message: msg });
+          const lst = document.getElementById('commentsList');
+          if (lst) renderComments(lst);
+        } catch (err) { alert('Failed to send comment: ' + err.message); }
+      };
+
+      sendBtn.addEventListener('click', send);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+
+      // Delete comment
+      list.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.comment-delete');
+        if (!btn) return;
+        if (!confirm('Delete this comment?')) return;
+        try {
+          await API('DELETE', '/api/gantt/comments/' + btn.dataset.id);
+          const lst = document.getElementById('commentsList');
+          if (lst) renderComments(lst);
+        } catch (err) { alert('Failed to delete comment: ' + err.message); }
+      });
+    }, 60);
   }
 
   // =========================================================================

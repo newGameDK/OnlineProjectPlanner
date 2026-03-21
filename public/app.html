@@ -101,6 +101,7 @@
         <div class="project-toolbar">
           <div class="toolbar-group">
             <button id="undoBtn" class="btn btn-secondary btn-sm" title="Undo (Ctrl+Z)" data-help="Undo the last action (Ctrl+Z)">↩ Undo</button>
+            <button id="redoBtn" class="btn btn-secondary btn-sm" title="Redo (Ctrl+Y)" data-help="Redo the last undone action (Ctrl+Y)">↪ Redo</button>
           </div>
           <div class="toolbar-group">
             <button id="zoomInBtn" class="btn btn-secondary btn-sm" title="Zoom in (+)" aria-label="Zoom in" data-help="Zoom in to see more detail (+)">🔍+</button>
@@ -130,12 +131,15 @@
           </div>
           <div class="toolbar-group" style="margin-left:auto">
             <button id="toggleDepsBtn" class="btn btn-secondary btn-sm active" title="Show/hide dependency arrows" data-help="Toggle dependency arrows between tasks on/off">↔ Arrows</button>
+            <button id="darkModeBtn" class="btn btn-secondary btn-sm" title="Toggle dark mode" data-help="Toggle dark/light colour scheme">🌙</button>
             <button id="helpModeBtn" class="btn btn-secondary btn-sm" title="Toggle help mode – hover elements for explanations">❓</button>
             <div class="toolbar-dropdown" id="exportDropdown">
               <button id="exportMenuBtn" class="btn btn-secondary btn-sm" title="Export, backup and share options" aria-expanded="false" aria-haspopup="true" data-help="Export to Excel, print PDF, backup data, or share the project">📤 Export ▾</button>
               <div class="toolbar-dropdown-menu toolbar-dropdown-right" id="exportMenu">
                 <button id="exportCsvBtn" class="toolbar-dropdown-item" data-help="Export to an Excel file with a visual Gantt chart representation">📊 Export Excel</button>
                 <button id="exportPdfBtn" class="toolbar-dropdown-item" data-help="Print or save the Gantt chart as a PDF document (A4 landscape)">🖨 Print PDF</button>
+                <button id="exportPngBtn" class="toolbar-dropdown-item" data-help="Export the current Gantt chart view as a PNG image">🖼 Export PNG</button>
+                <button id="importExcelBtn" class="toolbar-dropdown-item" data-help="Import tasks from an Excel (.xlsx) file">📥 Import Excel</button>
                 <div class="toolbar-dropdown-divider"></div>
                 <button id="backupBtn2" class="toolbar-dropdown-item" data-help="Download a JSON backup of all your data">💾 Backup</button>
                 <button id="importBackupBtn2" class="toolbar-dropdown-item" data-help="Import a previously exported backup file">📂 Import Backup</button>

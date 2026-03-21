@@ -147,6 +147,11 @@ try {
     $db->exec("ALTER TABLE gantt_entries ADD COLUMN subtract_hours INTEGER NOT NULL DEFAULT 0");
 } catch (Exception $e) { /* column already exists – ignore */ }
 
+// Migration: add progress to gantt_entries
+try {
+    $db->exec("ALTER TABLE gantt_entries ADD COLUMN progress INTEGER NOT NULL DEFAULT 0");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
 // App settings table (admin user IDs etc.)
 $db->exec("
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -163,6 +168,34 @@ CREATE TABLE IF NOT EXISTS global_undo_history (
   action_type TEXT NOT NULL,
   action_data TEXT NOT NULL,
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+");
+
+// Redo history
+$db->exec("
+CREATE TABLE IF NOT EXISTS redo_history (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  action_data TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+");
+
+// Gantt entry comments
+$db->exec("
+CREATE TABLE IF NOT EXISTS gantt_comments (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (entry_id) REFERENCES gantt_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 ");

@@ -930,11 +930,13 @@ function setupEventListeners() {
     });
   });
 
-  // Undo
+  // Undo / Redo
   document.getElementById('undoBtn').addEventListener('click', performUndo);
+  document.getElementById('redoBtn').addEventListener('click', performRedo);
   document.addEventListener('keydown', (e) => {
     const inText  = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
-    if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); performUndo(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); performUndo(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); performRedo(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(false); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'x' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(true); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !inText) { e.preventDefault(); window.ganttModule?.pasteAtDate(); }
@@ -987,11 +989,37 @@ function setupEventListeners() {
     document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
   }
 
+  // Dark mode toggle
+  const darkModeBtn = document.getElementById('darkModeBtn');
+  if (darkModeBtn) {
+    const applyDark = (on) => {
+      document.body.classList.toggle('dark-mode', on);
+      darkModeBtn.textContent = on ? '☀️' : '🌙';
+      darkModeBtn.title = on ? 'Switch to light mode' : 'Switch to dark mode';
+    };
+    const saved = localStorage.getItem('darkMode');
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyDark(saved !== null ? saved === '1' : prefersDark);
+    darkModeBtn.addEventListener('click', () => {
+      const on = !document.body.classList.contains('dark-mode');
+      applyDark(on);
+      localStorage.setItem('darkMode', on ? '1' : '0');
+    });
+  }
+
   // Export CSV
   document.getElementById('exportCsvBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); exportCSV(); });
 
   // Export PDF (print)
   document.getElementById('exportPdfBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); exportPDF(); });
+
+  // Export PNG
+  const exportPngBtn = document.getElementById('exportPngBtn');
+  if (exportPngBtn) exportPngBtn.addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); exportPNG(); });
+
+  // Import from Excel
+  const importExcelBtn = document.getElementById('importExcelBtn');
+  if (importExcelBtn) importExcelBtn.addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); showImportExcelModal(); });
 
   // Share with link
   document.getElementById('shareBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); showShareModal(); });
@@ -1142,6 +1170,18 @@ async function performUndo() {
     }
   } catch (e) {
     console.warn('Undo failed:', e.message);
+  }
+}
+
+async function performRedo() {
+  if (!state.currentProject) return;
+  try {
+    await api('POST', `/api/redo/${state.currentProject.id}`);
+    const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
+    state.ganttEntries = gdata.entries;
+    window.ganttModule?.render();
+  } catch (e) {
+    console.warn('Redo failed:', e.message);
   }
 }
 
@@ -1710,6 +1750,205 @@ async function showShareModal() {
       });
     }
   }, 80);
+}
+
+// ==========================================================================
+// Export: PNG snapshot
+// ==========================================================================
+
+async function exportPNG() {
+  if (!state.currentProject) return alert('Open a project first.');
+
+  const ganttContainer = document.getElementById('ganttContainer');
+  if (!ganttContainer) return;
+
+  // Use html-to-canvas approach via a temporary canvas
+  try {
+    // Collect all canvases first (intensity bar)
+    const canvasEls = ganttContainer.querySelectorAll('canvas');
+    const canvasData = [];
+    canvasEls.forEach(c => {
+      try { canvasData.push({ el: c, url: c.toDataURL() }); } catch (_) {}
+    });
+
+    // Clone the gantt container
+    const clone = ganttContainer.cloneNode(true);
+    clone.style.cssText = 'position:fixed;top:-9999px;left:-9999px;overflow:visible;';
+    document.body.appendChild(clone);
+
+    // Restore canvas content in clone
+    const cloneCanvases = clone.querySelectorAll('canvas');
+    canvasData.forEach((item, i) => {
+      if (cloneCanvases[i]) {
+        const img = document.createElement('img');
+        img.src = item.url;
+        img.style.display = 'block';
+        img.width = item.el.width;
+        img.height = item.el.height;
+        cloneCanvases[i].parentNode.replaceChild(img, cloneCanvases[i]);
+      }
+    });
+
+    // Remove scrollable overflow constraints for full render
+    clone.querySelectorAll('[style*="overflow"]').forEach(el => {
+      el.style.overflow = 'visible';
+      el.style.height = 'auto';
+      el.style.maxHeight = 'none';
+    });
+
+    // Use html2canvas if available, otherwise fallback to a message
+    if (typeof html2canvas !== 'undefined') {
+      const canvas = await html2canvas(clone, { useCORS: true, allowTaint: true, backgroundColor: getComputedStyle(document.body).getPropertyValue('--bg') || '#f0f2f5' });
+      document.body.removeChild(clone);
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (state.currentProject.name || 'gantt').replace(/[^a-z0-9_\-]/gi, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+      });
+    } else {
+      document.body.removeChild(clone);
+      // Fallback: guide user to use browser screenshot
+      alert('PNG export requires the html2canvas library.\n\nTip: Use your browser\'s built-in screenshot tool (e.g. Firefox Full Page Screenshot, or browser extensions) to capture the Gantt chart as a PNG.');
+    }
+  } catch (err) {
+    alert('PNG export failed: ' + err.message);
+  }
+}
+
+// ==========================================================================
+// Import: Excel (.xlsx) → Gantt entries
+// ==========================================================================
+
+function showImportExcelModal() {
+  if (!state.currentProject) return alert('Open a project first.');
+  openModal('Import from Excel', `
+    <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
+      Import tasks from an Excel file. The file should have columns:<br>
+      <strong>Title</strong>, <strong>Start Date</strong> (YYYY-MM-DD), <strong>End Date</strong> (YYYY-MM-DD).<br>
+      Optional: <strong>Hours</strong>, <strong>Notes</strong>, <strong>Parent</strong> (title of parent task).<br>
+      The first row must be a header row.
+    </p>
+    <div class="form-group">
+      <label>Select Excel file (.xlsx)</label>
+      <input type="file" id="importExcelFile" accept=".xlsx,.xls" style="font-size:13px">
+    </div>
+    <div id="importExcelPreview" style="font-size:12px;color:var(--text-muted);margin-top:8px"></div>
+  `, async () => {
+    const input = document.getElementById('importExcelFile');
+    if (!input.files.length) return alert('Please select an Excel file');
+    if (typeof ExcelJS === 'undefined') return alert('ExcelJS library not loaded');
+
+    const file = input.files[0];
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+
+      const ws = workbook.worksheets[0];
+      if (!ws) throw new Error('No worksheets found');
+
+      // Parse header row to find column indices (case-insensitive)
+      const headerRow = ws.getRow(1);
+      const cols = {};
+      headerRow.eachCell((cell, colNum) => {
+        const h = String(cell.value || '').toLowerCase().trim();
+        if (h === 'title' || h === 'name' || h === 'task') cols.title = colNum;
+        else if (h.includes('start')) cols.start = colNum;
+        else if (h.includes('end') || h.includes('finish')) cols.end = colNum;
+        else if (h.includes('hour')) cols.hours = colNum;
+        else if (h.includes('note') || h.includes('description') || h.includes('desc')) cols.notes = colNum;
+        else if (h.includes('parent')) cols.parent = colNum;
+        else if (h.includes('progress')) cols.progress = colNum;
+      });
+
+      if (!cols.title) throw new Error('Could not find "Title" column');
+      if (!cols.start) throw new Error('Could not find "Start Date" column');
+      if (!cols.end) throw new Error('Could not find "End Date" column');
+
+      // Collect rows
+      const rows = [];
+      ws.eachRow((row, rowNum) => {
+        if (rowNum === 1) return; // skip header
+        const titleVal = row.getCell(cols.title).value;
+        if (!titleVal) return;
+        const title = String(titleVal).trim();
+        if (!title) return;
+
+        const parseXlDate = (val) => {
+          if (!val) return null;
+          if (val instanceof Date) return val.toISOString().slice(0, 10);
+          // ExcelJS serial date
+          if (typeof val === 'number') {
+            const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+            return d.toISOString().slice(0, 10);
+          }
+          const s = String(val).trim();
+          // Try YYYY-MM-DD or DD/MM/YYYY
+          if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+          if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) {
+            const p = s.split('/');
+            return `${p[2]}-${p[1]}-${p[0]}`;
+          }
+          const d = new Date(s);
+          return isNaN(d) ? null : d.toISOString().slice(0, 10);
+        };
+
+        const start = parseXlDate(row.getCell(cols.start).value);
+        const end   = parseXlDate(row.getCell(cols.end).value);
+        if (!start || !end) return;
+
+        rows.push({
+          title,
+          start_date: start,
+          end_date:   end,
+          hours_estimate: +(row.getCell(cols.hours || 0).value) || 0,
+          notes: cols.notes ? String(row.getCell(cols.notes).value || '') : '',
+          parentTitle: cols.parent ? String(row.getCell(cols.parent).value || '').trim() : '',
+          progress: +(row.getCell(cols.progress || 0).value) || 0,
+        });
+      });
+
+      if (!rows.length) throw new Error('No valid rows found in the file');
+
+      // Show preview count
+      const preview = document.getElementById('importExcelPreview');
+      if (preview) preview.textContent = `Found ${rows.length} task(s) to import.`;
+
+      // Build title→id map for parent resolution
+      const titleToId = {};
+
+      // Create entries (parents first, then children)
+      for (const row of rows) {
+        const parentId = row.parentTitle ? (titleToId[row.parentTitle] || null) : null;
+        try {
+          const data = await api('POST', '/api/gantt', {
+            project_id:     state.currentProject.id,
+            parent_id:      parentId,
+            title:          row.title,
+            start_date:     row.start_date,
+            end_date:       row.end_date,
+            hours_estimate: row.hours_estimate,
+            notes:          row.notes,
+            progress:       Math.min(100, Math.max(0, row.progress || 0)),
+            color_variation: 0,
+          });
+          state.ganttEntries.push(data.entry);
+          titleToId[row.title] = data.entry.id;
+        } catch (err) {
+          console.warn('Import row failed:', row.title, err.message);
+        }
+      }
+
+      window.ganttModule?.render();
+      closeModal();
+      alert(`Imported ${rows.length} task(s) successfully!`);
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    }
+  }, 'Import');
 }
 
 // Expose globally for cross-module use
