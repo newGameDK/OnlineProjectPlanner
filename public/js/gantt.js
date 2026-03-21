@@ -1469,7 +1469,8 @@
   // =========================================================================
   function showAddEntryModal(parentId, startDateOverride, endDateOverride) {
     const today    = startDateOverride || toDateStr(new Date());
-    const nextWeek = endDateOverride   || toDateStr(addDays(parseDate(today) || new Date(), 7));
+    const startDt  = parseDate(today) || new Date();
+    const nextWeek = endDateOverride   || toDateStr(addDays(startDt, 7));
 
     U().openModal('Add Gantt Entry', buildEntryFormHtml({
       title: '', start_date: today, end_date: nextWeek,
@@ -1516,10 +1517,10 @@
           expandChartRange(data.entry);
         }
         render();
+        U().closeModal();
       } catch (err) {
         alert('Save failed: ' + err.message);
       }
-      U().closeModal();
     });
   }
 
