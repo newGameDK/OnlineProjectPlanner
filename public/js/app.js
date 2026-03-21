@@ -11,18 +11,21 @@ const BASE_COLORS = [
 ];
 
 /**
- * Generate 10 color variations from a base color.
- * Returns array of hex strings.
+ * Generate 10 rainbow-like color variations from a base color.
+ * Hues are spread evenly around the color wheel, starting from the
+ * base colour's hue, with consistent saturation and lightness for a
+ * cohesive, vibrant theme.  Sub-task colours are derived separately
+ * by the gantt module (lighter versions of the parent).
  */
 function generateColorVariations(hex) {
   const [r, g, b] = hexToRgb(hex);
-  const hsl = rgbToHsl(r, g, b);
+  const [h, s] = rgbToHsl(r, g, b);
+  const baseSat = Math.max(0.6, Math.min(0.8, s || 0.65));
+  const baseLit = 0.5;
   const vars = [];
-  // 10 variations: 5 lighter, base, 4 darker/shifted
-  const lightnesses = [0.85, 0.75, 0.65, 0.55, 0.45, hsl[2], 0.35, 0.28, 0.22, 0.15];
   for (let i = 0; i < 10; i++) {
-    const l = Math.max(0.1, Math.min(0.95, lightnesses[i]));
-    vars.push(hslToHex(hsl[0], hsl[1], l));
+    const hue = (h + i / 10) % 1.0;
+    vars.push(hslToHex(hue, baseSat, baseLit));
   }
   return vars;
 }
