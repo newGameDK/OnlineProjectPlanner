@@ -151,6 +151,9 @@ try {
   db.exec(`ALTER TABLE gantt_entries ADD COLUMN subtract_hours INTEGER NOT NULL DEFAULT 0`);
 } catch (_) { /* column already exists – ignore */ }
 
+// Migration: add progress to gantt_entries
+try { db.exec(`ALTER TABLE gantt_entries ADD COLUMN progress INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+
 // App settings table (key-value store for admin user IDs etc.)
 db.exec(`
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -167,6 +170,34 @@ CREATE TABLE IF NOT EXISTS global_undo_history (
   action_type TEXT NOT NULL,
   action_data TEXT NOT NULL,
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+`);
+
+// Redo history (populated when an undo is performed)
+db.exec(`
+CREATE TABLE IF NOT EXISTS redo_history (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  action_data TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+`);
+
+// Gantt entry comments
+db.exec(`
+CREATE TABLE IF NOT EXISTS gantt_comments (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (entry_id) REFERENCES gantt_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 `);
@@ -223,11 +254,11 @@ const stmts = {
   getProjectByShareToken: db.prepare(`SELECT * FROM projects WHERE share_token=?`),
 
   // Gantt
-  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`),
+  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,progress) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`),
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
-  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`),
+  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,progress=?,updated_at=? WHERE id=?`),
   updateGanttSubtractHours: db.prepare(`UPDATE gantt_entries SET subtract_hours=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
@@ -249,6 +280,18 @@ const stmts = {
   addGlobalUndo: db.prepare(`INSERT INTO global_undo_history (id,user_id,action_type,action_data) VALUES (?,?,?,?)`),
   getLatestGlobalUndo: db.prepare(`SELECT * FROM global_undo_history WHERE user_id=? ORDER BY created_at DESC LIMIT 1`),
   deleteGlobalUndo: db.prepare(`DELETE FROM global_undo_history WHERE id=?`),
+
+  // Redo
+  addRedo: db.prepare(`INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)`),
+  getRedoForUser: db.prepare(`SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1`),
+  deleteRedo: db.prepare(`DELETE FROM redo_history WHERE id=?`),
+  clearRedoForUser: db.prepare(`DELETE FROM redo_history WHERE project_id=? AND user_id=?`),
+
+  // Comments
+  createComment: db.prepare(`INSERT INTO gantt_comments (id,entry_id,project_id,user_id,message) VALUES (?,?,?,?,?)`),
+  getEntryComments: db.prepare(`SELECT c.*,u.username,u.base_color FROM gantt_comments c JOIN users u ON c.user_id=u.id WHERE c.entry_id=? ORDER BY c.created_at ASC`),
+  deleteComment: db.prepare(`DELETE FROM gantt_comments WHERE id=? AND user_id=?`),
+  getProjectComments: db.prepare(`SELECT c.*,u.username FROM gantt_comments c JOIN users u ON c.user_id=u.id WHERE c.project_id=? ORDER BY c.created_at DESC`),
 
   // Dependencies
   createDep: db.prepare(`INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)`),
@@ -625,19 +668,20 @@ app.get('/api/gantt/:projectId', requireAuth, (req, res) => {
 });
 
 app.post('/api/gantt', requireAuth, (req, res) => {
-  const { project_id, parent_id, title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
+  const { project_id, parent_id, title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, progress } = req.body;
   if (!project_id || !title || !start_date || !end_date) return res.status(400).json({ error: 'Missing required fields' });
   if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
   const id = uuidv4();
   stmts.createGantt.run(id, project_id, parent_id || null, title, start_date, end_date,
-    hours_estimate || 0, color_variation || 0, req.session.userId, position || 0, notes || '', folder_url || '');
+    hours_estimate || 0, color_variation || 0, req.session.userId, position || 0, notes || '', folder_url || '', progress || 0);
 
   const entry = stmts.getGantt.get(id);
   const teamId = projectTeamId(project_id);
 
   // Save undo action
   stmts.addUndo.run(uuidv4(), project_id, req.session.userId, 'create_gantt', JSON.stringify({ entry }));
+  stmts.clearRedoForUser.run(project_id, req.session.userId);
 
   broadcastToTeam(teamId, { type: 'gantt_created', entry });
   res.json({ entry });
@@ -667,8 +711,9 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
 
   // Save undo action before update
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
+  stmts.clearRedoForUser.run(existing.project_id, req.session.userId);
 
-  const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours } = req.body;
+  const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours, progress } = req.body;
   stmts.updateGantt.run(
     newParentId,
     title ?? existing.title,
@@ -680,6 +725,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
     notes ?? existing.notes,
     folder_url !== undefined ? folder_url : existing.folder_url,
     subtract_hours !== undefined ? (subtract_hours ? 1 : 0) : existing.subtract_hours,
+    progress ?? existing.progress,
     now(),
     existing.id
   );
@@ -696,6 +742,7 @@ app.delete('/api/gantt/:id', requireAuth, (req, res) => {
 
   // Save undo action
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'delete_gantt', JSON.stringify({ entry: existing }));
+  stmts.clearRedoForUser.run(existing.project_id, req.session.userId);
 
   stmts.deleteGantt.run(existing.id);
   const teamId = projectTeamId(existing.project_id);
@@ -821,6 +868,12 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
   let result = {};
   if (action.action_type === 'create_gantt') {
     // Undo creation = delete
+    // Save to redo (so redo can re-create)
+    const entryToRedo = stmts.getGantt.get(data.entry.id);
+    if (entryToRedo) {
+      stmts.clearRedoForUser.run(req.params.projectId, req.session.userId);
+      stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'create_gantt', JSON.stringify({ entry: entryToRedo }));
+    }
     stmts.deleteGantt.run(data.entry.id);
     const teamId = projectTeamId(req.params.projectId);
     broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: data.entry.id, project_id: req.params.projectId });
@@ -828,8 +881,14 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
   } else if (action.action_type === 'update_gantt') {
     // Undo update = restore previous state
     const e = data.entry;
-    db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?`)
-      .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, now(), e.id);
+    // Save current state for redo
+    const currentEntry = stmts.getGantt.get(e.id);
+    if (currentEntry) {
+      stmts.clearRedoForUser.run(req.params.projectId, req.session.userId);
+      stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'update_gantt', JSON.stringify({ entry: currentEntry }));
+    }
+    db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,progress=?,updated_at=? WHERE id=?`)
+      .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.progress || 0, now(), e.id);
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
@@ -837,14 +896,74 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
   } else if (action.action_type === 'delete_gantt') {
     // Undo deletion = recreate
     const e = data.entry;
+    // Save to redo (so redo can delete again)
+    stmts.clearRedoForUser.run(req.params.projectId, req.session.userId);
+    stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt', JSON.stringify({ entry: data.entry }));
     try {
       stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '', e.progress || 0);
     } catch (_) { /* already exists */ }
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_created', entry });
     result = { undone: 'delete_gantt', entry };
+  }
+
+  res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// Redo route
+// ---------------------------------------------------------------------------
+
+app.post('/api/redo/:projectId', requireAuth, (req, res) => {
+  if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+  const redoAction = stmts.getRedoForUser.get(req.params.projectId, req.session.userId);
+  if (!redoAction) return res.status(400).json({ error: 'Nothing to redo' });
+
+  const data = JSON.parse(redoAction.action_data);
+  stmts.deleteRedo.run(redoAction.id);
+
+  let result = {};
+  if (redoAction.action_type === 'create_gantt') {
+    // Redo = re-create the entry
+    const e = data.entry;
+    try {
+      stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
+        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '', e.progress || 0);
+    } catch (_) {}
+    const entry = stmts.getGantt.get(e.id);
+    if (entry) {
+      stmts.addUndo.run(uuidv4(), e.project_id, req.session.userId, 'create_gantt', JSON.stringify({ entry }));
+      const teamId = projectTeamId(e.project_id);
+      broadcastToTeam(teamId, { type: 'gantt_created', entry });
+    }
+    result = { redone: 'create_gantt', entry };
+  } else if (redoAction.action_type === 'update_gantt') {
+    // Redo = re-apply the newer state
+    const e = data.entry;
+    const existing = stmts.getGantt.get(e.id);
+    if (existing) {
+      stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
+      stmts.updateGantt.run(e.parent_id || null, e.title, e.start_date, e.end_date,
+        e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.progress || 0, now(), e.id);
+      const entry = stmts.getGantt.get(e.id);
+      const teamId = projectTeamId(existing.project_id);
+      if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
+      result = { redone: 'update_gantt', entry };
+    }
+  } else if (redoAction.action_type === 'delete_gantt') {
+    // Redo = delete again
+    const e = data.entry;
+    const existing = stmts.getGantt.get(e.id);
+    if (existing) {
+      stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'delete_gantt', JSON.stringify({ entry: existing }));
+      stmts.deleteGantt.run(e.id);
+      const teamId = projectTeamId(existing.project_id);
+      broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: e.id, project_id: existing.project_id });
+    }
+    result = { redone: 'delete_gantt', entry_id: e.id };
   }
 
   res.json(result);
@@ -874,7 +993,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
     for (const e of (data.entries || [])) {
       try {
         stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-          e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+          e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '', e.progress || 0);
       } catch (_) { /* already exists */ }
     }
     // Restore todos
@@ -911,7 +1030,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
       for (const e of (pd.entries || [])) {
         try {
           stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-            e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+            e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '', e.progress || 0);
         } catch (_) {}
       }
       for (const td of (pd.todos || [])) {
@@ -929,6 +1048,62 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
   }
 
   res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// Comments routes
+// ---------------------------------------------------------------------------
+
+app.get('/api/gantt/:id/comments', requireAuth, (req, res) => {
+  const entry = stmts.getGantt.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+  if (!canAccessProject(entry.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const comments = stmts.getEntryComments.all(req.params.id);
+  res.json({ comments });
+});
+
+app.post('/api/gantt/:id/comments', requireAuth, (req, res) => {
+  const entry = stmts.getGantt.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+  if (!canAccessProject(entry.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const { message } = req.body;
+  if (!message || !message.trim()) return res.status(400).json({ error: 'Message required' });
+  const id = uuidv4();
+  stmts.createComment.run(id, req.params.id, entry.project_id, req.session.userId, message.trim());
+  const [comment] = stmts.getEntryComments.all(req.params.id).filter(c => c.id === id);
+  const teamId = projectTeamId(entry.project_id);
+  broadcastToTeam(teamId, { type: 'comment_created', comment, entry_id: req.params.id });
+  res.json({ comment });
+});
+
+app.delete('/api/gantt/comments/:commentId', requireAuth, (req, res) => {
+  stmts.deleteComment.run(req.params.commentId, req.session.userId);
+  res.json({ ok: true });
+});
+
+app.get('/api/projects/:id/activity', requireAuth, (req, res) => {
+  const project = stmts.getProject.get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+  if (!canAccessProject(req.params.id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const comments = stmts.getProjectComments.all(req.params.id);
+  res.json({ activity: comments });
+});
+
+// Bulk update task positions (for drag-and-drop reordering)
+app.put('/api/gantt/positions', requireAuth, (req, res) => {
+  const { positions } = req.body; // array of { id, position }
+  if (!Array.isArray(positions)) return res.status(400).json({ error: 'positions array required' });
+
+  const updatePos = db.prepare(`UPDATE gantt_entries SET position=?,updated_at=? WHERE id=?`);
+  const updateMany = db.transaction((items) => {
+    for (const item of items) {
+      const entry = stmts.getGantt.get(item.id);
+      if (!entry || !canAccessProject(entry.project_id, req.session.userId)) continue;
+      updatePos.run(item.position, now(), item.id);
+    }
+  });
+  updateMany(positions);
+  res.json({ ok: true });
 });
 
 app.get('/api/backup', requireAuth, (req, res) => {
@@ -1010,7 +1185,7 @@ app.post('/api/backup/import', requireAuth, (req, res) => {
               e.id, proj.id, e.parent_id || null, e.title,
               e.start_date, e.end_date, e.hours_estimate || 0,
               e.color_variation || 0, userId, e.position || 0,
-              e.notes || '', e.folder_url || ''
+              e.notes || '', e.folder_url || '', e.progress || 0
             );
             if (e.subtract_hours) {
               stmts.updateGanttSubtractHours.run(e.subtract_hours ? 1 : 0, e.id);
