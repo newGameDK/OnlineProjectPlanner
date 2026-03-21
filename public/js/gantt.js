@@ -40,6 +40,7 @@
   let expandedIds     = new Set(); // inline-expanded entries (show children)
   let depsVisible     = true;  // whether dependency arrows are shown
   let taskListCollapsed = false; // whether the left task-name column is collapsed
+  let _initialized    = false; // event listeners are attached only once
 
   let scale    = 'week';
   let pxPerDay = 28;
@@ -168,140 +169,7 @@
     intensityBarWrapper = document.getElementById('intensityBarWrapper');
     ganttHoursPanel     = document.getElementById('ganttHoursPanel');
 
-    document.getElementById('zoomInBtn').addEventListener('click', () => {
-      pxPerDay = Math.min(pxPerDay * 1.04, 200); autoScale(); render();
-    });
-    document.getElementById('zoomOutBtn').addEventListener('click', () => {
-      pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit()); autoScale(); render();
-    });
-    document.getElementById('chartStartDate').addEventListener('change', (e) => {
-      if (e.target.value) chartStart = new Date(e.target.value + 'T00:00:00');
-      render();
-    });
-    document.getElementById('chartEndDate').addEventListener('change', (e) => {
-      if (e.target.value) chartEnd = new Date(e.target.value + 'T00:00:00');
-      render();
-    });
-
-    // 3-way scroll sync: task list ↔ timeline rows ↔ hours panel.
-    // A sync-lock prevents cascading scroll events when we set scrollTop
-    // programmatically (setting scrollTop to its current value is a no-op).
-    let _scrollSyncing = false;
-    ganttTaskList.addEventListener('scroll', () => {
-      if (_scrollSyncing) return;
-      _scrollSyncing = true;
-      ganttTimeline.scrollTop = ganttTaskList.scrollTop;
-      ganttHoursPanel.scrollTop = ganttTaskList.scrollTop;
-      _scrollSyncing = false;
-    });
-    ganttHoursPanel.addEventListener('scroll', () => {
-      if (_scrollSyncing) return;
-      _scrollSyncing = true;
-      ganttTaskList.scrollTop = ganttHoursPanel.scrollTop;
-      ganttTimeline.scrollTop = ganttHoursPanel.scrollTop;
-      _scrollSyncing = false;
-    });
-    ganttTimeline.addEventListener('scroll', () => {
-      syncIntensityScroll();
-      syncRulerScroll();
-      if (_scrollSyncing) return;
-      _scrollSyncing = true;
-      ganttTaskList.scrollTop = ganttTimeline.scrollTop;
-      ganttHoursPanel.scrollTop = ganttTimeline.scrollTop;
-      _scrollSyncing = false;
-    });
-
-    // Scroll-wheel: horizontal two-finger swipe pans the timeline at 1/3 speed;
-    // vertical scroll zooms toward the cursor position. Both components are
-    // handled independently so a slightly diagonal swipe pans correctly instead
-    // of accidentally zooming.
-    const wheelZoom = (e) => {
-      e.preventDefault();
-      // Any horizontal component → pan the timeline at 1/3 speed
-      if (e.deltaX !== 0) {
-        ganttTimeline.scrollLeft += e.deltaX / 3;
-      }
-      // Vertical component only when the gesture is not primarily horizontal → zoom.
-      if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
-        // Cursor position relative to the timeline content (in "day" units)
-        const rect     = ganttTimeline.getBoundingClientRect();
-        const cursorX  = e.clientX - rect.left;           // px within visible area
-        const contentX = ganttTimeline.scrollLeft + cursorX; // px within content
-        const dayAtCursor = contentX / pxPerDay;
-
-        const oldPx = pxPerDay;
-        if (e.deltaY < 0) {
-          pxPerDay = Math.min(pxPerDay * 1.04, 200);
-        } else {
-          pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit());
-        }
-        if (pxPerDay !== oldPx) {
-          autoScale();
-          // Keep the same day under the cursor after the scale change
-          ganttTimeline.scrollLeft = dayAtCursor * pxPerDay - cursorX;
-          render();
-        }
-      }
-    };
-    ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
-    if (ganttRuler) ganttRuler.addEventListener('wheel', wheelZoom, { passive: false });
-    if (intensityBarWrapper) intensityBarWrapper.addEventListener('wheel', wheelZoom, { passive: false });
-
-    // Global mouse/key events
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup',   onMouseUp);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        if (conn.active) { cancelConnecting(); return; }
-        if (timelineSel.overlayEl) { clearTimelineSelection(); return; }
-        // Go back one drill-down level
-        if (parentStack.length && !document.querySelector('.modal.show')) {
-          parentStack.pop();
-          currentParentId = parentStack.length ? parentStack[parentStack.length - 1].entry.id : null;
-          render();
-        }
-      }
-    });
-
-    const cancelBtn = document.getElementById('cancelConnecting');
-    if (cancelBtn) cancelBtn.addEventListener('click', cancelConnecting);
-
-    // Cancel connecting by clicking empty timeline space
-    ganttTimeline.addEventListener('click', (e) => {
-      if (conn.active) {
-        if (!e.target.closest('.gantt-bar-container')) cancelConnecting();
-        return;
-      }
-      // Clear date-range selection when clicking on an empty spot
-      if (!e.target.closest('.gantt-bar-container') && !e.target.closest('.gantt-time-selection')) {
-        clearTimelineSelection();
-      }
-    });
-
-    // Cancel connecting by clicking empty space in task list
-    ganttTaskList.addEventListener('click', (e) => {
-      if (!conn.active) return;
-      if (!e.target.closest('.gantt-task-row')) cancelConnecting();
-    });
-
-    // Cancel connecting on right-click anywhere
-    document.addEventListener('contextmenu', (e) => {
-      if (conn.active) { e.preventDefault(); cancelConnecting(); }
-    });
-
-    // Toggle dependency arrows button
-    const toggleDepsBtn = document.getElementById('toggleDepsBtn');
-    if (toggleDepsBtn) {
-      ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
-      toggleDepsBtn.classList.toggle('active', depsVisible);
-      toggleDepsBtn.addEventListener('click', () => {
-        depsVisible = !depsVisible;
-        toggleDepsBtn.classList.toggle('active', depsVisible);
-        ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
-        render();
-      });
-    }
-
+    // ── Per-project state reset ────────────────────────────────────────────
     parentStack     = [];
     currentParentId = null;
     chartStart      = null;
@@ -309,7 +177,15 @@
 
     autoScale();
 
+    // Sync button/class state that must reflect current depsVisible value
+    const toggleDepsBtn = document.getElementById('toggleDepsBtn');
+    if (toggleDepsBtn) {
+      ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
+      toggleDepsBtn.classList.toggle('active', depsVisible);
+    }
+
     // --- Set up task-list header: collapse toggle + add button ---
+    // (innerHTML = '' first, so safe to call on every project switch)
     const tasksHeader = document.querySelector('.gantt-tasks-header');
     if (tasksHeader) {
       tasksHeader.innerHTML = '';
@@ -336,48 +212,187 @@
     }
 
     // Move breadcrumb above the gantt container for better visibility
+    // insertBefore on an already-placed node is a no-op (safe to repeat)
     const ganttContainer = document.getElementById('ganttContainer');
     if (ganttBreadcrumb && ganttContainer && ganttContainer.parentNode) {
       ganttContainer.parentNode.insertBefore(ganttBreadcrumb, ganttContainer);
     }
 
-    // Right-click on empty timeline space → add task at clicked date
-    ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
+    // ── One-time event listener setup ─────────────────────────────────────
+    // All addEventListener calls live here so they are never duplicated when
+    // the user switches between projects (which calls init() again).
+    if (!_initialized) {
+      _initialized = true;
 
-    // Left-button drag on empty timeline → date-range selection (single row)
-    ganttTimeline.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      if (conn.active || drag.active) return;
-      if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
+      document.getElementById('zoomInBtn').addEventListener('click', () => {
+        pxPerDay = Math.min(pxPerDay * 1.04, 200); autoScale(); render();
+      });
+      document.getElementById('zoomOutBtn').addEventListener('click', () => {
+        pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit()); autoScale(); render();
+      });
+      document.getElementById('chartStartDate').addEventListener('change', (e) => {
+        if (e.target.value) chartStart = new Date(e.target.value + 'T00:00:00');
+        render();
+      });
+      document.getElementById('chartEndDate').addEventListener('change', (e) => {
+        if (e.target.value) chartEnd = new Date(e.target.value + 'T00:00:00');
+        render();
+      });
 
-      // Clear any existing selection
-      clearTimelineSelection();
+      // 3-way scroll sync: task list ↔ timeline rows ↔ hours panel.
+      // A sync-lock prevents cascading scroll events when we set scrollTop
+      // programmatically (setting scrollTop to its current value is a no-op).
+      let _scrollSyncing = false;
+      ganttTaskList.addEventListener('scroll', () => {
+        if (_scrollSyncing) return;
+        _scrollSyncing = true;
+        ganttTimeline.scrollTop = ganttTaskList.scrollTop;
+        ganttHoursPanel.scrollTop = ganttTaskList.scrollTop;
+        _scrollSyncing = false;
+      });
+      ganttHoursPanel.addEventListener('scroll', () => {
+        if (_scrollSyncing) return;
+        _scrollSyncing = true;
+        ganttTaskList.scrollTop = ganttHoursPanel.scrollTop;
+        ganttTimeline.scrollTop = ganttHoursPanel.scrollTop;
+        _scrollSyncing = false;
+      });
+      ganttTimeline.addEventListener('scroll', () => {
+        syncIntensityScroll();
+        syncRulerScroll();
+        if (_scrollSyncing) return;
+        _scrollSyncing = true;
+        ganttTaskList.scrollTop = ganttTimeline.scrollTop;
+        ganttHoursPanel.scrollTop = ganttTimeline.scrollTop;
+        _scrollSyncing = false;
+      });
 
-      const rect = ganttTimeline.getBoundingClientRect();
-      const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
-      const y    = e.clientY - rect.top  + ganttTimeline.scrollTop;
-      const day  = Math.floor(x / pxPerDay);
-      // Clamp row index to [0, numVisibleRows-1] so clicks below the last row
-      // are handled gracefully.
-      const numRows  = ganttRows.querySelectorAll('.gantt-row-bg').length;
-      const maxRow   = Math.max(0, numRows - 1);
-      const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
-      const rowTop   = rowIndex * ROW_H;
+      // Scroll-wheel: horizontal two-finger swipe pans the timeline at 1/3 speed;
+      // vertical scroll zooms toward the cursor position. Both components are
+      // handled independently so a slightly diagonal swipe pans correctly instead
+      // of accidentally zooming.
+      const wheelZoom = (e) => {
+        e.preventDefault();
+        // Any horizontal component → pan the timeline at 1/3 speed
+        if (e.deltaX !== 0) {
+          ganttTimeline.scrollLeft += e.deltaX / 3;
+        }
+        // Vertical component only when the gesture is not primarily horizontal → zoom.
+        if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+          // Cursor position relative to the timeline content (in "day" units)
+          const rect     = ganttTimeline.getBoundingClientRect();
+          const cursorX  = e.clientX - rect.left;           // px within visible area
+          const contentX = ganttTimeline.scrollLeft + cursorX; // px within content
+          const dayAtCursor = contentX / pxPerDay;
 
-      timelineSel.active      = true;
-      timelineSel.startDay    = day;
-      timelineSel.endDay      = day;
-      timelineSel.mouseStartX = e.pageX;
-      timelineSel.rowTop      = rowTop;
-      timelineSel.rowIndex    = rowIndex;
+          const oldPx = pxPerDay;
+          if (e.deltaY < 0) {
+            pxPerDay = Math.min(pxPerDay * 1.04, 200);
+          } else {
+            pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit());
+          }
+          if (pxPerDay !== oldPx) {
+            autoScale();
+            // Keep the same day under the cursor after the scale change
+            ganttTimeline.scrollLeft = dayAtCursor * pxPerDay - cursorX;
+            render();
+          }
+        }
+      };
+      ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
+      if (ganttRuler) ganttRuler.addEventListener('wheel', wheelZoom, { passive: false });
+      if (intensityBarWrapper) intensityBarWrapper.addEventListener('wheel', wheelZoom, { passive: false });
 
-      const overlay = document.createElement('div');
-      overlay.className = 'gantt-time-selection';
-      overlay.style.cssText = 'left:' + (day * pxPerDay) + 'px;width:' + pxPerDay + 'px;' +
-                               'top:' + rowTop + 'px;height:' + ROW_H + 'px;';
-      ganttRows.appendChild(overlay);
-      timelineSel.overlayEl = overlay;
-    });
+      // Global mouse/key events
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup',   onMouseUp);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          if (conn.active) { cancelConnecting(); return; }
+          if (timelineSel.overlayEl) { clearTimelineSelection(); return; }
+          // Go back one drill-down level
+          if (parentStack.length && !document.querySelector('.modal.show')) {
+            parentStack.pop();
+            currentParentId = parentStack.length ? parentStack[parentStack.length - 1].entry.id : null;
+            render();
+          }
+        }
+      });
+
+      const cancelBtn = document.getElementById('cancelConnecting');
+      if (cancelBtn) cancelBtn.addEventListener('click', cancelConnecting);
+
+      // Cancel connecting by clicking empty timeline space
+      ganttTimeline.addEventListener('click', (e) => {
+        if (conn.active) {
+          if (!e.target.closest('.gantt-bar-container')) cancelConnecting();
+          return;
+        }
+        // Clear date-range selection when clicking on an empty spot
+        if (!e.target.closest('.gantt-bar-container') && !e.target.closest('.gantt-time-selection')) {
+          clearTimelineSelection();
+        }
+      });
+
+      // Cancel connecting by clicking empty space in task list
+      ganttTaskList.addEventListener('click', (e) => {
+        if (!conn.active) return;
+        if (!e.target.closest('.gantt-task-row')) cancelConnecting();
+      });
+
+      // Cancel connecting on right-click anywhere
+      document.addEventListener('contextmenu', (e) => {
+        if (conn.active) { e.preventDefault(); cancelConnecting(); }
+      });
+
+      // Toggle dependency arrows button
+      if (toggleDepsBtn) {
+        toggleDepsBtn.addEventListener('click', () => {
+          depsVisible = !depsVisible;
+          toggleDepsBtn.classList.toggle('active', depsVisible);
+          ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
+          render();
+        });
+      }
+
+      // Right-click on empty timeline space → add task at clicked date
+      ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
+
+      // Left-button drag on empty timeline → date-range selection (single row)
+      ganttTimeline.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (conn.active || drag.active) return;
+        if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
+
+        // Clear any existing selection
+        clearTimelineSelection();
+
+        const rect = ganttTimeline.getBoundingClientRect();
+        const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
+        const y    = e.clientY - rect.top  + ganttTimeline.scrollTop;
+        const day  = Math.floor(x / pxPerDay);
+        // Clamp row index to [0, numVisibleRows-1] so clicks below the last row
+        // are handled gracefully.
+        const numRows  = ganttRows.querySelectorAll('.gantt-row-bg').length;
+        const maxRow   = Math.max(0, numRows - 1);
+        const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
+        const rowTop   = rowIndex * ROW_H;
+
+        timelineSel.active      = true;
+        timelineSel.startDay    = day;
+        timelineSel.endDay      = day;
+        timelineSel.mouseStartX = e.pageX;
+        timelineSel.rowTop      = rowTop;
+        timelineSel.rowIndex    = rowIndex;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'gantt-time-selection';
+        overlay.style.cssText = 'left:' + (day * pxPerDay) + 'px;width:' + pxPerDay + 'px;' +
+                                 'top:' + rowTop + 'px;height:' + ROW_H + 'px;';
+        ganttRows.appendChild(overlay);
+        timelineSel.overlayEl = overlay;
+      });
+    } // end _initialized guard
 
     render();
   }
