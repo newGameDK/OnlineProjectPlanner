@@ -975,14 +975,104 @@ function setupEventListeners() {
     });
   }
 
+  function closeAllDropdowns() {
+    document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
+  }
+
   // Export CSV
-  document.getElementById('exportCsvBtn').addEventListener('click', (e) => { e.stopPropagation(); exportCSV(); });
+  document.getElementById('exportCsvBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); exportCSV(); });
 
   // Export PDF (print)
-  document.getElementById('exportPdfBtn').addEventListener('click', (e) => { e.stopPropagation(); exportPDF(); });
+  document.getElementById('exportPdfBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); exportPDF(); });
 
   // Share with link
-  document.getElementById('shareBtn').addEventListener('click', (e) => { e.stopPropagation(); showShareModal(); });
+  document.getElementById('shareBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); showShareModal(); });
+
+  // Backup (from export menu)
+  const backupBtn2 = document.getElementById('backupBtn2');
+  if (backupBtn2) {
+    backupBtn2.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      closeAllDropdowns();
+      try {
+        const res = await fetch(apiUrl('/api/backup'), { credentials: 'include' });
+        if (!res.ok) throw new Error('Backup failed');
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = 'planner_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('Backup failed: ' + e.message);
+      }
+    });
+  }
+
+  // Import backup (from export menu)
+  const importBackupBtn2 = document.getElementById('importBackupBtn2');
+  if (importBackupBtn2) {
+    importBackupBtn2.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllDropdowns();
+      openModal('Import Backup', `
+        <p style="font-size:13px;margin-bottom:12px;color:var(--text-muted)">
+          Select a previously exported backup JSON file to restore.
+          Existing data will not be overwritten — only missing items are added.
+        </p>
+        <div class="form-group">
+          <label>Select backup file</label>
+          <input type="file" id="importBackupFile" accept=".json" style="font-size:13px">
+        </div>
+      `, async () => {
+        const input = document.getElementById('importBackupFile');
+        if (!input.files.length) return alert('Please select a backup JSON file');
+        const file = input.files[0];
+        try {
+          const text = await file.text();
+          const backup = JSON.parse(text);
+          if (!backup.teams || !Array.isArray(backup.teams)) throw new Error('Invalid backup format');
+          const data = await api('POST', '/api/backup/import', backup);
+          closeModal();
+          const imp = data.imported || {};
+          alert('Import complete!\n' +
+            'Teams: ' + (imp.teams || 0) + ', Projects: ' + (imp.projects || 0) +
+            ', Entries: ' + (imp.entries || 0) + ', Todos: ' + (imp.todos || 0) +
+            ', Dependencies: ' + (imp.dependencies || 0));
+          window.location.reload();
+        } catch (e) {
+          alert('Import failed: ' + e.message);
+        }
+      });
+    });
+  }
+
+  // --- Toolbar dropdown toggles ---
+  document.querySelectorAll('.toolbar-dropdown').forEach(dropdown => {
+    const btn = dropdown.querySelector('button');
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Close other dropdowns
+        document.querySelectorAll('.toolbar-dropdown.open').forEach(d => {
+          if (d !== dropdown) d.classList.remove('open');
+        });
+        dropdown.classList.toggle('open');
+      });
+    }
+    // Keep dropdown open when interacting with inputs inside
+    const menu = dropdown.querySelector('.toolbar-dropdown-menu');
+    if (menu) {
+      menu.addEventListener('click', (e) => { e.stopPropagation(); });
+    }
+  });
+  // Close dropdowns when clicking outside
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
+  });
 
   // Todo filters
   document.querySelectorAll('.todo-filter').forEach(btn => {

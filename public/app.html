@@ -104,32 +104,46 @@
             <button id="undoBtn" class="btn btn-secondary btn-sm" title="Undo (Ctrl+Z)" data-help="Undo the last action (Ctrl+Z)">↩ Undo</button>
           </div>
           <div class="toolbar-group">
-            <label class="toolbar-label">View:</label>
-            <select id="viewScale" class="toolbar-select" data-help="Change the time scale: Day (detailed), Week (default), or Month (overview)">
-              <option value="day">Day</option>
-              <option value="week" selected>Week</option>
-              <option value="month">Month</option>
-            </select>
-            <button id="zoomInBtn" class="btn btn-secondary btn-sm" title="Zoom in" data-help="Zoom in to see more detail">+</button>
-            <button id="zoomOutBtn" class="btn btn-secondary btn-sm" title="Zoom out" data-help="Zoom out to see the bigger picture">−</button>
+            <button id="zoomInBtn" class="btn btn-secondary btn-sm" title="Zoom in" data-help="Zoom in to see more detail">🔍+ Zoom In</button>
+            <button id="zoomOutBtn" class="btn btn-secondary btn-sm" title="Zoom out" data-help="Zoom out to see the bigger picture">🔍− Zoom Out</button>
           </div>
           <div class="toolbar-group">
-            <label class="toolbar-label">Start:</label>
-            <input type="date" id="chartStartDate" class="toolbar-input" data-help="Set the chart start date">
-            <label class="toolbar-label">End:</label>
-            <input type="date" id="chartEndDate" class="toolbar-input" data-help="Set the chart end date">
-          </div>
-          <div class="toolbar-group">
-            <label class="toolbar-label">Capacity:</label>
-            <input type="number" id="capacityInput" class="toolbar-input" style="width:70px" min="1" max="999" data-help="Team capacity in hours per month – used for the intensity bar">
-            <span class="toolbar-label">h/month</span>
+            <div class="toolbar-dropdown" id="timeSetupDropdown">
+              <button id="timeSetupBtn" class="btn btn-secondary btn-sm" title="Time range and capacity settings" data-help="Configure chart start/end dates and team capacity">⏱ Time Setup</button>
+              <div class="toolbar-dropdown-menu" id="timeSetupMenu">
+                <div class="toolbar-dropdown-section">
+                  <label class="toolbar-label">Start:</label>
+                  <input type="date" id="chartStartDate" class="toolbar-input" data-help="Set the chart start date">
+                </div>
+                <div class="toolbar-dropdown-section">
+                  <label class="toolbar-label">End:</label>
+                  <input type="date" id="chartEndDate" class="toolbar-input" data-help="Set the chart end date">
+                </div>
+                <div class="toolbar-dropdown-section">
+                  <label class="toolbar-label">Capacity:</label>
+                  <div style="display:flex;align-items:center;gap:4px">
+                    <input type="number" id="capacityInput" class="toolbar-input" style="width:70px" min="1" max="999" data-help="Team capacity in hours per month – used for the intensity bar">
+                    <span class="toolbar-label">h/month</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="toolbar-group" style="margin-left:auto">
-            <button id="toggleDepsBtn" class="btn btn-secondary btn-sm active" title="Show/hide dependency arrows" data-help="Toggle dependency arrows between tasks on/off">🔗 Deps</button>
+            <button id="toggleDepsBtn" class="btn btn-secondary btn-sm active" title="Show/hide dependency arrows" data-help="Toggle dependency arrows between tasks on/off">🔗 Show Arrows</button>
             <button id="helpModeBtn" class="btn btn-secondary btn-sm" title="Toggle help mode – hover elements for explanations">❓ Help</button>
-            <button id="exportCsvBtn" class="btn btn-secondary btn-sm" title="Export to Excel with visual Gantt chart" data-help="Export to an Excel file with a visual Gantt chart representation">📊 Export Excel</button>
-            <button id="exportPdfBtn" class="btn btn-secondary btn-sm" title="Print / Save as PDF (A4)" data-help="Print or save the Gantt chart as a PDF document (A4 landscape)">🖨 Print PDF</button>
-            <button id="shareBtn" class="btn btn-secondary btn-sm" title="Share plan with a read-only link" data-help="Generate a read-only link to share the project plan with others">🔗 Share</button>
+            <div class="toolbar-dropdown" id="exportDropdown">
+              <button id="exportMenuBtn" class="btn btn-secondary btn-sm" title="Export, backup and share options" data-help="Export to Excel, print PDF, backup data, or share the project">📤 Export ▾</button>
+              <div class="toolbar-dropdown-menu toolbar-dropdown-right" id="exportMenu">
+                <button id="exportCsvBtn" class="toolbar-dropdown-item" data-help="Export to an Excel file with a visual Gantt chart representation">📊 Export Excel</button>
+                <button id="exportPdfBtn" class="toolbar-dropdown-item" data-help="Print or save the Gantt chart as a PDF document (A4 landscape)">🖨 Print PDF</button>
+                <div class="toolbar-dropdown-divider"></div>
+                <button id="backupBtn2" class="toolbar-dropdown-item" data-help="Download a JSON backup of all your data">💾 Backup</button>
+                <button id="importBackupBtn2" class="toolbar-dropdown-item" data-help="Import a previously exported backup file">📂 Import Backup</button>
+                <div class="toolbar-dropdown-divider"></div>
+                <button id="shareBtn" class="toolbar-dropdown-item" data-help="Generate a read-only link to share the project plan with others">🔗 Share</button>
+              </div>
+            </div>
           </div>
         </div>
 

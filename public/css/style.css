@@ -214,6 +214,28 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .toolbar-select:focus, .toolbar-input:focus { border-color: var(--primary); }
 
+/* Toolbar dropdowns */
+.toolbar-dropdown { position: relative; }
+.toolbar-dropdown-menu {
+  display: none; position: absolute; top: 100%; left: 0; z-index: 100;
+  background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 6px 0; min-width: 180px;
+  margin-top: 4px;
+}
+.toolbar-dropdown-menu.toolbar-dropdown-right { left: auto; right: 0; }
+.toolbar-dropdown.open > .toolbar-dropdown-menu { display: block; }
+.toolbar-dropdown-item {
+  display: block; width: 100%; padding: 8px 14px; border: none; background: none;
+  font-size: 13px; text-align: left; cursor: pointer; color: var(--text);
+  white-space: nowrap;
+}
+.toolbar-dropdown-item:hover { background: var(--primary-light); }
+.toolbar-dropdown-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.toolbar-dropdown-section {
+  padding: 6px 14px; display: flex; align-items: center; gap: 8px;
+}
+.toolbar-dropdown-section .toolbar-input { flex: 1; }
+
 /* View tabs */
 .view-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); background: var(--surface); flex-shrink: 0; }
 .view-tab {
@@ -404,9 +426,9 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 
 /* Gantt breadcrumb */
 .gantt-breadcrumb {
-  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
-  font-size: 12px; background: var(--primary-light); border-top: 1px solid var(--border);
-  min-height: 32px;
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+  font-size: 13px; background: var(--primary-light); border-bottom: 2px solid var(--primary);
+  min-height: 36px;
 }
 .gantt-breadcrumb:empty { display: none; }
 .gantt-bc-back {

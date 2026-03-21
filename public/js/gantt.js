@@ -143,11 +143,6 @@
     intensityBarWrapper = document.getElementById('intensityBarWrapper');
     ganttHoursPanel     = document.getElementById('ganttHoursPanel');
 
-    document.getElementById('viewScale').addEventListener('change', (e) => {
-      scale = e.target.value;
-      applyScaleDefaults();
-      render();
-    });
     document.getElementById('zoomInBtn').addEventListener('click', () => {
       pxPerDay = Math.min(pxPerDay * 1.04, 200); render();
     });
@@ -279,7 +274,7 @@
     chartStart      = null;
     chartEnd        = null;
 
-    applyScaleDefaults();
+    autoScale();
 
     // --- Set up task-list header: collapse toggle + add button ---
     const tasksHeader = document.querySelector('.gantt-tasks-header');
@@ -318,10 +313,10 @@
     render();
   }
 
-  function applyScaleDefaults() {
-    if (scale === 'day')   pxPerDay = Math.max(pxPerDay, 40);
-    if (scale === 'week')  pxPerDay = 28;
-    if (scale === 'month') pxPerDay = 10;
+  function autoScale() {
+    if (pxPerDay >= 40)      scale = 'day';
+    else if (pxPerDay >= 14) scale = 'week';
+    else                     scale = 'month';
   }
 
   // ── Collapsible task-list column ──────────────────────────────────────────
@@ -362,6 +357,8 @@
   // =========================================================================
   function render() {
     if (!S().currentProject) return;
+
+    autoScale();
 
     const entries   = visibleEntries();
     autoSetChartRange(entries);
@@ -1250,7 +1247,7 @@
 
     entries.forEach(entry => {
       const total = calcTotalHours(entry.id);
-      viewTotal += entry.hours_estimate || 0; // project total = own hours only at top level
+      viewTotal += +(entry.hours_estimate) || 0; // project total = own hours only at top level
 
       const row = document.createElement('div');
       row.className = 'gantt-hours-row' + (total > 0 ? ' has-hours' : '');
@@ -1284,11 +1281,11 @@
     const children = S().ganttEntries.filter(e => e.parent_id === entryId);
     if (children.length === 0) {
       // Leaf task: count own hours only
-      return entry.hours_estimate || 0;
+      return +(entry.hours_estimate) || 0;
     }
     let childSum = 0;
     children.forEach(child => { childSum += calcTotalHours(child.id); });
-    const own = entry.hours_estimate || 0;
+    const own = +(entry.hours_estimate) || 0;
     if (own > 0) {
       // Parent has an hour budget: children withdraw from it
       return Math.max(0, own - childSum);
@@ -1307,13 +1304,14 @@
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
     const children = S().ganttEntries.filter(e => e.parent_id === entryId);
-    if (children.length === 0) return entry.hours_estimate || 0;
+    if (children.length === 0) return +(entry.hours_estimate) || 0;
     let childSum = 0;
     children.forEach(child => { childSum += calcTreeTotal(child.id); });
-    return Math.max(entry.hours_estimate || 0, childSum);
+    return Math.max(+(entry.hours_estimate) || 0, childSum);
   }
 
   function fmtH(h) {
+    h = +h || 0;
     return Number.isInteger(h) ? h + 'h' : h.toFixed(1) + 'h';
   }
 
@@ -1349,7 +1347,7 @@
         h = calcTotalHours(entry.id);          // already clamped to ≥ 0
         if (h <= 0) return;                    // children consumed the whole budget
       } else {
-        h = entry.hours_estimate;
+        h = +(entry.hours_estimate);
       }
       const s  = parseDate(entry.start_date);
       const en = parseDate(entry.end_date);
