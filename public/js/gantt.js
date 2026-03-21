@@ -842,6 +842,44 @@
     render();
   }
 
+  /** Returns siblings of `entry` (same parent_id) sorted by position then created_at. */
+  function getSortedSiblings(entry) {
+    return S().ganttEntries
+      .filter(e => e.parent_id === entry.parent_id)
+      .sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1));
+  }
+
+  /**
+   * Shared implementation for move-up / move-down.
+   * `delta` is -1 for up, +1 for down.
+   */
+  async function moveEntryByDelta(entry, delta) {
+    const siblings = getSortedSiblings(entry);
+    const idx = siblings.findIndex(e => e.id === entry.id);
+    const swapIdx = idx + delta;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= siblings.length) return;
+    const positions = siblings.map((e, i) => ({ id: e.id, position: i }));
+    positions[idx].position = swapIdx;
+    positions[swapIdx].position = idx;
+    try {
+      const result = await API('POST', '/api/gantt/' + S().currentProject.id + '/reorder', { positions });
+      result.entries.forEach(updated => {
+        const i = S().ganttEntries.findIndex(e => e.id === updated.id);
+        if (i !== -1) S().ganttEntries[i].position = updated.position;
+      });
+      U().updateUndoRedoBtns?.();
+    } catch (err) {
+      console.error('Move ' + (delta < 0 ? 'up' : 'down') + ' failed:', err);
+    }
+    render();
+  }
+
+  /** Move an entry one position up among its siblings. */
+  function moveEntryUp(entry)   { return moveEntryByDelta(entry, -1); }
+
+  /** Move an entry one position down among its siblings. */
+  function moveEntryDown(entry) { return moveEntryByDelta(entry, +1); }
+
   // ─── ruler ────────────────────────────────────────────────────────────────
   function renderRuler(timelineW, totalDays) {
     ganttRuler.style.width    = timelineW + 'px';
@@ -1932,6 +1970,10 @@
   // =========================================================================
   function showEntryContextMenu(x, y, entry) {
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
+    const siblings = getSortedSiblings(entry);
+    const sibIdx = siblings.findIndex(e => e.id === entry.id);
+    const canMoveUp   = sibIdx > 0;
+    const canMoveDown = sibIdx < siblings.length - 1;
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
       { icon: '+',      label: 'Add sub-task',          action: () => showAddEntryModal(entry.id) },
@@ -1939,6 +1981,9 @@
         ? { icon: '\u25BC', label: 'Open sub-chart',   action: () => drillDown(entry) }
         : null,
       { separator: true },
+      canMoveUp   ? { icon: '\u2B06', label: 'Move up',   action: () => moveEntryUp(entry) }   : null,
+      canMoveDown ? { icon: '\u2B07', label: 'Move down', action: () => moveEntryDown(entry) } : null,
+      (canMoveUp || canMoveDown) ? { separator: true } : null,
       { icon: '\uD83D\uDCCB', label: 'Copy',            action: () => copyEntry(entry, false) },
       { icon: '\u2702',       label: 'Cut',             action: () => copyEntry(entry, true) },
       clipboardData
