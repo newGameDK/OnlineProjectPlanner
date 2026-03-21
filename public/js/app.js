@@ -1052,26 +1052,30 @@ function setupEventListeners() {
 
   // --- Toolbar dropdown toggles ---
   document.querySelectorAll('.toolbar-dropdown').forEach(dropdown => {
-    const btn = dropdown.querySelector('button');
-    if (btn) {
-      btn.addEventListener('click', (e) => {
+    const triggerBtn = dropdown.children[0]; // first direct child is the trigger button
+    if (triggerBtn && triggerBtn.tagName === 'BUTTON') {
+      triggerBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Close other dropdowns
-        document.querySelectorAll('.toolbar-dropdown.open').forEach(d => {
-          if (d !== dropdown) d.classList.remove('open');
-        });
-        dropdown.classList.toggle('open');
+        e.preventDefault();
+        const wasOpen = dropdown.classList.contains('open');
+        // Close all dropdowns
+        document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
+        // Toggle clicked one
+        if (!wasOpen) dropdown.classList.add('open');
       });
     }
     // Keep dropdown open when interacting with inputs inside
     const menu = dropdown.querySelector('.toolbar-dropdown-menu');
     if (menu) {
+      menu.addEventListener('mousedown', (e) => { e.stopPropagation(); });
       menu.addEventListener('click', (e) => { e.stopPropagation(); });
     }
   });
   // Close dropdowns when clicking outside
-  document.addEventListener('click', () => {
-    document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
+  document.addEventListener('mousedown', (e) => {
+    if (!e.target.closest('.toolbar-dropdown')) {
+      document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
+    }
   });
 
   // Todo filters
