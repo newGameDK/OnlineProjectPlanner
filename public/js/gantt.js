@@ -59,6 +59,8 @@
     endDay: 0,
     mouseStartX: 0,
     overlayEl: null,
+    rowTop: 0,       // top px of the row where drag started (single-row selection)
+    rowIndex: -1,    // index of the row where drag started
   };
 
   // ── drag state ────────────────────────────────────────────────────────────
@@ -127,10 +129,20 @@
     return 'https://' + url;
   }
 
+  function zoomIn()  { pxPerDay = Math.min(pxPerDay * 1.4, 200); autoScale(); render(); }
+  function zoomOut() { pxPerDay = Math.max(pxPerDay / 1.4, minPxPerDayForFit()); autoScale(); render(); }
+
+  function editSelected() {
+    const id = S().selectedGanttIds.size > 0 ? [...S().selectedGanttIds][0] : null;
+    if (!id) return;
+    const entry = S().ganttEntries.find(e => e.id === id);
+    if (entry) showEditEntryModal(entry);
+  }
+
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate };
+  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
@@ -317,7 +329,8 @@
       const addBtn = document.createElement('button');
       addBtn.className = 'gantt-tasks-add-btn';
       addBtn.textContent = '+';
-      addBtn.title = 'Add new task';
+      addBtn.title = 'Add new task (N)';
+      addBtn.setAttribute('data-help', 'Add a new task (keyboard shortcut: N)');
       addBtn.addEventListener('click', (e) => { e.stopPropagation(); showAddEntryModal(); });
       tasksHeader.appendChild(addBtn);
     }
@@ -331,7 +344,7 @@
     // Right-click on empty timeline space → add task at clicked date
     ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
 
-    // Left-button drag on empty timeline → date-range selection
+    // Left-button drag on empty timeline → date-range selection (single row)
     ganttTimeline.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (conn.active || drag.active) return;
@@ -342,16 +355,26 @@
 
       const rect = ganttTimeline.getBoundingClientRect();
       const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
+      const y    = e.clientY - rect.top  + ganttTimeline.scrollTop;
       const day  = Math.floor(x / pxPerDay);
+      // Clamp row index to [0, numVisibleRows-1] so clicks below the last row
+      // are handled gracefully.
+      const numRows  = ganttRows.querySelectorAll('.gantt-row-bg').length;
+      const maxRow   = Math.max(0, numRows - 1);
+      const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
+      const rowTop   = rowIndex * ROW_H;
 
-      timelineSel.active     = true;
-      timelineSel.startDay   = day;
-      timelineSel.endDay     = day;
+      timelineSel.active      = true;
+      timelineSel.startDay    = day;
+      timelineSel.endDay      = day;
       timelineSel.mouseStartX = e.pageX;
+      timelineSel.rowTop      = rowTop;
+      timelineSel.rowIndex    = rowIndex;
 
       const overlay = document.createElement('div');
       overlay.className = 'gantt-time-selection';
-      overlay.style.cssText = 'left:' + (day * pxPerDay) + 'px;width:' + pxPerDay + 'px;top:0;height:100%;';
+      overlay.style.cssText = 'left:' + (day * pxPerDay) + 'px;width:' + pxPerDay + 'px;' +
+                               'top:' + rowTop + 'px;height:' + ROW_H + 'px;';
       ganttRows.appendChild(overlay);
       timelineSel.overlayEl = overlay;
     });
@@ -1077,6 +1100,23 @@
     drag.active = false; drag.type = null; drag.entryId = null;
     drag.ghostEl = null; drag.containerEl = null;
 
+    if (deltaDays === 0) {
+      // No movement → treat as a click: select the entry.
+      if (e.shiftKey) {
+        if (S().selectedGanttIds.has(entryId)) {
+          S().selectedGanttIds.delete(entryId);
+        } else {
+          S().selectedGanttIds.add(entryId);
+        }
+      } else {
+        S().selectedGanttIds.clear();
+        S().selectedGanttIds.add(entryId);
+      }
+      U().updateDeleteBtn();
+      render();
+      return;
+    }
+
     if (deltaDays !== 0) {
       // Expand chart date range if entry moved/resized outside it
       expandChartRange({ start_date: newStart, end_date: newEnd });
@@ -1379,6 +1419,12 @@
   /**
    * Recursively sum hours for an entry and all its descendants
    * (regardless of what sub-chart level is currently visible).
+   *
+   * Returns the *remaining* budget for entries that have their own
+   * hours_estimate set: remaining = own - sum_of_children_allocations.
+   * "Child allocation" is calcTreeTotal (the full budget claimed by a
+   * child subtree), NOT calcTotalHours of the child, to prevent
+   * double-subtracting nested budgets.
    */
   function calcTotalHours(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
@@ -1388,14 +1434,17 @@
       // Leaf task: count own hours only
       return +(entry.hours_estimate) || 0;
     }
-    let childSum = 0;
-    children.forEach(child => { childSum += calcTotalHours(child.id); });
     const own = +(entry.hours_estimate) || 0;
     if (own > 0) {
-      // Parent has an hour budget: children withdraw from it
-      return Math.max(0, own - childSum);
+      // Parent has an hour budget: subtract each child's total allocation
+      // (use calcTreeTotal so nested sub-budgets aren't double-counted).
+      let childTotal = 0;
+      children.forEach(child => { childTotal += calcTreeTotal(child.id); });
+      return Math.max(0, own - childTotal);
     }
-    // No budget on parent: show sum of children
+    // No budget on parent: show sum of children's displayed hours
+    let childSum = 0;
+    children.forEach(child => { childSum += calcTotalHours(child.id); });
     return childSum;
   }
 

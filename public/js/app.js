@@ -313,7 +313,7 @@ function startSync() {
       }
       setSyncStatus('synced');
     } catch { setSyncStatus('error'); }
-  }, 2000);
+  }, 10000);
 }
 
 function stopSync() {
@@ -933,7 +933,7 @@ function setupEventListeners() {
   // Undo
   document.getElementById('undoBtn').addEventListener('click', performUndo);
   document.addEventListener('keydown', (e) => {
-    const inText = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
+    const inText  = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); performUndo(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(false); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'x' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(true); }
@@ -941,6 +941,16 @@ function setupEventListeners() {
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (inText) return;
       deleteSelectedGanttEntries();
+    }
+    // Single-key shortcuts – skip when typing or a modal is open
+    const inModal = !document.getElementById('modalOverlay').classList.contains('hidden');
+    if (!inText && !inModal) {
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); window.ganttModule?.zoomIn(); }
+      if (e.key === '-' || e.key === '_') { e.preventDefault(); window.ganttModule?.zoomOut(); }
+      // N → add new task
+      if (e.key === 'n' || e.key === 'N') { e.preventDefault(); window.ganttModule?.showAddEntryModal(); }
+      // E or F2 → edit selected task
+      if (e.key === 'e' || e.key === 'E' || e.key === 'F2') { e.preventDefault(); window.ganttModule?.editSelected(); }
     }
   });
 
@@ -1204,9 +1214,14 @@ function showContextMenu(x, y, items) {
     });
     list.appendChild(li);
   });
-  menu.style.left = Math.min(x, window.innerWidth - 180) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 10) + 'px';
+  // Position off-screen first so the browser can compute dimensions
+  menu.style.left = '-9999px';
+  menu.style.top  = '-9999px';
   menu.classList.remove('hidden');
+  const menuW = menu.offsetWidth  || 180;
+  const menuH = menu.offsetHeight || 10;
+  menu.style.left = Math.min(x, window.innerWidth  - menuW - 10) + 'px';
+  menu.style.top  = Math.min(y, window.innerHeight - menuH - 10) + 'px';
 }
 
 // ==========================================================================
@@ -1621,7 +1636,10 @@ async function showShareModal() {
 
   const project   = state.currentProject;
   const token     = project.share_token || null;
-  const shareUrl  = token ? `${location.origin}/share.html?token=${token}` : null;
+  // Build share URL relative to the current page's directory so it works
+  // even when the app is deployed at a subdirectory path.
+  const basePath  = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const shareUrl  = token ? basePath + 'share.html?token=' + token : null;
 
   const bodyHtml = token
     ? `<div class="form-group">
