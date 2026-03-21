@@ -749,6 +749,7 @@
         _addTimelineIndicatorBottom(lastRow.dataset.id);
       } else if (ganttTaskList.contains(document.elementFromPoint(e.clientX, e.clientY))) {
         ganttTaskList.classList.add('reparent-root-target');
+        reparentDrag.dropMode = 'root';
       }
     }
   }
@@ -776,10 +777,44 @@
     reparentDrag.active  = false;
     reparentDrag.entryId = null;
 
-    if (!dropMode || !dropTargetId) return; // dropped outside
+    if (!dropMode) return; // dropped outside
+    if (!dropTargetId && dropMode !== 'root') return;
 
     if (dropMode === 'before' || dropMode === 'after') {
-      // ── Reorder: change position within same parent ──────────────────────
+      // ── Reorder / cross-level move ────────────────────────────────────────
+      const movedEntry  = S().ganttEntries.find(e => e.id === entryId);
+      const targetEntry = S().ganttEntries.find(e => e.id === dropTargetId);
+      if (movedEntry && targetEntry && movedEntry.parent_id !== targetEntry.parent_id) {
+        // Moving across levels: reparent first so reorderEntries can proceed
+        const newParentId = targetEntry.parent_id || null;
+        // Prevent circular reparenting
+        if (newParentId === entryId) return;
+        const childrenOf = {};
+        S().ganttEntries.forEach(en => {
+          const pid = en.parent_id || '__root__';
+          if (!childrenOf[pid]) childrenOf[pid] = [];
+          childrenOf[pid].push(en);
+        });
+        const isDescendant = (tId, ancestorId) => {
+          const kids = childrenOf[ancestorId] || [];
+          for (const child of kids) {
+            if (child.id === tId) return true;
+            if (isDescendant(tId, child.id)) return true;
+          }
+          return false;
+        };
+        if (isDescendant(newParentId, entryId)) return;
+        try {
+          const updated = await API('PUT', '/api/gantt/' + entryId, { parent_id: newParentId });
+          const idx = S().ganttEntries.findIndex(x => x.id === entryId);
+          if (idx !== -1) S().ganttEntries[idx] = updated.entry;
+          if (newParentId) expandedIds.add(newParentId);
+        } catch (err) {
+          console.error('Reparent failed:', err);
+          render();
+          return;
+        }
+      }
       await reorderEntries(entryId, dropTargetId, dropMode === 'before');
     } else if (dropMode === 'onto') {
       // ── Reparent: change parent_id ────────────────────────────────────────
@@ -818,6 +853,21 @@
         U().updateUndoRedoBtns?.();
       } catch (err) {
         console.error('Reparent failed:', err);
+      }
+      render();
+    } else if (dropMode === 'root') {
+      // ── Promote to root (or current drill-down level) ─────────────────────
+      const entry = S().ganttEntries.find(x => x.id === entryId);
+      if (!entry) return;
+      const newParentId = currentParentId || null;
+      if (entry.parent_id === newParentId) return;
+      try {
+        const updated = await API('PUT', '/api/gantt/' + entryId, { parent_id: newParentId });
+        const idx = S().ganttEntries.findIndex(x => x.id === entryId);
+        if (idx !== -1) S().ganttEntries[idx] = updated.entry;
+        U().updateUndoRedoBtns?.();
+      } catch (err) {
+        console.error('Reparent to root failed:', err);
       }
       render();
     }
