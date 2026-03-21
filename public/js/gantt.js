@@ -92,10 +92,11 @@
     active: false,
     entryId: null,
     startY: 0,
-    dragEl: null,         // floating ghost element
-    dropMode: null,       // 'before' | 'after' | 'onto' | null
-    dropTargetId: null,   // id of the row we'd insert relative to
-    dropIndicatorEl: null, // horizontal line shown between rows
+    dragEl: null,                 // floating ghost element
+    dropMode: null,               // 'before' | 'after' | 'onto' | null
+    dropTargetId: null,           // id of the row we'd insert relative to
+    dropIndicatorEl: null,        // horizontal line shown in task list
+    dropIndicatorTimelineEl: null, // matching horizontal line shown in timeline rows
   };
 
   // ─── DOM refs ─────────────────────────────────────────────────────────────
@@ -652,6 +653,10 @@
       reparentDrag.dropIndicatorEl.remove();
       reparentDrag.dropIndicatorEl = null;
     }
+    if (reparentDrag.dropIndicatorTimelineEl) {
+      reparentDrag.dropIndicatorTimelineEl.remove();
+      reparentDrag.dropIndicatorTimelineEl = null;
+    }
     reparentDrag.dropMode = null;
     reparentDrag.dropTargetId = null;
   }
@@ -667,8 +672,33 @@
     const allRows = [...ganttTaskList.querySelectorAll('.gantt-task-row')];
     if (!allRows.length) return;
 
-    const listRect = ganttTaskList.getBoundingClientRect();
+    const listRect  = ganttTaskList.getBoundingClientRect();
     const scrollTop = ganttTaskList.scrollTop;
+    const rowsRect  = ganttRows.getBoundingClientRect();
+
+    // Add a matching drop indicator in the timeline (ganttRows) area.
+    function _addTimelineIndicator(targetId) {
+      const rowBgEl = ganttRows.querySelector(`.gantt-row-bg[data-id="${targetId}"]`);
+      if (!rowBgEl) return;
+      const bgRect = rowBgEl.getBoundingClientRect();
+      const tInd = document.createElement('div');
+      tInd.className = 'reorder-drop-indicator';
+      tInd.style.top = (bgRect.top - rowsRect.top + ganttTimeline.scrollTop) + 'px';
+      ganttRows.appendChild(tInd);
+      reparentDrag.dropIndicatorTimelineEl = tInd;
+    }
+
+    // Add a bottom-edge indicator in the timeline for the last row.
+    function _addTimelineIndicatorBottom(targetId) {
+      const rowBgEl = ganttRows.querySelector(`.gantt-row-bg[data-id="${targetId}"]`);
+      if (!rowBgEl) return;
+      const bgRect = rowBgEl.getBoundingClientRect();
+      const tInd = document.createElement('div');
+      tInd.className = 'reorder-drop-indicator';
+      tInd.style.top = (bgRect.bottom - rowsRect.top + ganttTimeline.scrollTop) + 'px';
+      ganttRows.appendChild(tInd);
+      reparentDrag.dropIndicatorTimelineEl = tInd;
+    }
 
     // Determine which row the cursor is near and whether we're in the gap
     // between rows (reorder) or in the middle of a row (reparent).
@@ -689,6 +719,7 @@
         ind.style.top = indY + 'px';
         ganttTaskList.appendChild(ind);
         reparentDrag.dropIndicatorEl = ind;
+        _addTimelineIndicator(row.dataset.id);
         matched = true;
         break;
       } else if (e.clientY <= rect.bottom - threshold) {
@@ -715,6 +746,7 @@
         ind.style.top = indY + 'px';
         ganttTaskList.appendChild(ind);
         reparentDrag.dropIndicatorEl = ind;
+        _addTimelineIndicatorBottom(lastRow.dataset.id);
       } else if (ganttTaskList.contains(document.elementFromPoint(e.clientX, e.clientY))) {
         ganttTaskList.classList.add('reparent-root-target');
       }
