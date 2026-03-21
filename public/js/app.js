@@ -930,18 +930,16 @@ function setupEventListeners() {
     });
   });
 
-  // Add gantt entry
-  document.getElementById('addGanttBtn').addEventListener('click', () => {
-    if (!state.currentProject) return;
-    window.ganttModule?.showAddEntryModal();
-  });
-
   // Undo
   document.getElementById('undoBtn').addEventListener('click', performUndo);
   document.addEventListener('keydown', (e) => {
+    const inText = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); performUndo(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(false); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'x' && !inText) { e.preventDefault(); window.ganttModule?.copySelected(true); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !inText) { e.preventDefault(); window.ganttModule?.pasteAtDate(); }
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+      if (inText) return;
       deleteSelectedGanttEntries();
     }
   });
