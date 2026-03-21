@@ -1086,7 +1086,6 @@ function setupEventListeners() {
       document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
       syncAriaExpanded();
     }
-    }
   });
 
   // Todo filters
