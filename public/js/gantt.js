@@ -39,6 +39,7 @@
   let currentParentId = null;
   let expandedIds     = new Set(); // inline-expanded entries (show children)
   let depsVisible     = true;  // whether dependency arrows are shown
+  let taskListCollapsed = false; // whether the left task-name column is collapsed
 
   let scale    = 'week';
   let pxPerDay = 28;
@@ -279,6 +280,41 @@
     chartEnd        = null;
 
     applyScaleDefaults();
+
+    // --- Set up task-list header: collapse toggle + add button ---
+    const tasksHeader = document.querySelector('.gantt-tasks-header');
+    if (tasksHeader) {
+      tasksHeader.innerHTML = '';
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'gantt-tasks-toggle';
+      toggleBtn.textContent = '\u25C0'; // ◀
+      toggleBtn.title = 'Collapse task list';
+      toggleBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleTaskList(); });
+      tasksHeader.appendChild(toggleBtn);
+
+      const label = document.createElement('span');
+      label.className = 'gantt-tasks-header-label';
+      label.textContent = 'Task';
+      tasksHeader.appendChild(label);
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'gantt-tasks-add-btn';
+      addBtn.textContent = '+';
+      addBtn.title = 'Add new task';
+      addBtn.addEventListener('click', (e) => { e.stopPropagation(); showAddEntryModal(); });
+      tasksHeader.appendChild(addBtn);
+    }
+
+    // Move breadcrumb above the gantt container for better visibility
+    const ganttContainer = document.getElementById('ganttContainer');
+    if (ganttBreadcrumb && ganttContainer && ganttContainer.parentNode) {
+      ganttContainer.parentNode.insertBefore(ganttBreadcrumb, ganttContainer);
+    }
+
+    // Right-click on empty timeline space → add task at clicked date
+    ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
+
     render();
   }
 
@@ -286,6 +322,39 @@
     if (scale === 'day')   pxPerDay = Math.max(pxPerDay, 40);
     if (scale === 'week')  pxPerDay = 28;
     if (scale === 'month') pxPerDay = 10;
+  }
+
+  // ── Collapsible task-list column ──────────────────────────────────────────
+  function toggleTaskList() {
+    taskListCollapsed = !taskListCollapsed;
+    const container = document.getElementById('ganttContainer');
+    container.classList.toggle('task-list-collapsed', taskListCollapsed);
+
+    const toggleBtn = container.querySelector('.gantt-tasks-toggle');
+    if (toggleBtn) {
+      toggleBtn.textContent = taskListCollapsed ? '\u25B6' : '\u25C0'; // ▶ or ◀
+      toggleBtn.title       = taskListCollapsed ? 'Expand task list' : 'Collapse task list';
+    }
+  }
+
+  // ── Right-click on empty timeline → add task at clicked date ─────────────
+  function onTimelineContextMenu(e) {
+    if (conn.active) return;
+    if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
+
+    e.preventDefault();
+
+    const rect       = ganttTimeline.getBoundingClientRect();
+    const x          = e.clientX - rect.left + ganttTimeline.scrollLeft;
+    const dayOffset  = Math.floor(x / pxPerDay);
+    const clickDate  = addDays(chartStart, dayOffset);
+    const dateStr    = toDateStr(clickDate);
+    const endDateStr = toDateStr(addDays(clickDate, 7));
+
+    U().showContextMenu(e.pageX, e.pageY, [
+      { icon: '+', label: 'Add task here (' + dateStr + ')',
+        action: () => showAddEntryModal(undefined, dateStr, endDateStr) },
+    ]);
   }
 
   // =========================================================================
@@ -1398,9 +1467,9 @@
   // =========================================================================
   // Entry Modals
   // =========================================================================
-  function showAddEntryModal(parentId) {
-    const today    = toDateStr(new Date());
-    const nextWeek = toDateStr(addDays(new Date(), 7));
+  function showAddEntryModal(parentId, startDateOverride, endDateOverride) {
+    const today    = startDateOverride || toDateStr(new Date());
+    const nextWeek = endDateOverride   || toDateStr(addDays(parseDate(today) || new Date(), 7));
 
     U().openModal('Add Gantt Entry', buildEntryFormHtml({
       title: '', start_date: today, end_date: nextWeek,
@@ -1408,24 +1477,28 @@
     }), async () => {
       const vals = readEntryForm();
       if (!vals.title) return alert('Title is required');
-      const data = await API('POST', '/api/gantt', {
-        project_id: S().currentProject.id,
-        parent_id: parentId !== undefined ? parentId : currentParentId,
-        ...vals,
-      });
-      S().ganttEntries.push(data.entry);
-      await expandParentDates(data.entry);
-      expandChartRange(data.entry);
-      // Auto-expand the parent so the new child is visible inline
-      if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
-        expandedIds.add(data.entry.parent_id);
-      }
-      render();
-      U().closeModal();
+      try {
+        const data = await API('POST', '/api/gantt', {
+          project_id: S().currentProject.id,
+          parent_id: parentId !== undefined ? parentId : currentParentId,
+          ...vals,
+        });
+        S().ganttEntries.push(data.entry);
+        await expandParentDates(data.entry);
+        expandChartRange(data.entry);
+        // Auto-expand the parent so the new child is visible inline
+        if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
+          expandedIds.add(data.entry.parent_id);
+        }
+        render();
+        U().closeModal();
 
-      // Ask if the new entry should also be added to the todo list
-      if (confirm('Add "' + data.entry.title + '" to the Todo list as well?')) {
-        addToTodo(data.entry);
+        // Ask if the new entry should also be added to the todo list
+        if (confirm('Add "' + data.entry.title + '" to the Todo list as well?')) {
+          addToTodo(data.entry);
+        }
+      } catch (err) {
+        alert('Save failed: ' + err.message);
       }
     });
   }
@@ -1434,14 +1507,18 @@
     U().openModal('Edit Entry', buildEntryFormHtml(entry), async () => {
       const vals = readEntryForm();
       if (!vals.title) return alert('Title is required');
-      const data = await API('PUT', '/api/gantt/' + entry.id, vals);
-      const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
-      if (idx !== -1) {
-        S().ganttEntries[idx] = data.entry;
-        await expandParentDates(data.entry);
-        expandChartRange(data.entry);
+      try {
+        const data = await API('PUT', '/api/gantt/' + entry.id, vals);
+        const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
+        if (idx !== -1) {
+          S().ganttEntries[idx] = data.entry;
+          await expandParentDates(data.entry);
+          expandChartRange(data.entry);
+        }
+        render();
+      } catch (err) {
+        alert('Save failed: ' + err.message);
       }
-      render();
       U().closeModal();
     });
   }

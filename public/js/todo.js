@@ -31,9 +31,9 @@
     const todos = filteredTodos();
 
     const byStatus = {
-      todo:        todos.filter(t => t.status === 'todo'),
-      in_progress: todos.filter(t => t.status === 'in_progress'),
-      done:        todos.filter(t => t.status === 'done'),
+      todo:        sortByDependencies(todos.filter(t => t.status === 'todo')),
+      in_progress: sortByDependencies(todos.filter(t => t.status === 'in_progress')),
+      done:        sortByDependencies(todos.filter(t => t.status === 'done')),
     };
 
     renderColumn('todoListTodo',        byStatus.todo);
@@ -57,6 +57,64 @@
   function setDepsVisible(visible) {
     todoDepsVisible = visible;
     render();
+  }
+
+  // =========================================================================
+  // Dependency-based topological sort
+  // =========================================================================
+
+  /**
+   * Sort todos so that "blocking" tasks (ones that other tasks depend on)
+   * appear before the tasks they block.  Uses Kahn's topological sort on
+   * the Gantt dependency graph mapped through gantt_entry_id links.
+   */
+  function sortByDependencies(todos) {
+    if (!todos.length) return todos;
+
+    const deps = S().dependencies || [];
+    if (!deps.length) return todos;
+
+    // Map gantt_entry_id → todo for quick lookup
+    const ganttToTodo = {};
+    const todoMap     = {};
+    todos.forEach(t => {
+      todoMap[t.id] = t;
+      if (t.gantt_entry_id) ganttToTodo[t.gantt_entry_id] = t;
+    });
+
+    // Build adjacency list + in-degree (source blocks target)
+    const graph    = {};
+    const inDegree = {};
+    todos.forEach(t => { graph[t.id] = []; inDegree[t.id] = 0; });
+
+    deps.forEach(dep => {
+      const src = ganttToTodo[dep.source_id];
+      const tgt = ganttToTodo[dep.target_id];
+      if (src && tgt && graph[src.id] && graph[tgt.id] !== undefined) {
+        graph[src.id].push(tgt.id);
+        inDegree[tgt.id]++;
+      }
+    });
+
+    // Kahn's algorithm
+    const queue  = [];
+    todos.forEach(t => { if (inDegree[t.id] === 0) queue.push(t.id); });
+
+    const sorted = [];
+    while (queue.length) {
+      const id = queue.shift();
+      sorted.push(todoMap[id]);
+      (graph[id] || []).forEach(tid => {
+        inDegree[tid]--;
+        if (inDegree[tid] === 0) queue.push(tid);
+      });
+    }
+
+    // Append any remaining todos (unlinked or in cycles)
+    const inSorted = new Set(sorted.map(t => t.id));
+    todos.forEach(t => { if (!inSorted.has(t.id)) sorted.push(t); });
+
+    return sorted;
   }
 
   // =========================================================================

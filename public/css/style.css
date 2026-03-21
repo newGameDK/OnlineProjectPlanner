@@ -240,7 +240,33 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   width: var(--task-col-w); flex-shrink: 0; padding: 6px 12px;
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted);
   border-right: 1px solid var(--border);
-  display: flex; align-items: center;
+  display: flex; align-items: center; gap: 4px;
+}
+.gantt-tasks-header-label { flex: 1; }
+.gantt-tasks-toggle {
+  background: none; border: none; cursor: pointer; padding: 2px 4px;
+  border-radius: 3px; font-size: 11px; color: var(--text-muted); line-height: 1;
+}
+.gantt-tasks-toggle:hover { background: var(--border); color: var(--text); }
+.gantt-tasks-add-btn {
+  background: var(--primary); color: #fff; border: none; cursor: pointer;
+  width: 20px; height: 20px; border-radius: 50%; font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: filter .15s;
+}
+.gantt-tasks-add-btn:hover { filter: brightness(0.85); }
+
+/* Collapsed task-list column */
+.gantt-container.task-list-collapsed .gantt-tasks-header {
+  width: 36px; min-width: 36px; padding: 6px 4px; justify-content: center;
+}
+.gantt-container.task-list-collapsed .gantt-tasks-header-label,
+.gantt-container.task-list-collapsed .gantt-tasks-add-btn { display: none; }
+.gantt-container.task-list-collapsed .gantt-tasks {
+  width: 0; min-width: 0; overflow: hidden; border-right: none; padding: 0;
+}
+.gantt-container.task-list-collapsed .gantt-ruler-task-spacer {
+  width: 36px; min-width: 36px;
 }
 .gantt-timeline-header { flex: 1; overflow: hidden; position: relative; min-height: 32px; }
 
