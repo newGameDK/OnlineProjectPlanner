@@ -524,6 +524,7 @@ async function selectProject(project) {
 
   window.ganttModule?.init();
   window.todoModule?.render();
+  updateUndoRedoBtns();
 }
 
 function showWelcome() {
@@ -1118,6 +1119,7 @@ async function performUndo() {
         const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
         state.ganttEntries = gdata.entries;
         window.ganttModule?.render();
+        updateUndoRedoBtns();
         return;
       } catch (_) {
         // Nothing to undo in current project – fall through to global undo
@@ -1145,6 +1147,7 @@ async function performUndo() {
     }
   } catch (e) {
     console.warn('Undo failed:', e.message);
+    updateUndoRedoBtns();
   }
 }
 
@@ -1155,8 +1158,10 @@ async function performRedo() {
     const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
     state.ganttEntries = gdata.entries;
     window.ganttModule?.render();
+    updateUndoRedoBtns();
   } catch (e) {
     console.warn('Redo failed:', e.message);
+    updateUndoRedoBtns();
   }
 }
 
@@ -1170,6 +1175,7 @@ async function deleteSelectedGanttEntries() {
   state.selectedGanttIds.clear();
   updateDeleteBtn();
   window.ganttModule?.render();
+  updateUndoRedoBtns();
 }
 
 function updateDeleteBtn() {
@@ -1177,6 +1183,23 @@ function updateDeleteBtn() {
   if (!btn) return;
   if (state.selectedGanttIds.size > 0) btn.classList.remove('hidden');
   else btn.classList.add('hidden');
+}
+
+async function updateUndoRedoBtns() {
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+  if (!undoBtn || !redoBtn || !state.currentProject) {
+    if (undoBtn) undoBtn.disabled = true;
+    if (redoBtn) redoBtn.disabled = true;
+    return;
+  }
+  try {
+    const status = await api('GET', `/api/undo-status/${state.currentProject.id}`);
+    undoBtn.disabled = !status.canUndo;
+    redoBtn.disabled = !status.canRedo;
+  } catch (_) {
+    // Silently ignore – buttons remain in their current state
+  }
 }
 
 // ==========================================================================
@@ -1730,7 +1753,7 @@ async function showShareModal() {
 // Expose globally for cross-module use
 window.appState = state;
 window.appAPI = api;
-window.appUtils = { escHtml, formatDate, getUserColor, isColorDark, lightenColor, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn };
+window.appUtils = { escHtml, formatDate, getUserColor, isColorDark, lightenColor, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn, updateUndoRedoBtns };
 
 // Start app
 init();

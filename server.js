@@ -725,6 +725,50 @@ app.delete('/api/gantt/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------------------------------------------------------------------------
+// Reorder gantt entries (bulk position update with undo support)
+// ---------------------------------------------------------------------------
+
+app.post('/api/gantt/:projectId/reorder', requireAuth, (req, res) => {
+  if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+  const { positions } = req.body; // [{id, position}]
+  if (!Array.isArray(positions) || !positions.length) return res.status(400).json({ error: 'Missing positions' });
+
+  // Collect old positions for undo
+  const oldPositions = positions.map(p => {
+    const e = stmts.getGantt.get(p.id);
+    return e ? { id: e.id, position: e.position } : null;
+  }).filter(Boolean);
+
+  // Save ONE undo record for the whole reorder; clear stale redo history
+  stmts.clearRedoForProject.run(req.params.projectId, req.session.userId);
+  stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'reorder_gantt',
+    JSON.stringify({ positions: oldPositions }));
+
+  // Apply new positions
+  const updatePos = db.prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=? AND project_id=?');
+  const ts = now();
+  positions.forEach(p => updatePos.run(p.position, ts, p.id, req.params.projectId));
+
+  const teamId = projectTeamId(req.params.projectId);
+  const entries = positions.map(p => stmts.getGantt.get(p.id)).filter(Boolean);
+  entries.forEach(entry => broadcastToTeam(teamId, { type: 'gantt_updated', entry }));
+
+  res.json({ entries });
+});
+
+// ---------------------------------------------------------------------------
+// Undo / redo availability status
+// ---------------------------------------------------------------------------
+
+app.get('/api/undo-status/:projectId', requireAuth, (req, res) => {
+  if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const history   = stmts.getUndoForUser.all(req.params.projectId, req.session.userId);
+  const redoAction = stmts.getRedoForUser.get(req.params.projectId, req.session.userId);
+  res.json({ canUndo: history.length > 0, canRedo: !!redoAction });
+});
+
 // Sync endpoint: returns all changes after a given timestamp
 app.get('/api/sync/:projectId', requireAuth, (req, res) => {
   if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
@@ -876,6 +920,21 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_created', entry });
     result = { undone: 'delete_gantt', entry };
+  } else if (action.action_type === 'reorder_gantt') {
+    // Undo reorder = restore old positions; save current positions to redo
+    const { positions: oldPositions } = data;
+    const currentPositions = oldPositions.map(p => {
+      const e = stmts.getGantt.get(p.id);
+      return e ? { id: e.id, position: e.position } : null;
+    }).filter(Boolean);
+    stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'reorder_gantt',
+      JSON.stringify({ positions: currentPositions }));
+    const updatePos = db.prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=?');
+    oldPositions.forEach(p => updatePos.run(p.position, now(), p.id));
+    const teamId = projectTeamId(req.params.projectId);
+    const entries = oldPositions.map(p => stmts.getGantt.get(p.id)).filter(Boolean);
+    entries.forEach(entry => broadcastToTeam(teamId, { type: 'gantt_updated', entry }));
+    result = { undone: 'reorder_gantt', entries };
   }
 
   res.json(result);
@@ -936,6 +995,21 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
       broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: e.id, project_id: req.params.projectId });
     }
     result = { redone: 'delete_gantt', entry_id: e.id };
+  } else if (redoAction.action_type === 'reorder_gantt') {
+    // Redo reorder = re-apply the stored positions; save current positions to undo
+    const { positions: redoPositions } = data;
+    const currentPositions = redoPositions.map(p => {
+      const e = stmts.getGantt.get(p.id);
+      return e ? { id: e.id, position: e.position } : null;
+    }).filter(Boolean);
+    stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'reorder_gantt',
+      JSON.stringify({ positions: currentPositions }));
+    const updatePos = db.prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=?');
+    redoPositions.forEach(p => updatePos.run(p.position, now(), p.id));
+    const teamId = projectTeamId(req.params.projectId);
+    const entries = redoPositions.map(p => stmts.getGantt.get(p.id)).filter(Boolean);
+    entries.forEach(entry => broadcastToTeam(teamId, { type: 'gantt_updated', entry }));
+    result = { redone: 'reorder_gantt', entries };
   }
 
   res.json(result);

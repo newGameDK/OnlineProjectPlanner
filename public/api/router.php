@@ -917,6 +917,70 @@ if ($seg1 === 'gantt') {
 }
 
 // =========================================================================
+// GANTT REORDER ROUTE
+// =========================================================================
+
+if ($seg1 === 'gantt' && $seg2 && $seg3 === 'reorder' && $method === 'POST') {
+    $userId = require_auth();
+    $projectId = $seg2;
+    if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
+
+    $positions = $body['positions'] ?? null; // [{id, position}]
+    if (!is_array($positions) || empty($positions)) json_out(['error' => 'Missing positions'], 400);
+
+    // Collect old positions for undo
+    $oldPositions = [];
+    foreach ($positions as $p) {
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s->execute([$p['id']]);
+        $e = $s->fetch();
+        if ($e) $oldPositions[] = ['id' => $e['id'], 'position' => $e['position']];
+    }
+
+    // Save ONE undo record; clear stale redo history
+    $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+    $s->execute([$projectId, $userId]);
+    $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+    $s->execute([uuid_v4(), $projectId, $userId, 'reorder_gantt', json_encode(['positions' => $oldPositions])]);
+
+    // Apply new positions
+    $ts = now_ms();
+    foreach ($positions as $p) {
+        $s = $db->prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=? AND project_id=?');
+        $s->execute([$p['position'], $ts, $p['id'], $projectId]);
+    }
+
+    $entries = [];
+    foreach ($positions as $p) {
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s->execute([$p['id']]);
+        $e = $s->fetch();
+        if ($e) $entries[] = $e;
+    }
+    json_out(['entries' => $entries]);
+}
+
+// =========================================================================
+// UNDO STATUS ROUTE
+// =========================================================================
+
+if ($seg1 === 'undo-status' && $seg2 && $method === 'GET') {
+    $userId = require_auth();
+    $projectId = $seg2;
+    if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
+
+    $s = $db->prepare('SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1');
+    $s->execute([$projectId, $userId]);
+    $canUndo = (bool)$s->fetch();
+
+    $s = $db->prepare('SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1');
+    $s->execute([$projectId, $userId]);
+    $canRedo = (bool)$s->fetch();
+
+    json_out(['canUndo' => $canUndo, 'canRedo' => $canRedo]);
+}
+
+// =========================================================================
 // SYNC ROUTE
 // =========================================================================
 
@@ -1143,6 +1207,31 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);
         $result = ['undone' => 'delete_gantt', 'entry' => $s->fetch()];
+    } elseif ($action['action_type'] === 'reorder_gantt') {
+        // Undo reorder = restore old positions; save current positions to redo
+        $oldPositions = $data['positions'];
+        $currentPositions = [];
+        foreach ($oldPositions as $p) {
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $s->execute([$p['id']]);
+            $e = $s->fetch();
+            if ($e) $currentPositions[] = ['id' => $e['id'], 'position' => $e['position']];
+        }
+        $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'reorder_gantt', json_encode(['positions' => $currentPositions])]);
+        $ts = now_ms();
+        foreach ($oldPositions as $p) {
+            $s = $db->prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=?');
+            $s->execute([$p['position'], $ts, $p['id']]);
+        }
+        $entries = [];
+        foreach ($oldPositions as $p) {
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $s->execute([$p['id']]);
+            $e = $s->fetch();
+            if ($e) $entries[] = $e;
+        }
+        $result = ['undone' => 'reorder_gantt', 'entries' => $entries];
     }
 
     json_out($result);
@@ -1213,6 +1302,31 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
             $s->execute([$e['id']]);
         }
         $result = ['redone' => 'delete_gantt', 'entry_id' => $e['id']];
+    } elseif ($redoAction['action_type'] === 'reorder_gantt') {
+        // Redo reorder = re-apply the stored positions; save current positions to undo
+        $redoPositions = $data['positions'];
+        $currentPositions = [];
+        foreach ($redoPositions as $p) {
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $s->execute([$p['id']]);
+            $e = $s->fetch();
+            if ($e) $currentPositions[] = ['id' => $e['id'], 'position' => $e['position']];
+        }
+        $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'reorder_gantt', json_encode(['positions' => $currentPositions])]);
+        $ts = now_ms();
+        foreach ($redoPositions as $p) {
+            $s = $db->prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=?');
+            $s->execute([$p['position'], $ts, $p['id']]);
+        }
+        $entries = [];
+        foreach ($redoPositions as $p) {
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $s->execute([$p['id']]);
+            $e = $s->fetch();
+            if ($e) $entries[] = $e;
+        }
+        $result = ['redone' => 'reorder_gantt', 'entries' => $entries];
     }
 
     json_out($result);
