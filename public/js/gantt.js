@@ -92,7 +92,10 @@
     active: false,
     entryId: null,
     startY: 0,
-    dragEl: null,       // floating ghost element
+    dragEl: null,         // floating ghost element
+    dropMode: null,       // 'before' | 'after' | 'onto' | null
+    dropTargetId: null,   // id of the row we'd insert relative to
+    dropIndicatorEl: null, // horizontal line shown between rows
   };
 
   // ─── DOM refs ─────────────────────────────────────────────────────────────
@@ -481,17 +484,21 @@
       const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
       const depth = entry._depth || 0;
       const color = getEntryColor(entry);
+      const linkedTodo = S().todos.find(t => t.gantt_entry_id === entry.id);
+      const isCompleted = linkedTodo && linkedTodo.status === 'done';
 
       const row = document.createElement('div');
-      row.className = 'gantt-task-row' + (S().selectedGanttIds.has(entry.id) ? ' selected' : '');
+      row.className = 'gantt-task-row'
+        + (S().selectedGanttIds.has(entry.id) ? ' selected' : '')
+        + (isCompleted ? ' gantt-completed' : '');
       row.dataset.id = entry.id;
 
-      // Drag handle for reparenting
+      // Drag handle for reparenting / reordering
       const grip = document.createElement('span');
       grip.className = 'gantt-task-grip';
       grip.textContent = '\u2261';  // ≡
-      grip.title = 'Drag to move under another task';
-      grip.setAttribute('aria-label', 'Drag to move under another task');
+      grip.title = 'Drag to reorder or move under another task';
+      grip.setAttribute('aria-label', 'Drag to reorder or move under another task');
       grip.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -527,6 +534,15 @@
       dot.className = 'gantt-task-color-dot';
       dot.style.background = color;
       row.appendChild(dot);
+
+      // Completed checkmark (shown when linked todo is 'done')
+      if (isCompleted) {
+        const check = document.createElement('span');
+        check.className = 'gantt-completed-check';
+        check.textContent = '\u2713'; // ✓
+        check.title = 'Task completed';
+        row.appendChild(check);
+      }
 
       // Name
       const name = document.createElement('span');
@@ -603,11 +619,14 @@
     return b;
   }
 
-  // ─── reparent drag-and-drop ────────────────────────────────────────────────
+  // ─── reparent / reorder drag-and-drop ────────────────────────────────────
   function startReparentDrag(e, entry, rowEl) {
     reparentDrag.active  = true;
     reparentDrag.entryId = entry.id;
     reparentDrag.startY  = e.clientY;
+    reparentDrag.dropMode = null;
+    reparentDrag.dropTargetId = null;
+    reparentDrag.dropIndicatorEl = null;
 
     // Create floating ghost
     const ghost = rowEl.cloneNode(true);
@@ -625,25 +644,80 @@
     document.addEventListener('mouseup', onReparentUp);
   }
 
+  function _clearReparentFeedback() {
+    const rows = ganttTaskList.querySelectorAll('.gantt-task-row');
+    rows.forEach(r => r.classList.remove('reparent-target', 'reparent-root-target'));
+    ganttTaskList.classList.remove('reparent-root-target');
+    if (reparentDrag.dropIndicatorEl) {
+      reparentDrag.dropIndicatorEl.remove();
+      reparentDrag.dropIndicatorEl = null;
+    }
+    reparentDrag.dropMode = null;
+    reparentDrag.dropTargetId = null;
+  }
+
   function onReparentMove(e) {
     if (!reparentDrag.active) return;
 
     // Move ghost
     reparentDrag.dragEl.style.top = (e.clientY - ROW_H / 2) + 'px';
 
-    // Highlight drop target
-    const rows = ganttTaskList.querySelectorAll('.gantt-task-row');
-    rows.forEach(r => r.classList.remove('reparent-target', 'reparent-root-target'));
-    ganttTaskList.classList.remove('reparent-root-target');
+    _clearReparentFeedback();
 
-    const target = document.elementFromPoint(e.clientX, e.clientY);
-    if (!target) return;
-    const targetRow = target.closest('.gantt-task-row');
-    if (targetRow && targetRow.dataset.id !== reparentDrag.entryId) {
-      targetRow.classList.add('reparent-target');
-    } else if (ganttTaskList.contains(target) && !targetRow) {
-      // Hovering over task list but not on a row — show root drop indicator
-      ganttTaskList.classList.add('reparent-root-target');
+    const allRows = [...ganttTaskList.querySelectorAll('.gantt-task-row')];
+    if (!allRows.length) return;
+
+    const listRect = ganttTaskList.getBoundingClientRect();
+    const scrollTop = ganttTaskList.scrollTop;
+
+    // Determine which row the cursor is near and whether we're in the gap
+    // between rows (reorder) or in the middle of a row (reparent).
+    let matched = false;
+    for (let i = 0; i < allRows.length; i++) {
+      const row = allRows[i];
+      if (row.dataset.id === reparentDrag.entryId) continue;
+      const rect = row.getBoundingClientRect();
+      const threshold = rect.height * 0.3; // top/bottom 30% = reorder zone
+
+      if (e.clientY < rect.top + threshold) {
+        // Drop BEFORE this row (reorder)
+        reparentDrag.dropMode     = 'before';
+        reparentDrag.dropTargetId = row.dataset.id;
+        const indY = rect.top - listRect.top + scrollTop;
+        const ind = document.createElement('div');
+        ind.className = 'reorder-drop-indicator';
+        ind.style.top = indY + 'px';
+        ganttTaskList.appendChild(ind);
+        reparentDrag.dropIndicatorEl = ind;
+        matched = true;
+        break;
+      } else if (e.clientY <= rect.bottom - threshold) {
+        // Drop ONTO this row (reparent to it)
+        reparentDrag.dropMode     = 'onto';
+        reparentDrag.dropTargetId = row.dataset.id;
+        row.classList.add('reparent-target');
+        matched = true;
+        break;
+      }
+      // else: cursor is in the bottom 30% of this row → check next row's top
+    }
+
+    if (!matched) {
+      // Cursor is below all rows → insert at end (reorder after last row)
+      const lastRow = allRows[allRows.length - 1];
+      if (lastRow && lastRow.dataset.id !== reparentDrag.entryId) {
+        reparentDrag.dropMode     = 'after';
+        reparentDrag.dropTargetId = lastRow.dataset.id;
+        const rect = lastRow.getBoundingClientRect();
+        const indY = rect.bottom - listRect.top + scrollTop;
+        const ind = document.createElement('div');
+        ind.className = 'reorder-drop-indicator';
+        ind.style.top = indY + 'px';
+        ganttTaskList.appendChild(ind);
+        reparentDrag.dropIndicatorEl = ind;
+      } else if (ganttTaskList.contains(document.elementFromPoint(e.clientX, e.clientY))) {
+        ganttTaskList.classList.add('reparent-root-target');
+      }
     }
   }
 
@@ -661,41 +735,36 @@
       reparentDrag.dragEl = null;
     }
 
-    const rows = ganttTaskList.querySelectorAll('.gantt-task-row');
-    rows.forEach(r => r.classList.remove('reparent-target', 'reparent-root-target'));
-    ganttTaskList.classList.remove('reparent-root-target');
+    const dropMode     = reparentDrag.dropMode;
+    const dropTargetId = reparentDrag.dropTargetId;
+    const entryId      = reparentDrag.entryId;
 
-    const entryId = reparentDrag.entryId;
+    _clearReparentFeedback();
+
     reparentDrag.active  = false;
     reparentDrag.entryId = null;
 
-    // Determine drop target
-    const target = document.elementFromPoint(e.clientX, e.clientY);
-    if (!target) return;
-    const targetRow = target.closest('.gantt-task-row');
+    if (!dropMode || !dropTargetId) return; // dropped outside
 
-    let newParentId;
-    if (targetRow && targetRow.dataset.id !== entryId) {
-      newParentId = targetRow.dataset.id;
-    } else if (ganttTaskList.contains(target) && !targetRow) {
-      // Dropped in blank area of task list — make root-level (under currentParentId)
-      newParentId = currentParentId || null;
-    } else {
-      return; // dropped on self or outside
-    }
+    if (dropMode === 'before' || dropMode === 'after') {
+      // ── Reorder: change position within same parent ──────────────────────
+      await reorderEntries(entryId, dropTargetId, dropMode === 'before');
+    } else if (dropMode === 'onto') {
+      // ── Reparent: change parent_id ────────────────────────────────────────
+      if (dropTargetId === entryId) return;
 
-    // Check we're actually changing the parent
-    const entry = S().ganttEntries.find(x => x.id === entryId);
-    if (!entry) return;
-    if (entry.parent_id === newParentId) return;
+      const entry = S().ganttEntries.find(x => x.id === entryId);
+      if (!entry) return;
 
-    // Prevent dropping onto own descendant (circular) – build child map once
-    if (newParentId) {
+      const newParentId = dropTargetId;
+      if (entry.parent_id === newParentId) return;
+
+      // Prevent circular reparenting
       const childrenOf = {};
-      S().ganttEntries.forEach(e => {
-        const pid = e.parent_id || '__root__';
+      S().ganttEntries.forEach(en => {
+        const pid = en.parent_id || '__root__';
         if (!childrenOf[pid]) childrenOf[pid] = [];
-        childrenOf[pid].push(e);
+        childrenOf[pid].push(en);
       });
       const isDescendant = (targetId, ancestorId) => {
         const kids = childrenOf[ancestorId] || [];
@@ -706,21 +775,69 @@
         return false;
       };
       if (newParentId === entryId || isDescendant(newParentId, entryId)) return;
+
+      try {
+        const updated = await API('PUT', '/api/gantt/' + entryId, { parent_id: newParentId });
+        const idx = S().ganttEntries.findIndex(x => x.id === entryId);
+        if (idx !== -1) S().ganttEntries[idx] = updated.entry;
+        if (newParentId && newParentId !== currentParentId) {
+          expandedIds.add(newParentId);
+        }
+        U().updateUndoRedoBtns?.();
+      } catch (err) {
+        console.error('Reparent failed:', err);
+      }
+      render();
     }
+  }
+
+  /**
+   * Reorder entries: move `movedId` to be immediately before or after `targetId`.
+   * Only entries sharing the same parent as `movedId` are re-positioned.
+   */
+  async function reorderEntries(movedId, targetId, insertBefore) {
+    const all = S().ganttEntries;
+    const movedEntry = all.find(e => e.id === movedId);
+    if (!movedEntry) return;
+
+    const parentId = movedEntry.parent_id;
+    // Siblings: same parent, sorted by current position then created_at
+    let siblings = all
+      .filter(e => e.parent_id === parentId)
+      .sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1));
+
+    // Check target shares the same parent (drop across different levels = no-op)
+    const targetEntry = all.find(e => e.id === targetId);
+    if (!targetEntry || targetEntry.parent_id !== parentId) return;
+
+    // Remove moved entry from its current position
+    siblings = siblings.filter(e => e.id !== movedId);
+
+    // Insert moved entry at the correct position
+    const targetIdx = siblings.findIndex(e => e.id === targetId);
+    if (targetIdx === -1) return;
+    const insertIdx = insertBefore ? targetIdx : targetIdx + 1;
+    siblings.splice(insertIdx, 0, movedEntry);
+
+    // Assign clean sequential positions
+    const positions = siblings.map((e, i) => ({ id: e.id, position: i }));
+
+    // Check if the order actually changed
+    const anyChanged = positions.some(p => {
+      const entry = all.find(e => e.id === p.id);
+      return entry && entry.position !== p.position;
+    });
+    if (!anyChanged) return;
 
     try {
-      const updated = await API('PUT', '/api/gantt/' + entryId, {
-        parent_id: newParentId,
+      const result = await API('POST', '/api/gantt/' + S().currentProject.id + '/reorder', { positions });
+      result.entries.forEach(updated => {
+        const idx = S().ganttEntries.findIndex(e => e.id === updated.id);
+        if (idx !== -1) S().ganttEntries[idx].position = updated.position;
       });
-      const idx = S().ganttEntries.findIndex(x => x.id === entryId);
-      if (idx !== -1) S().ganttEntries[idx] = updated.entry;
-
-      // Auto-expand the new parent so the moved entry is visible
-      if (newParentId && newParentId !== currentParentId) {
-        expandedIds.add(newParentId);
-      }
+      U().updateUndoRedoBtns?.();
     } catch (err) {
-      console.error('Reparent failed:', err);
+      console.error('Reorder failed:', err);
     }
     render();
   }
@@ -806,6 +923,34 @@
       rowBg.dataset.id    = entry.id;
       rowBg.addEventListener('dblclick', () => drillDown(entry));
 
+      // Allow dragging the row background to reorder (same as grip but from timeline side)
+      rowBg.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (conn.active || drag.active) return;
+        if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
+        // Only start reorder drag if mouse moves vertically enough (avoid interfering with clicks)
+        const startY = e.clientY;
+        const startX = e.clientX;
+        let started = false;
+        const onMove = (mv) => {
+          if (!started && (Math.abs(mv.clientY - startY) > 6 || Math.abs(mv.clientX - startX) > 6)) {
+            if (Math.abs(mv.clientY - startY) > Math.abs(mv.clientX - startX)) {
+              started = true;
+              document.removeEventListener('mousemove', onMove);
+              document.removeEventListener('mouseup', onUp);
+              const taskRow = ganttTaskList.querySelector(`.gantt-task-row[data-id="${entry.id}"]`);
+              if (taskRow) startReparentDrag(mv, entry, taskRow);
+            }
+          }
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+
       const bar = buildBar(entry);
       if (bar) rowBg.appendChild(bar);
       ganttRows.appendChild(rowBg);
@@ -834,6 +979,8 @@
     const deps        = S().dependencies || [];
     const hasDepsIn   = deps.some(d => d.target_id === entry.id);
     const hasDepsOut  = deps.some(d => d.source_id === entry.id);
+    const linkedTodo  = S().todos.find(t => t.gantt_entry_id === entry.id);
+    const isCompleted = linkedTodo && linkedTodo.status === 'done';
 
     const container = document.createElement('div');
     container.className     = 'gantt-bar-container';
@@ -841,7 +988,7 @@
     container.dataset.id    = entry.id;
 
     const bar = document.createElement('div');
-    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '');
+    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '');
     bar.style.background = color;
     bar.style.width      = '100%';
     if (U().isColorDark(color)) {
@@ -856,6 +1003,15 @@
     label.className   = 'gantt-bar-label';
     label.textContent = entry.title;
     bar.appendChild(label);
+
+    // Completed checkmark badge on the bar
+    if (isCompleted) {
+      const barCheck = document.createElement('span');
+      barCheck.className   = 'gantt-bar-completed-check';
+      barCheck.textContent = '\u2713'; // ✓
+      barCheck.title       = 'Task completed';
+      bar.appendChild(barCheck);
+    }
 
     // Hours badge on bar
     const totalH = calcTotalHours(entry.id);
@@ -1130,6 +1286,7 @@
           S().ganttEntries[idx] = updated.entry;
           await expandParentDates(updated.entry);
         }
+        U().updateUndoRedoBtns?.();
       } catch (err) {
         console.error('Save drag failed:', err);
         updateBarVisual(containerEl, origStart, origEnd);
@@ -1645,6 +1802,7 @@
         }
         render();
         U().closeModal();
+        U().updateUndoRedoBtns?.();
 
         // Ask if the new entry should also be added to the todo list
         if (confirm('Add "' + data.entry.title + '" to the Todo list as well?')) {
@@ -1670,6 +1828,7 @@
         }
         render();
         U().closeModal();
+        U().updateUndoRedoBtns?.();
       } catch (err) {
         alert('Save failed: ' + err.message);
       }
@@ -1907,6 +2066,7 @@
     );
     S().selectedGanttIds.delete(entry.id);
     U().updateDeleteBtn();
+    U().updateUndoRedoBtns?.();
     render();
   }
 
