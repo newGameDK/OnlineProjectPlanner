@@ -1020,14 +1020,14 @@
 
     // ── timeline date-range selection ──────────────────────────────────────
     if (timelineSel.active && timelineSel.overlayEl && ganttTimeline) {
-      const rect = ganttTimeline.getBoundingClientRect();
-      const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
-      const day  = Math.floor(x / pxPerDay);
+      const rect    = ganttTimeline.getBoundingClientRect();
+      const x       = e.clientX - rect.left + ganttTimeline.scrollLeft;
+      const day     = Math.floor(x / pxPerDay);
       timelineSel.endDay = day;
-      const s = Math.min(timelineSel.startDay, day);
-      const en = Math.max(timelineSel.startDay, day);
-      timelineSel.overlayEl.style.left  = (s * pxPerDay) + 'px';
-      timelineSel.overlayEl.style.width = ((en - s + 1) * pxPerDay) + 'px';
+      const startDay = Math.min(timelineSel.startDay, day);
+      const endDay   = Math.max(timelineSel.startDay, day);
+      timelineSel.overlayEl.style.left  = (startDay * pxPerDay) + 'px';
+      timelineSel.overlayEl.style.width = ((endDay - startDay + 1) * pxPerDay) + 'px';
     }
 
     // ── rubber-band connecting line ────────────────────────────────────────
@@ -1837,7 +1837,7 @@
           await API('DELETE', '/api/gantt/' + e.id);
           S().ganttEntries = S().ganttEntries.filter(x => x.id !== e.id);
           S().dependencies = S().dependencies.filter(d => d.source_id !== e.id && d.target_id !== e.id);
-        } catch (_) { /* ignore */ }
+        } catch (err) { console.warn('Cut-delete failed for entry "' + e.title + '":', err); }
       }
       clipboardData = null; // cut can only be pasted once
     }
