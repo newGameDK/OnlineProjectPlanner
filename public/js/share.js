@@ -495,7 +495,7 @@ function renderHoursPanel(entries) {
 
   const header = document.getElementById('ganttHoursHeader');
   if (header) {
-    const t = entries.reduce((sum, e) => sum + calcTotalHours(e.id), 0);
+    const t = entries.reduce((sum, e) => sum + calcTreeTotal(e.id), 0);
     header.textContent = t > 0 ? fmtH(t) : 'Total h';
   }
 }
@@ -503,9 +503,29 @@ function renderHoursPanel(entries) {
 function calcTotalHours(entryId) {
   const entry = S.entries.find(e => e.id === entryId);
   if (!entry) return 0;
-  let total = entry.hours_estimate || 0;
-  S.entries.filter(e => e.parent_id === entryId).forEach(c => { total += calcTotalHours(c.id); });
-  return total;
+  const children = S.entries.filter(e => e.parent_id === entryId);
+  if (children.length === 0) return entry.hours_estimate || 0;
+  let childSum = 0;
+  children.forEach(c => { childSum += calcTotalHours(c.id); });
+  const own = entry.hours_estimate || 0;
+  if (own > 0) return Math.max(0, own - childSum);
+  return childSum;
+}
+
+/**
+ * Total hours for an entire tree (parent budget or child sum, whichever is
+ * larger). Used for the header total so the number reflects the full project
+ * scope instead of only the remaining budget.  When a parent has no budget
+ * (hours_estimate is 0 or null) the child sum is returned.
+ */
+function calcTreeTotal(entryId) {
+  const entry = S.entries.find(e => e.id === entryId);
+  if (!entry) return 0;
+  const children = S.entries.filter(e => e.parent_id === entryId);
+  if (children.length === 0) return entry.hours_estimate || 0;
+  let childSum = 0;
+  children.forEach(c => { childSum += calcTreeTotal(c.id); });
+  return Math.max(entry.hours_estimate || 0, childSum);
 }
 
 function fmtH(h) { return Number.isInteger(h) ? h + 'h' : h.toFixed(1) + 'h'; }
@@ -525,13 +545,24 @@ function renderIntensityBar(timelineW, totalDays) {
   const hoursPerPeriod = capacity * (periodDays / 30);
 
   const hoursPerDay = new Float64Array(totalDays + 1);
+  const parentIdsSet = new Set();
+  S.entries.forEach(e => { if (e.parent_id) parentIdsSet.add(e.parent_id); });
+
   S.entries.forEach(entry => {
     if (!entry.hours_estimate) return;
+    const isParent = parentIdsSet.has(entry.id);
+    let h;
+    if (isParent) {
+      h = calcTotalHours(entry.id);
+      if (h <= 0) return;
+    } else {
+      h = entry.hours_estimate;
+    }
     const s  = parseDate(entry.start_date);
     const en = parseDate(entry.end_date);
     if (!s || !en) return;
     const span   = Math.max(1, daysBetween(s, en));
-    const dailyH = entry.hours_estimate / span;
+    const dailyH = h / span;
     for (let d = 0; d < totalDays; d++) {
       const day = addDays(chartStart, d);
       if (day >= s && day < en) hoursPerDay[d] += dailyH;
