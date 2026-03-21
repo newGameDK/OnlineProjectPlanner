@@ -297,6 +297,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-tasks {
   width: var(--task-col-w); flex-shrink: 0; overflow-y: auto; overflow-x: hidden;
   border-right: 1px solid var(--border); background: var(--surface);
+  position: relative; /* needed for reorder-drop-indicator absolute positioning */
 }
 /* Column that holds scrollable rows */
 .gantt-timeline-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
@@ -376,10 +377,25 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   background: rgba(0,0,0,0.03);
 }
 
+/* Drop-zone indicator line shown between rows during drag (task list + timeline) */
+.reorder-drop-indicator {
+  position: absolute; left: 0; right: 0; height: 3px;
+  background: var(--primary); border-radius: 2px;
+  z-index: 100; pointer-events: none;
+  box-shadow: 0 0 6px var(--primary);
+  transform: translateY(-50%);
+}
+.reorder-drop-indicator::before {
+  content: ''; position: absolute;
+  left: 0; top: 50%; transform: translateY(-50%);
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--primary);
+}
+
 /* Gantt timeline rows */
 .gantt-row-bg {
   height: var(--row-h); border-bottom: 1px solid var(--border);
-  position: relative;
+  position: relative; cursor: grab;
 }
 .gantt-row-bg:nth-child(even) { background: var(--surface2); }
 
