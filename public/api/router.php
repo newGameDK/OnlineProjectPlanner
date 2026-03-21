@@ -1108,40 +1108,33 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
     $s = $db->prepare('DELETE FROM undo_history WHERE id=?');
     $s->execute([$action['id']]);
 
-    // Save current state for redo
-    $s_current = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
-    $s_current->execute([$data['entry']['id']]);
-    $currentEntry = $s_current->fetch(PDO::FETCH_ASSOC);
-
     // Clear previous redo for this user/project
     $s_del = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
     $s_del->execute([$projectId, $userId]);
 
+    $result = [];
     if ($action['action_type'] === 'create_gantt') {
-        // Save to redo (redo = re-create)
+        // Save current entry to redo before deleting it
+        $s_current = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s_current->execute([$data['entry']['id']]);
+        $currentEntry = $s_current->fetch(PDO::FETCH_ASSOC);
         if ($currentEntry) {
             $s_redo = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s_redo->execute([uuid_v4(), $projectId, $userId, 'create_gantt', json_encode(['entry' => $currentEntry])]);
         }
-    } elseif ($action['action_type'] === 'update_gantt') {
-        // Save current state to redo
-        if ($currentEntry) {
-            $s_redo = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-            $s_redo->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
-        }
-    } elseif ($action['action_type'] === 'delete_gantt') {
-        // Save to redo (redo = delete again)
-        $s_redo = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-        $s_redo->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $data['entry']])]);
-    }
-
-    $result = [];
-    if ($action['action_type'] === 'create_gantt') {
         $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
         $s->execute([$data['entry']['id']]);
         $result = ['undone' => 'create_gantt', 'entry_id' => $data['entry']['id']];
     } elseif ($action['action_type'] === 'update_gantt') {
+        // Save current state to redo before restoring old state
         $e = $data['entry'];
+        $s_current = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+        $s_current->execute([$e['id']]);
+        $currentEntry = $s_current->fetch(PDO::FETCH_ASSOC);
+        if ($currentEntry) {
+            $s_redo = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s_redo->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
+        }
         $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,progress=?,updated_at=? WHERE id=?');
         $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['progress'] ?? 0, now_ms(), $e['id']]);
 
@@ -1149,7 +1142,10 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $s->execute([$e['id']]);
         $result = ['undone' => 'update_gantt', 'entry' => $s->fetch()];
     } elseif ($action['action_type'] === 'delete_gantt') {
+        // Save to redo (redo = delete again); entry doesn't exist now so use snapshot
         $e = $data['entry'];
+        $s_redo = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s_redo->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $e])]);
         try {
             $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,progress) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
             $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['progress'] ?? 0]);
