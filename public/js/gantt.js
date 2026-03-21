@@ -81,6 +81,12 @@
     dragEl: null,       // floating ghost element
   };
 
+  // ── clipboard state ───────────────────────────────────────────────────────
+  let clipboard = {
+    entries: null,  // array of entry snapshots (parent + descendants)
+    isCut: false,   // true if cut (remove original on paste)
+  };
+
   // ─── DOM refs ─────────────────────────────────────────────────────────────
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
@@ -235,6 +241,29 @@
           render();
         }
       }
+      // Copy / Cut / Paste shortcuts
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+        if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+        if (document.querySelector('.modal.show')) return;
+        if (e.key === 'c') {
+          const sel = Array.from(S().selectedGanttIds);
+          if (sel.length === 1) {
+            const entry = S().ganttEntries.find(en => en.id === sel[0]);
+            if (entry) { e.preventDefault(); copyEntry(entry); }
+          }
+        } else if (e.key === 'x') {
+          const sel = Array.from(S().selectedGanttIds);
+          if (sel.length === 1) {
+            const entry = S().ganttEntries.find(en => en.id === sel[0]);
+            if (entry) { e.preventDefault(); cutEntry(entry); }
+          }
+        } else if (e.key === 'v') {
+          if (clipboard.entries && clipboard.entries.length > 0) {
+            e.preventDefault();
+            pasteEntries(currentParentId);
+          }
+        }
+      }
     });
 
     const cancelBtn = document.getElementById('cancelConnecting');
@@ -347,10 +376,15 @@
     const dateStr    = toDateStr(clickDate);
     const endDateStr = toDateStr(addDays(clickDate, 7));
 
+    const hasPaste = clipboard.entries && clipboard.entries.length > 0;
+
     U().showContextMenu(e.pageX, e.pageY, [
       { icon: '+', label: 'Add task here (' + dateStr + ')',
         action: () => showAddEntryModal(undefined, dateStr, endDateStr) },
-    ]);
+      hasPaste
+        ? { icon: '\uD83D\uDCCB', label: 'Paste', action: () => pasteEntries(currentParentId) }
+        : null,
+    ].filter(Boolean));
   }
 
   // =========================================================================
@@ -1521,6 +1555,28 @@
     });
   }
 
+  /**
+   * Build an informational hint below the hours estimate input showing
+   * the remaining hours after sub-task hours are subtracted.
+   */
+  function buildHoursHint(entry) {
+    if (!entry.id) return ''; // new entry, no children yet
+    const children = S().ganttEntries.filter(e => e.parent_id === entry.id);
+    if (children.length === 0) return '';
+    let childSum = 0;
+    children.forEach(child => { childSum += calcTreeTotal(child.id); });
+    const own = +(entry.hours_estimate) || 0;
+    if (own > 0) {
+      const remaining = Math.max(0, own - childSum);
+      return '<small style="color:var(--text-muted);font-size:11px;margin-top:3px;display:block">' +
+        'Sub-tasks: ' + fmtH(childSum) + ' · Remaining: ' + fmtH(remaining) +
+        '</small>';
+    }
+    return '<small style="color:var(--text-muted);font-size:11px;margin-top:3px;display:block">' +
+      'Sub-tasks total: ' + fmtH(childSum) +
+      '</small>';
+  }
+
   function buildEntryFormHtml(entry) {
     const vars = U().generateColorVariations((S().user && S().user.base_color) || '#2196F3');
     const swatches = vars.map((c, i) =>
@@ -1540,6 +1596,7 @@
       '</div>' +
       '<div class="form-group"><label>Hours Estimate</label>' +
         '<input type="number" id="feHours" value="' + (entry.hours_estimate || '') + '" min="0" step="0.5" placeholder="0">' +
+        buildHoursHint(entry) +
       '</div>' +
       '<div class="form-group"><label>Phase / Colour Variation</label>' +
         '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
@@ -1592,10 +1649,95 @@
   }
 
   // =========================================================================
+  // Clipboard – Copy / Cut / Paste
+  // =========================================================================
+
+  /**
+   * Collect an entry and all its descendants (deep snapshot).
+   */
+  function collectTree(entryId) {
+    const entry = S().ganttEntries.find(e => e.id === entryId);
+    if (!entry) return [];
+    const result = [{ ...entry }];
+    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
+    children.forEach(child => {
+      result.push(...collectTree(child.id));
+    });
+    return result;
+  }
+
+  function copyEntry(entry) {
+    clipboard.entries = collectTree(entry.id);
+    clipboard.isCut = false;
+  }
+
+  function cutEntry(entry) {
+    clipboard.entries = collectTree(entry.id);
+    clipboard.isCut = true;
+  }
+
+  /**
+   * Paste clipboard entries under a given parent_id.
+   * Creates deep copies via the API.  For cut, the originals are deleted.
+   */
+  async function pasteEntries(parentId) {
+    if (!clipboard.entries || clipboard.entries.length === 0) return;
+    const projectId = S().currentProject && S().currentProject.id;
+    if (!projectId) return;
+
+    const origEntries = clipboard.entries;
+    const root = origEntries[0];
+
+    // If cutting, delete the originals first
+    if (clipboard.isCut) {
+      try {
+        // Delete root; server cascades children
+        await API('DELETE', '/api/gantt/' + root.id);
+        S().ganttEntries = S().ganttEntries.filter(e =>
+          !origEntries.some(o => o.id === e.id)
+        );
+        S().dependencies = S().dependencies.filter(d =>
+          !origEntries.some(o => o.id === d.source_id || o.id === d.target_id)
+        );
+      } catch (err) { console.warn('Cut delete failed:', err); }
+      clipboard.entries = null;
+      clipboard.isCut = false;
+    }
+
+    // Map old IDs to new IDs so we can reparent children correctly
+    const idMap = {};
+
+    // Create entries in tree order (parent before children)
+    for (const entry of origEntries) {
+      const newParentId = entry.id === root.id
+        ? parentId               // root goes under the paste target
+        : idMap[entry.parent_id]; // children use mapped parent
+      try {
+        const data = await API('POST', '/api/gantt', {
+          project_id:      projectId,
+          parent_id:       newParentId !== undefined ? newParentId : null,
+          title:           entry.title,
+          start_date:      entry.start_date,
+          end_date:        entry.end_date,
+          hours_estimate:  entry.hours_estimate || 0,
+          color_variation: entry.color_variation || 0,
+          notes:           entry.notes || '',
+          folder_url:      entry.folder_url || '',
+        });
+        idMap[entry.id] = data.entry.id;
+        S().ganttEntries.push(data.entry);
+      } catch (err) { console.warn('Paste failed for entry:', entry.title, err); }
+    }
+
+    render();
+  }
+
+  // =========================================================================
   // Context Menu
   // =========================================================================
   function showEntryContextMenu(x, y, entry) {
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
+    const hasPaste = clipboard.entries && clipboard.entries.length > 0;
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
       { icon: '+',      label: 'Add sub-task',          action: () => showAddEntryModal(entry.id) },
@@ -1609,6 +1751,12 @@
           : showEditEntryModal(entry) },
       { icon: '\uD83D\uDD17', label: 'Connect dependency', action: () => startConnecting(entry) },
       { icon: '\u2611', label: 'Add to Todo',           action: () => addToTodo(entry) },
+      { separator: true },
+      { icon: '\uD83D\uDCCB', label: 'Copy',            action: () => copyEntry(entry) },
+      { icon: '\u2702', label: 'Cut',                    action: () => cutEntry(entry) },
+      hasPaste
+        ? { icon: '\uD83D\uDCCB', label: 'Paste as sub-task', action: () => pasteEntries(entry.id) }
+        : null,
       { separator: true },
       { icon: '\uD83D\uDDD1', label: 'Delete',          action: () => deleteEntry(entry), danger: true },
     ].filter(Boolean));

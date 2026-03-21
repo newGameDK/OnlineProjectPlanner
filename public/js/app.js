@@ -930,12 +930,6 @@ function setupEventListeners() {
     });
   });
 
-  // Add gantt entry
-  document.getElementById('addGanttBtn').addEventListener('click', () => {
-    if (!state.currentProject) return;
-    window.ganttModule?.showAddEntryModal();
-  });
-
   // Undo
   document.getElementById('undoBtn').addEventListener('click', performUndo);
   document.addEventListener('keydown', (e) => {
