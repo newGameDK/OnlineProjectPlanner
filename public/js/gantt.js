@@ -144,10 +144,10 @@
     ganttHoursPanel     = document.getElementById('ganttHoursPanel');
 
     document.getElementById('zoomInBtn').addEventListener('click', () => {
-      pxPerDay = Math.min(pxPerDay * 1.04, 200); render();
+      pxPerDay = Math.min(pxPerDay * 1.04, 200); autoScale(); render();
     });
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
-      pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit()); render();
+      pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit()); autoScale(); render();
     });
     document.getElementById('chartStartDate').addEventListener('change', (e) => {
       if (e.target.value) chartStart = new Date(e.target.value + 'T00:00:00');
@@ -211,6 +211,7 @@
           pxPerDay = Math.max(pxPerDay / 1.04, minPxPerDayForFit());
         }
         if (pxPerDay !== oldPx) {
+          autoScale();
           // Keep the same day under the cursor after the scale change
           ganttTimeline.scrollLeft = dayAtCursor * pxPerDay - cursorX;
           render();
@@ -357,8 +358,6 @@
   // =========================================================================
   function render() {
     if (!S().currentProject) return;
-
-    autoScale();
 
     const entries   = visibleEntries();
     autoSetChartRange(entries);

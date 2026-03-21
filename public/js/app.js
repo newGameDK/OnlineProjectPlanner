@@ -1051,6 +1051,14 @@ function setupEventListeners() {
   }
 
   // --- Toolbar dropdown toggles ---
+  function syncAriaExpanded() {
+    document.querySelectorAll('.toolbar-dropdown').forEach(d => {
+      const btn = d.children[0];
+      if (btn && btn.hasAttribute('aria-expanded')) {
+        btn.setAttribute('aria-expanded', d.classList.contains('open'));
+      }
+    });
+  }
   document.querySelectorAll('.toolbar-dropdown').forEach(dropdown => {
     const triggerBtn = dropdown.children[0]; // first direct child is the trigger button
     if (triggerBtn && triggerBtn.tagName === 'BUTTON') {
@@ -1062,6 +1070,7 @@ function setupEventListeners() {
         document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
         // Toggle clicked one
         if (!wasOpen) dropdown.classList.add('open');
+        syncAriaExpanded();
       });
     }
     // Keep dropdown open when interacting with inputs inside
@@ -1075,6 +1084,8 @@ function setupEventListeners() {
   document.addEventListener('mousedown', (e) => {
     if (!e.target.closest('.toolbar-dropdown')) {
       document.querySelectorAll('.toolbar-dropdown.open').forEach(d => d.classList.remove('open'));
+      syncAriaExpanded();
+    }
     }
   });
 
