@@ -2256,6 +2256,13 @@
       childrenOf[pid].push(e);
     });
 
+    // Sort each sibling group by position then created_at so that drag-reorder
+    // changes (which update .position values without re-sorting the master array)
+    // are immediately reflected in the rendered order.
+    Object.values(childrenOf).forEach(group =>
+      group.sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1))
+    );
+
     const roots  = childrenOf[currentParentId] || [];
     const result = [];
 
