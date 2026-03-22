@@ -1146,21 +1146,6 @@ async function updateUndoRedoBtns() {
 // Modal helpers
 // ==========================================================================
 
-function openModal(title, bodyHtml, onOk, okLabel = 'Save') {
-  document.getElementById('modalTitle').textContent = title;
-  document.getElementById('modalBody').innerHTML = bodyHtml;
-  document.getElementById('modalOk').textContent = okLabel;
-  document.getElementById('modalOk').style.display = '';
-  document.getElementById('modalOverlay').classList.remove('hidden');
-  document.getElementById('modalOk').onclick = onOk;
-  // Focus first input
-  setTimeout(() => { document.querySelector('#modalBody input')?.focus(); }, 50);
-}
-
-function closeModal() {
-  document.getElementById('modalOverlay').classList.add('hidden');
-}
-
 document.getElementById('modalClose').addEventListener('click', closeModal);
 document.getElementById('modalCancel').addEventListener('click', closeModal);
 document.getElementById('modalOverlay').addEventListener('click', (e) => {
@@ -1168,53 +1153,8 @@ document.getElementById('modalOverlay').addEventListener('click', (e) => {
 });
 
 // ==========================================================================
-// Context menu helpers
-// ==========================================================================
-
-function showContextMenu(x, y, items) {
-  const menu = document.getElementById('contextMenu');
-  const list = document.getElementById('contextMenuList');
-  list.innerHTML = '';
-  items.forEach(item => {
-    if (item.separator) {
-      const li = document.createElement('li');
-      li.className = 'separator';
-      list.appendChild(li);
-      return;
-    }
-    const li = document.createElement('li');
-    if (item.danger) li.className = 'danger';
-    li.innerHTML = `${item.icon || ''} ${escHtml(item.label)}`;
-    li.addEventListener('click', (e) => {
-      e.stopPropagation();
-      menu.classList.add('hidden');
-      item.action();
-    });
-    list.appendChild(li);
-  });
-  // Position off-screen first so the browser can compute dimensions
-  menu.style.left = '-9999px';
-  menu.style.top  = '-9999px';
-  menu.classList.remove('hidden');
-  const menuW = menu.offsetWidth  || 180;
-  const menuH = menu.offsetHeight || 10;
-  menu.style.left = Math.min(x, window.innerWidth  - menuW - 10) + 'px';
-  menu.style.top  = Math.min(y, window.innerHeight - menuH - 10) + 'px';
-}
-
-// ==========================================================================
 // Utilities
 // ==========================================================================
-
-function escHtml(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
 
 function getUserColor(userId, variation) {
   const member = Object.values(state.members).flat().find(m => m.id === userId);
