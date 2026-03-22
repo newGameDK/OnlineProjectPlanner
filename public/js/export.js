@@ -7,6 +7,8 @@
 // Loaded after app.js.
 // ==========================================================================
 
+(function () {
+
 const S = () => window.appState;
 const U = () => window.appUtils;
 
@@ -370,3 +372,9 @@ function exportPDF() {
   window.addEventListener('afterprint', afterPrint);
   window.print();
 }
+
+// Expose public API so app.js can call these functions directly.
+window.exportCSV = exportCSV;
+window.exportPDF = exportPDF;
+
+})();
