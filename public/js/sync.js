@@ -8,6 +8,8 @@
 // inside init(), by which time all scripts have executed).
 // ==========================================================================
 
+(function () {
+
 const S   = () => window.appState;
 const API = (m, u, b) => window.appAPI(m, u, b);
 
@@ -243,3 +245,12 @@ function setSyncStatus(status) {
   else if (status === 'error') { dot.classList.add('error'); label.textContent = 'Offline'; }
   else { label.textContent = 'Synced'; }
 }
+
+// Expose public API so app.js can call these functions directly.
+window.connectWS          = connectWS;
+window.startSync          = startSync;
+window.stopSync           = stopSync;
+window.syncProjectChanged = syncProjectChanged;
+window.setSyncStatus      = setSyncStatus;
+
+})();

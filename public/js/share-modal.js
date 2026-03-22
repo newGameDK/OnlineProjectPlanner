@@ -7,6 +7,8 @@
 // Loaded after app.js.
 // ==========================================================================
 
+(function () {
+
 const S = () => window.appState;
 
 async function showShareModal() {
@@ -94,3 +96,5 @@ async function showShareModal() {
 
 // Expose globally so app.js event listeners can call window.showShareModal()
 window.showShareModal = showShareModal;
+
+})();
