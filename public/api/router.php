@@ -1571,6 +1571,9 @@ if ($seg1 === 'version' && $method === 'GET') {
 if ($seg1 === 'update' && $method === 'POST') {
     require_admin();
 
+    @set_time_limit(0);
+    @ini_set('memory_limit', '256M');
+
     if (!class_exists('ZipArchive')) {
         json_out(['error' => 'PHP zip extension is not installed on this server'], 500);
     }
@@ -1581,7 +1584,11 @@ if ($seg1 === 'update' && $method === 'POST') {
     }
 
     $uploadedFile = $_FILES['zipfile']['tmp_name'];
-    $result = apply_zip_update($uploadedFile);
+    try {
+        $result = apply_zip_update($uploadedFile);
+    } catch (Exception $e) {
+        json_out(['error' => 'Update failed: ' . $e->getMessage()], 500);
+    }
 
     if (file_exists($uploadedFile)) unlink($uploadedFile);
 
@@ -1647,6 +1654,10 @@ if ($seg1 === 'github-releases' && $method === 'GET') {
 if ($seg1 === 'update-from-github' && $method === 'POST') {
     require_admin();
 
+    // Prevent PHP execution timeout from killing the download + extraction
+    @set_time_limit(0);
+    @ini_set('memory_limit', '256M');
+
     if (!class_exists('ZipArchive')) {
         json_out(['error' => 'PHP zip extension is not installed on this server'], 500);
     }
@@ -1665,21 +1676,54 @@ if ($seg1 === 'update-from-github' && $method === 'POST') {
     if (!is_dir($dataDir)) mkdir($dataDir, 0755, true);
     $tmpFile = $dataDir . '/github_update_' . time() . '.zip';
 
-    $ctx = stream_context_create([
-        'http' => [
-            'header'          => "User-Agent: OnlineProjectPlanner\r\n",
-            'timeout'         => 60,
-            'follow_location' => 1,
-            'max_redirects'   => 5,
-        ]
-    ]);
-    $data = @file_get_contents($url, false, $ctx);
-    if ($data === false) {
-        json_out(['error' => 'Failed to download file from GitHub'], 502);
+    // Try cURL first (better HTTPS/redirect support); fall back to file_get_contents
+    $downloaded = false;
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_TIMEOUT        => 120,
+            CURLOPT_USERAGENT      => 'OnlineProjectPlanner',
+            CURLOPT_SSL_VERIFYPEER => true,
+        ]);
+        $fp = fopen($tmpFile, 'wb');
+        curl_setopt($ch, CURLOPT_FILE, $fp);
+        curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+        fclose($fp);
+        if ($curlError || $httpCode !== 200) {
+            if (file_exists($tmpFile)) unlink($tmpFile);
+            json_out(['error' => 'Failed to download file from GitHub' . ($curlError ? ': ' . $curlError : ' (HTTP ' . $httpCode . ')')], 502);
+        }
+        $downloaded = true;
     }
-    file_put_contents($tmpFile, $data);
 
-    $result = apply_zip_update($tmpFile);
+    if (!$downloaded) {
+        $ctx = stream_context_create([
+            'http' => [
+                'header'          => "User-Agent: OnlineProjectPlanner\r\n",
+                'timeout'         => 120,
+                'follow_location' => 1,
+                'max_redirects'   => 5,
+            ]
+        ]);
+        $data = @file_get_contents($url, false, $ctx);
+        if ($data === false) {
+            json_out(['error' => 'Failed to download file from GitHub'], 502);
+        }
+        file_put_contents($tmpFile, $data);
+        unset($data); // free memory
+    }
+
+    try {
+        $result = apply_zip_update($tmpFile);
+    } catch (Exception $e) {
+        if (file_exists($tmpFile)) unlink($tmpFile);
+        json_out(['error' => 'Update failed: ' . $e->getMessage()], 500);
+    }
     if (file_exists($tmpFile)) unlink($tmpFile);
 
     if (isset($result['error'])) {
