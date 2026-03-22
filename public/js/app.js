@@ -489,23 +489,58 @@ function setupEventListeners() {
       const statusEl    = document.getElementById('updateStatus');
       progressDiv.style.display = '';
       progressBar.style.background = '';
-      progressBar.style.width = '20%';
+      progressBar.style.width = '10%';
       statusEl.textContent = 'Downloading from GitHub…';
       statusEl.className = 'update-status';
 
       try {
-        const res = await fetch(apiUrl('/api/update-from-github'), {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url })
-        });
-        progressBar.style.width = '80%';
-        if (!res.headers.get('content-type')?.includes('application/json')) {
-          throw new Error('Server did not return a valid response.');
+        let data;
+
+        // Primary path: browser downloads the ZIP directly and uploads it to the
+        // server.  This avoids server-side download timeouts (nginx proxy_read_timeout,
+        // PHP execution limits, allow_url_fopen restrictions) that would cause the
+        // server to return a non-JSON error page.
+        try {
+          const zipRes = await fetch(url);
+          if (!zipRes.ok) throw new Error('Download failed: HTTP ' + zipRes.status);
+          const zipBlob = await zipRes.blob();
+
+          progressBar.style.width = '60%';
+          statusEl.textContent = 'Installing…';
+
+          const formData = new FormData();
+          formData.append('zipfile', zipBlob, 'update.zip');
+
+          const res = await fetch(apiUrl('/api/update'), {
+            method: 'POST',
+            credentials: 'include',
+            body: formData
+          });
+          progressBar.style.width = '90%';
+          if (!res.headers.get('content-type')?.includes('application/json')) {
+            throw new Error('Server did not return a valid response. Check that PHP zip extension is enabled.');
+          }
+          data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Update failed');
+        } catch (browserErr) {
+          // Fallback: ask the server to download from GitHub.
+          // This may fail on hosting environments with restrictive timeouts.
+          progressBar.style.width = '30%';
+          statusEl.textContent = 'Downloading via server…';
+
+          const res = await fetch(apiUrl('/api/update-from-github'), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+          });
+          progressBar.style.width = '90%';
+          if (!res.headers.get('content-type')?.includes('application/json')) {
+            throw new Error('Server did not return a valid response.');
+          }
+          data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Update failed');
         }
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Update failed');
 
         progressBar.style.width = '100%';
         statusEl.textContent = 'Update complete! New version: v' + (data.version || 'unknown') + '. Reloading…';

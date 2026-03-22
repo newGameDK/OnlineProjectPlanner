@@ -1522,6 +1522,10 @@ app.post('/api/update-from-github', requireAdmin, (req, res) => {
       return res.status(502).json({ error: 'Invalid redirect URL' });
     }
     const proto = parsedUrl.protocol === 'https:' ? https : http;
+
+    let responded = false;
+    const safeRespond = (fn) => { if (!responded) { responded = true; fn(); } };
+
     proto.get(downloadUrl, { headers: { 'User-Agent': 'OnlineProjectPlanner' } }, (ghRes) => {
       // Follow redirects
       if (ghRes.statusCode >= 300 && ghRes.statusCode < 400 && ghRes.headers.location) {
@@ -1531,29 +1535,34 @@ app.post('/api/update-from-github', requireAdmin, (req, res) => {
 
       if (ghRes.statusCode !== 200) {
         ghRes.resume();
-        return res.status(502).json({ error: 'Download failed: HTTP ' + ghRes.statusCode });
+        return safeRespond(() => res.status(502).json({ error: 'Download failed: HTTP ' + ghRes.statusCode }));
       }
 
       const fileStream = fs.createWriteStream(tmpFile);
+
+      ghRes.on('error', (e) => {
+        cleanup();
+        safeRespond(() => res.status(502).json({ error: 'Download stream error: ' + e.message }));
+      });
       ghRes.pipe(fileStream);
       fileStream.on('finish', () => {
         fileStream.close();
         try {
           const result = applyZipUpdate(tmpFile);
           fs.unlinkSync(tmpFile);
-          res.json(result);
+          safeRespond(() => res.json(result));
         } catch (e) {
           if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-          res.status(500).json({ error: 'Update failed: ' + e.message });
+          safeRespond(() => res.status(500).json({ error: 'Update failed: ' + e.message }));
         }
       });
       fileStream.on('error', (e) => {
-        if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-        res.status(500).json({ error: 'File write failed: ' + e.message });
+        cleanup();
+        safeRespond(() => res.status(500).json({ error: 'File write failed: ' + e.message }));
       });
     }).on('error', (e) => {
-      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-      res.status(502).json({ error: 'Download failed: ' + e.message });
+      cleanup();
+      safeRespond(() => res.status(502).json({ error: 'Download failed: ' + e.message }));
     });
   };
 
