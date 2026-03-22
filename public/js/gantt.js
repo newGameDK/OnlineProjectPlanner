@@ -1904,7 +1904,7 @@
     U().openModal('Add Gantt Entry', buildEntryFormHtml({
       title: '', start_date: today, end_date: nextWeek,
       hours_estimate: '', color_variation: 0, notes: '', folder_url: '',
-    }), async () => {
+    }, parentId !== undefined), async () => {
       const vals = readEntryForm();
       if (!vals.title) return alert('Title is required');
       try {
@@ -1935,7 +1935,7 @@
   }
 
   function showEditEntryModal(entry) {
-    U().openModal('Edit Entry', buildEntryFormHtml(entry), async () => {
+    U().openModal('Edit Entry', buildEntryFormHtml(entry, !!entry.parent_id), async () => {
       const vals = readEntryForm();
       if (!vals.title) return alert('Title is required');
       try {
@@ -1955,12 +1955,24 @@
     });
   }
 
-  function buildEntryFormHtml(entry) {
+  function buildEntryFormHtml(entry, isSubtask) {
     const vars = U().generateColorVariations((S().user && S().user.base_color) || '#2196F3');
     const swatches = vars.map((c, i) =>
       '<div class="color-var-swatch' + (entry.color_variation === i ? ' selected' : '') +
       '" data-idx="' + i + '" style="background:' + c + '" title="Phase ' + (i + 1) + '"></div>'
     ).join('');
+
+    const colorPickerHtml = isSubtask
+      ? '<div class="form-group"><label>Phase / Colour Variation</label>' +
+          '<input type="hidden" id="feColorVar" value="' + (entry.color_variation || 0) + '">' +
+          '<small style="color:var(--text-muted);font-size:11px;display:block">' +
+            'Colour is inherited from the parent task and cannot be changed for sub-tasks.' +
+          '</small>' +
+        '</div>'
+      : '<div class="form-group"><label>Phase / Colour Variation</label>' +
+          '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
+          '<input type="hidden" id="feColorVar" value="' + (entry.color_variation || 0) + '">' +
+        '</div>';
 
     // For parent entries: compute child hours and show a hint below the hours input
     const childEntries = entry.id ? S().ganttEntries.filter(e => e.parent_id === entry.id) : [];
@@ -1997,10 +2009,7 @@
         '<input type="number" id="feHours" value="' + (entry.hours_estimate || '') + '" min="0" step="0.5" placeholder="0">' +
         childHoursHtml +
       '</div>' +
-      '<div class="form-group"><label>Phase / Colour Variation</label>' +
-        '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
-        '<input type="hidden" id="feColorVar" value="' + (entry.color_variation || 0) + '">' +
-      '</div>' +
+      colorPickerHtml +
       '<div class="form-group">' +
         '<label>Folder Link (optional)</label>' +
         '<div style="display:flex;gap:6px;align-items:center">' +
