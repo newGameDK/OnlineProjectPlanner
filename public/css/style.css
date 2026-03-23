@@ -289,7 +289,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   width: 0; min-width: 0; overflow: hidden; border-right: none; padding: 0;
 }
 .gantt-container.task-list-collapsed .gantt-ruler-task-spacer {
-  width: 36px; min-width: 36px;
+  width: 36px; min-width: 36px; border-right: none;
 }
 .gantt-timeline-header { flex: 1; overflow: hidden; position: relative; min-height: 32px; }
 
