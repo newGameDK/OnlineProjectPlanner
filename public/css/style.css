@@ -263,6 +263,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted);
   border-right: 1px solid var(--border);
   display: flex; align-items: center; gap: 4px;
+  position: relative; z-index: 1;
 }
 .gantt-tasks-header-label { flex: 1; }
 .gantt-tasks-toggle {
@@ -297,7 +298,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-tasks {
   width: var(--task-col-w); flex-shrink: 0; overflow-y: auto; overflow-x: hidden;
   border-right: 1px solid var(--border); background: var(--surface);
-  position: relative; /* needed for reorder-drop-indicator absolute positioning */
+  position: relative; z-index: 1; /* stay above timeline bars on any overlap */
 }
 /* Column that holds scrollable rows */
 .gantt-timeline-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
@@ -308,6 +309,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .gantt-ruler-task-spacer {
   width: var(--task-col-w); flex-shrink: 0; border-right: 1px solid var(--border);
+  position: relative; z-index: 1;
 }
 .gantt-ruler-hours-spacer {
   width: 72px; flex-shrink: 0; border-left: 1px solid var(--border);

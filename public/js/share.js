@@ -597,8 +597,8 @@ function renderIntensityBar(timelineW, totalDays) {
 }
 
 function syncIntensityScroll() {
-  if (intensityBarWrapper) {
-    intensityBarWrapper.style.marginLeft = '-' + ganttTimeline.scrollLeft + 'px';
+  if (intensityBarCanvas) {
+    intensityBarCanvas.style.marginLeft = '-' + ganttTimeline.scrollLeft + 'px';
   }
 }
 
