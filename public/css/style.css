@@ -448,7 +448,6 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .gantt-bar-handle.left { left: 0; border-radius: var(--radius-sm) 0 0 0; }
 .gantt-bar-handle.right { right: 0; border-radius: 0 var(--radius-sm) 0 0; }
-.gantt-bar:hover .gantt-bar-handle { opacity: 1; }
 .gantt-bar-drilldown {
   position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
   font-size: 10px; opacity: .6;
@@ -464,7 +463,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .gantt-ruler-cell.major { font-weight: 700; color: var(--text); font-size: 11px; }
 .gantt-ruler-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 5; opacity: .5; }
-.gantt-snap-line { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dotted #2196f3; z-index: 10; pointer-events: none; }
+.gantt-snap-line { position: absolute; width: 0; border-left: 2px dotted #2196f3; z-index: 10; pointer-events: none; }
 .gantt-ruler-today::after {
   content: 'Today'; position: absolute; top: 4px; left: 4px;
   font-size: 9px; color: var(--danger); font-weight: 700; white-space: nowrap;
@@ -659,12 +658,19 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   font-size: 8px; color: #fff; font-weight: 700;
   box-shadow: 0 1px 4px rgba(0,0,0,.35);
 }
-.gantt-bar:hover .dep-node,
-.dep-node.always-visible { opacity: 1; }
+.gantt-bar:hover .dep-node.input-node,
+.dep-node.input-node.always-visible { opacity: 1; }
+.dep-node.output-node.always-visible { opacity: 1; transform: scale(1); }
 .deps-hidden .dep-node { display: none !important; }
 .dep-node.input-node  { left: -7px;  background: #1565C0; }
-.dep-node.output-node { right: -7px; background: #2e7d32; }
-.dep-node:hover { transform: translateY(-50%) scale(1.3); }
+.dep-node.output-node {
+  top: auto; bottom: -7px; right: -7px;
+  transform: scale(0);
+  transform-origin: bottom right;
+  background: #2e7d32;
+}
+.dep-node.input-node:hover  { transform: translateY(-50%) scale(1.3); }
+.dep-node.output-node:hover { transform: scale(1.3); }
 .dep-node.connecting-target { animation: depPulse .6s infinite alternate; }
 @keyframes depPulse { from { box-shadow: 0 0 0 2px rgba(33,150,243,.4); } to { box-shadow: 0 0 0 6px rgba(33,150,243,.1); } }
 

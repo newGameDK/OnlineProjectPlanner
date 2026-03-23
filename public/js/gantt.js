@@ -28,6 +28,7 @@
   const ROW_H    = 40;  // px – must match CSS --row-h
   const MIN_DAYS = 1;   // minimum bar width in days
   const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
+  const OUTPUT_NODE_BOTTOM_OFFSET = 4; // px from row bottom where connection arrow originates
 
   // ─── state refs (injected from app.js) ───────────────────────────────────
   const S   = () => window.appState;
@@ -108,6 +109,13 @@
   let snapLineEl  = null;
   let snapLine2El = null;
 
+  function _setSnapLineRowBounds(el) {
+    const rowIdx = (drag.entryId !== null && rowIndexMap[drag.entryId] !== undefined)
+      ? rowIndexMap[drag.entryId] : 0;
+    el.style.top    = (rowIdx * ROW_H) + 'px';
+    el.style.height = ROW_H + 'px';
+  }
+
   function showSnapLine(px) {
     if (!ganttRows) return;
     if (!snapLineEl) {
@@ -116,6 +124,7 @@
       ganttRows.appendChild(snapLineEl);
     }
     snapLineEl.style.left = px + 'px';
+    _setSnapLineRowBounds(snapLineEl);
     snapLineEl.style.display = 'block';
   }
 
@@ -127,6 +136,7 @@
       ganttRows.appendChild(snapLine2El);
     }
     snapLine2El.style.left = px + 'px';
+    _setSnapLineRowBounds(snapLine2El);
     snapLine2El.style.display = 'block';
   }
 
@@ -178,7 +188,7 @@
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx };
+  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
@@ -1212,7 +1222,7 @@
 
     // ── Left resize handle ─────────────────────────────────────────────────
     const hLeft = document.createElement('div');
-    hLeft.className = 'gantt-bar-handle left';
+    hLeft.className = 'gantt-bar-handle left proximity-handle';
     hLeft.title     = 'Drag to change start date';
     hLeft.dataset.help = 'Drag left edge to change the start date';
     hLeft.addEventListener('mousedown', (e) => {
@@ -1223,7 +1233,7 @@
 
     // ── Right resize handle ────────────────────────────────────────────────
     const hRight = document.createElement('div');
-    hRight.className = 'gantt-bar-handle right';
+    hRight.className = 'gantt-bar-handle right proximity-handle';
     hRight.title     = 'Drag to change end date';
     hRight.dataset.help = 'Drag right edge to change the end date';
     hRight.addEventListener('mousedown', (e) => {
@@ -1253,7 +1263,7 @@
     });
     bar.appendChild(inputNode);
 
-    // ── Output node (right edge of bar – sends dependency arrows) ─────────
+    // ── Output node (bottom-right of bar – sends dependency arrows) ────────
     const outputNode = document.createElement('div');
     outputNode.className = 'dep-node output-node' + (hasDepsOut ? ' always-visible' : '');
     outputNode.title     = 'Output: click to connect a dependency to another task';
@@ -1265,6 +1275,46 @@
       if (!conn.active) startConnecting(entry, container);
     });
     bar.appendChild(outputNode);
+
+    // ── Proximity-based scaling for output node and resize handles ─────────
+    bar.addEventListener('mousemove', (e) => {
+      if (drag.active) return;
+      const rect = bar.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const w = rect.width;
+      const h = rect.height;
+      const prox = proximityPx;
+
+      // Output node: bottom-right corner
+      const dxOut = w - x;
+      const dyOut = h - y;
+      const distOut = Math.sqrt(dxOut * dxOut + dyOut * dyOut);
+      const scaleOut = Math.max(0, Math.min(1, 1 - distOut / prox));
+      if (!outputNode.classList.contains('always-visible')) {
+        outputNode.style.transform = 'scale(' + scaleOut + ')';
+        outputNode.style.opacity   = scaleOut > 0 ? '1' : '0';
+      }
+
+      // Left handle: distance from left edge
+      const distLeft = Math.abs(x);
+      const opLeft = Math.max(0, Math.min(1, 1 - distLeft / prox));
+      hLeft.style.opacity = opLeft;
+
+      // Right handle: distance from right edge
+      const distRight = Math.abs(w - x);
+      const opRight = Math.max(0, Math.min(1, 1 - distRight / prox));
+      hRight.style.opacity = opRight;
+    });
+    bar.addEventListener('mouseleave', () => {
+      if (drag.active) return;
+      if (!outputNode.classList.contains('always-visible')) {
+        outputNode.style.transform = 'scale(0)';
+        outputNode.style.opacity   = '0';
+      }
+      hLeft.style.opacity  = '0';
+      hRight.style.opacity = '0';
+    });
 
     // ── Bar body drag (move) ───────────────────────────────────────────────
     bar.addEventListener('mousedown', (e) => {
@@ -1310,14 +1360,31 @@
   // released and a new target is searched for on the next call, so snapping always
   // re-engages whenever the cursor enters range of any task edge.
   // snapPx is configurable via setSnapPx() and persisted in localStorage.
+  // snapEnabled can be toggled via setSnapEnabled() and persisted in localStorage.
   let snapPx = Math.max(0, parseInt(localStorage.getItem('ganttSnapPx') || '5', 10));
+  let snapEnabled = (function () {
+    const s = localStorage.getItem('ganttSnapEnabled');
+    return s === null ? true : s === 'true';
+  })();
   function setSnapPx(val) {
     snapPx = Math.max(0, Math.min(30, parseInt(val, 10) || 0));
     localStorage.setItem('ganttSnapPx', snapPx);
   }
+  function setSnapEnabled(val) {
+    snapEnabled = !!val;
+    localStorage.setItem('ganttSnapEnabled', snapEnabled);
+  }
+
+  // Node proximity – how far from the corner/edge the output-node and resize
+  // handles start appearing (scales 0→1 as cursor approaches).
+  let proximityPx = Math.max(10, parseInt(localStorage.getItem('ganttProximityPx') || '60', 10));
+  function setProximityPx(val) {
+    proximityPx = Math.max(10, Math.min(200, parseInt(val, 10) || 60));
+    localStorage.setItem('ganttProximityPx', proximityPx);
+  }
 
   function applyEdgeSnap(rawPx) {
-    if (snapPx === 0) return rawPx;
+    if (!snapEnabled || snapPx === 0) return rawPx;
 
     // If currently snapped, check whether the snap has been broken
     if (drag.snapActivePx !== null) {
@@ -1394,7 +1461,7 @@
         let effectiveLeft = rawLeft;
         let leftSnapped = false;
         let rightSnapped = false;
-        if (snapPx > 0) {
+        if (snapEnabled && snapPx > 0) {
           const snapL = nearestSnapTarget(rawLeft);
           const snapR = nearestSnapTarget(rawRight);
           if (snapL !== null || snapR !== null) {
@@ -1623,11 +1690,11 @@
     conn.sourceId = entry.id;
     document.body.classList.add('connecting-mode');
 
-    // Source point: right edge of bar at row vertical centre
+    // Source point: right edge of bar at row bottom (matches output node bottom-right)
     const rowIdx = rowIndexMap[entry.id] !== undefined ? rowIndexMap[entry.id] : 0;
     const endDate = parseDate(entry.end_date);
     const sx = Math.max(0, daysBetween(chartStart, endDate)) * pxPerDay;
-    const sy = rowIdx * ROW_H + ROW_H / 2;
+    const sy = rowIdx * ROW_H + ROW_H - OUTPUT_NODE_BOTTOM_OFFSET; // near the bottom of the bar row
     conn.sx = sx;
     conn.sy = sy;
 
