@@ -351,20 +351,28 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 
 /* Completed checkmark in task list */
 .gantt-completed-check {
-  font-size: 36px; line-height: 1; flex-shrink: 0; cursor: default;
+  font-size: 18px; line-height: 1; flex-shrink: 0; cursor: default;
 }
 
 /* Completed checkmark badge on bar */
 .gantt-bar-completed-check {
-  font-size: 20px; line-height: 1; flex-shrink: 0; pointer-events: none;
+  font-size: 14px; line-height: 1; flex-shrink: 0; pointer-events: none;
 }
+
+/* Completed task row: fade name/dot/expand to 70%, keep checkmark at full opacity */
+.gantt-task-row.gantt-completed .gantt-task-name,
+.gantt-task-row.gantt-completed .gantt-task-color-dot,
+.gantt-task-row.gantt-completed .gantt-task-expand { opacity: 0.7; }
+
+/* Completed bar: fade the whole bar to 70% */
+.gantt-bar.gantt-bar-completed { opacity: 0.7; }
 
 /* Drag grip for reparenting */
 .gantt-task-grip {
   flex-shrink: 0; width: 14px; text-align: center;
-  font-size: 12px; color: var(--text-muted); cursor: grab;
+  color: var(--text-muted); cursor: grab;
   opacity: 0; transition: opacity .15s;
-  user-select: none; line-height: 1;
+  user-select: none; line-height: 1; display: flex; align-items: center; justify-content: center;
 }
 .gantt-task-row:hover .gantt-task-grip { opacity: 1; }
 .gantt-task-grip:active { cursor: grabbing; }

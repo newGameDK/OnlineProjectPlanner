@@ -304,6 +304,22 @@ function setupEventListeners() {
   // Update app
   document.getElementById('updateBtn').addEventListener('click', () => openUpdateModal());
 
+  // Snap aggressiveness slider
+  (function initSnapSlider() {
+    const slider = document.getElementById('snapPxSlider');
+    const label  = document.getElementById('snapPxLabel');
+    if (!slider || !label) return;
+    const saved = parseInt(localStorage.getItem('ganttSnapPx') || '5', 10);
+    slider.value = saved;
+    label.textContent = saved;
+    slider.addEventListener('input', () => {
+      label.textContent = slider.value;
+      if (window.ganttModule && window.ganttModule.setSnapPx) {
+        window.ganttModule.setSnapPx(parseInt(slider.value, 10));
+      }
+    });
+  })();
+
   // New team
   document.getElementById('newTeamBtn').addEventListener('click', () => {
     openModal('New Team', `
