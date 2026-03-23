@@ -105,6 +105,24 @@
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
 
+  // ── snap indicator line ───────────────────────────────────────────────────
+  let snapLineEl = null;
+
+  function showSnapLine(px) {
+    if (!ganttRows) return;
+    if (!snapLineEl) {
+      snapLineEl = document.createElement('div');
+      snapLineEl.className = 'gantt-snap-line';
+      ganttRows.appendChild(snapLineEl);
+    }
+    snapLineEl.style.left = px + 'px';
+    snapLineEl.style.display = 'block';
+  }
+
+  function hideSnapLine() {
+    if (snapLineEl) snapLineEl.style.display = 'none';
+  }
+
 
   /**
    * Get the display colour for an entry.  When inline-expanded (depth > 0)
@@ -1040,6 +1058,7 @@
   // ─── rows & bars ──────────────────────────────────────────────────────────
   function renderRowsAndBars(entries, timelineW) {
     ganttRows.style.width = timelineW + 'px';
+    if (snapLineEl) { snapLineEl.remove(); snapLineEl = null; }
     ganttRows.innerHTML   = '';
 
     entries.forEach(entry => {
@@ -1293,6 +1312,7 @@
       if (Math.abs(rawPx - drag.snapActivePx) > snapPx) {
         drag.snapBroken   = true;
         drag.snapActivePx = null;
+        hideSnapLine();
         return rawPx;
       }
       return drag.snapActivePx; // stay snapped
@@ -1318,6 +1338,7 @@
 
     if (bestPx !== null) {
       drag.snapActivePx = bestPx;
+      showSnapLine(bestPx);
       return bestPx;
     }
     return rawPx;
@@ -1455,6 +1476,7 @@
     drag.active = false; drag.type = null; drag.entryId = null;
     drag.ghostEl = null; drag.containerEl = null;
     drag.snapActivePx = null;
+    hideSnapLine();
 
     if (deltaDays === 0) {
       // No movement → treat as a click: select the entry.
