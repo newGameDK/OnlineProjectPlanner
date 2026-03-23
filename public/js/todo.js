@@ -133,7 +133,7 @@
 
   function buildCard(todo) {
     const card = document.createElement('div');
-    card.className = 'todo-card';
+    card.className = 'todo-card' + (todo.status === 'done' ? ' done' : '');
     card.dataset.id = todo.id;
 
     // Linked Gantt entry indicator
@@ -187,7 +187,12 @@
       }
     }
 
+    // Done checkmark
+    const doneCheck = todo.status === 'done'
+      ? '<span class="todo-card-done-check" title="Task completed">\u2705</span>' : '';
+
     card.innerHTML = `
+      ${doneCheck}
       <div class="todo-card-title">${U().escHtml(todo.title)}</div>
       ${todo.description ? `<div class="todo-card-desc">${U().escHtml(todo.description)}</div>` : ''}
       ${depsHtml ? `<div class="todo-card-deps">${depsHtml}</div>` : ''}
