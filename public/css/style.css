@@ -442,7 +442,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   border-radius: 3px;
 }
 .gantt-bar-handle {
-  position: absolute; top: 0; width: 8px; height: 55%; cursor: col-resize;
+  position: absolute; top: 0; width: 8px; height: 100%; cursor: col-resize;
   background: rgba(0,0,0,.15); opacity: 0;
   transition: opacity .15s;
 }
@@ -660,17 +660,17 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .gantt-bar:hover .dep-node.input-node,
 .dep-node.input-node.always-visible { opacity: 1; }
-.dep-node.output-node.always-visible { opacity: 1; transform: scale(1); }
+.dep-node.output-node.always-visible { opacity: 1; transform: translateY(-50%) scale(1); }
 .deps-hidden .dep-node { display: none !important; }
 .dep-node.input-node  { left: -7px;  background: #1565C0; }
 .dep-node.output-node {
-  top: auto; bottom: -7px; right: -7px;
-  transform: scale(0);
-  transform-origin: bottom right;
+  top: 50%; right: -7px;
+  transform: translateY(-50%) scale(0);
+  transform-origin: left center;
   background: #2e7d32;
 }
 .dep-node.input-node:hover  { transform: translateY(-50%) scale(1.3); }
-.dep-node.output-node:hover { transform: scale(1.3); }
+.dep-node.output-node:hover { transform: translateY(-50%) scale(1.3); }
 .dep-node.connecting-target { animation: depPulse .6s infinite alternate; }
 @keyframes depPulse { from { box-shadow: 0 0 0 2px rgba(33,150,243,.4); } to { box-shadow: 0 0 0 6px rgba(33,150,243,.1); } }
 
