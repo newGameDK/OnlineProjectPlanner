@@ -28,7 +28,6 @@
   const ROW_H    = 40;  // px – must match CSS --row-h
   const MIN_DAYS = 1;   // minimum bar width in days
   const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
-  const OUTPUT_NODE_BOTTOM_OFFSET = 4; // px from row bottom where connection arrow originates
 
   // ─── state refs (injected from app.js) ───────────────────────────────────
   const S   = () => window.appState;
@@ -77,7 +76,8 @@
     snappedDays: 0,
     origLeftPx: 0,      // original CSS left (px) for pixel-precise drag
     origWidthPx: 0,     // original CSS width (px)
-    snapActivePx: null, // current snap target pixel (null = not snapping)
+    snapActivePx: null,       // current snap target pixel (null = not snapping)
+    snapTargetEntryId: null,  // entry whose edge is currently snapped to
   };
 
   // ── connecting state ──────────────────────────────────────────────────────
@@ -110,10 +110,14 @@
   let snapLine2El = null;
 
   function _setSnapLineRowBounds(el) {
-    const rowIdx = (drag.entryId !== null && rowIndexMap[drag.entryId] !== undefined)
+    const dragRowIdx = (drag.entryId !== null && rowIndexMap[drag.entryId] !== undefined)
       ? rowIndexMap[drag.entryId] : 0;
-    el.style.top    = (rowIdx * ROW_H) + 'px';
-    el.style.height = ROW_H + 'px';
+    const snapRowIdx = (drag.snapTargetEntryId !== null && rowIndexMap[drag.snapTargetEntryId] !== undefined)
+      ? rowIndexMap[drag.snapTargetEntryId] : dragRowIdx;
+    const topRow = Math.min(dragRowIdx, snapRowIdx);
+    const botRow = Math.max(dragRowIdx, snapRowIdx);
+    el.style.top    = (topRow * ROW_H) + 'px';
+    el.style.height = ((botRow - topRow + 1) * ROW_H) + 'px';
   }
 
   function showSnapLine(px) {
@@ -1286,13 +1290,13 @@
       const h = rect.height;
       const prox = proximityPx;
 
-      // Output node: bottom-right corner
+      // Output node: right edge center
       const dxOut = w - x;
-      const dyOut = h - y;
+      const dyOut = h / 2 - y;
       const distOut = Math.sqrt(dxOut * dxOut + dyOut * dyOut);
       const scaleOut = Math.max(0, Math.min(1, 1 - distOut / prox));
       if (!outputNode.classList.contains('always-visible')) {
-        outputNode.style.transform = 'scale(' + scaleOut + ')';
+        outputNode.style.transform = 'translateY(-50%) scale(' + scaleOut + ')';
         outputNode.style.opacity   = scaleOut > 0 ? '1' : '0';
       }
 
@@ -1309,7 +1313,7 @@
     bar.addEventListener('mouseleave', () => {
       if (drag.active) return;
       if (!outputNode.classList.contains('always-visible')) {
-        outputNode.style.transform = 'scale(0)';
+        outputNode.style.transform = 'translateY(-50%) scale(0)';
         outputNode.style.opacity   = '0';
       }
       hLeft.style.opacity  = '0';
@@ -1390,6 +1394,7 @@
     if (drag.snapActivePx !== null) {
       if (Math.abs(rawPx - drag.snapActivePx) > snapPx) {
         drag.snapActivePx = null;
+        drag.snapTargetEntryId = null;
         // fall through to find a new snap target
       } else {
         return drag.snapActivePx; // stay snapped
@@ -1397,10 +1402,11 @@
     }
 
     // Look for a new snap target
-    const bestPx = nearestSnapTarget(rawPx);
-    if (bestPx !== null) {
-      drag.snapActivePx = bestPx;
-      return bestPx;
+    const best = nearestSnapTarget(rawPx);
+    if (best !== null) {
+      drag.snapActivePx = best.px;
+      drag.snapTargetEntryId = best.entryId;
+      return best.px;
     }
     return rawPx;
   }
@@ -1408,7 +1414,8 @@
   // Returns the pixel position of the nearest task edge within snapPx of rawPx,
   // or null if no edge is close enough.
   function nearestSnapTarget(rawPx) {
-    let bestPx   = null;
+    let bestPx      = null;
+    let bestEntryId = null;
     // bestDist starts at snapPx+1 so only edges strictly within snapPx qualify
     let bestDist = snapPx + 1;
     const entries = S().ganttEntries;
@@ -1422,10 +1429,10 @@
       const endPx   = daysBetween(chartStart, endDate)   * pxPerDay;
       const dS = Math.abs(rawPx - startPx);
       const dE = Math.abs(rawPx - endPx);
-      if (dS < bestDist) { bestDist = dS; bestPx = startPx; }
-      if (dE < bestDist) { bestDist = dE; bestPx = endPx; }
+      if (dS < bestDist) { bestDist = dS; bestPx = startPx; bestEntryId = en.id; }
+      if (dE < bestDist) { bestDist = dE; bestPx = endPx; bestEntryId = en.id; }
     }
-    return bestPx;
+    return bestPx !== null ? { px: bestPx, entryId: bestEntryId } : null;
   }
 
   function startDrag(e, type, entry, barEl, containerEl) {
@@ -1465,15 +1472,19 @@
           const snapL = nearestSnapTarget(rawLeft);
           const snapR = nearestSnapTarget(rawRight);
           if (snapL !== null || snapR !== null) {
-            const dL = snapL !== null ? Math.abs(rawLeft  - snapL) : Infinity;
-            const dR = snapR !== null ? Math.abs(rawRight - snapR) : Infinity;
+            const dL = snapL !== null ? Math.abs(rawLeft  - snapL.px) : Infinity;
+            const dR = snapR !== null ? Math.abs(rawRight - snapR.px) : Infinity;
             if (dL <= dR) {
-              effectiveLeft = snapL;
+              effectiveLeft = snapL.px;
               leftSnapped = true;
+              drag.snapTargetEntryId = snapL.entryId;
             } else {
-              effectiveLeft = snapR - drag.origWidthPx;
+              effectiveLeft = snapR.px - drag.origWidthPx;
               rightSnapped = true;
+              drag.snapTargetEntryId = snapR.entryId;
             }
+          } else {
+            drag.snapTargetEntryId = null;
           }
         }
 
@@ -1610,7 +1621,7 @@
 
     drag.active = false; drag.type = null; drag.entryId = null;
     drag.ghostEl = null; drag.containerEl = null;
-    drag.snapActivePx = null;
+    drag.snapActivePx = null; drag.snapTargetEntryId = null;
     hideSnapLine();
 
     if (deltaDays === 0) {
@@ -1690,11 +1701,11 @@
     conn.sourceId = entry.id;
     document.body.classList.add('connecting-mode');
 
-    // Source point: right edge of bar at row bottom (matches output node bottom-right)
+    // Source point: right edge of bar at row vertical center (matches output node)
     const rowIdx = rowIndexMap[entry.id] !== undefined ? rowIndexMap[entry.id] : 0;
     const endDate = parseDate(entry.end_date);
     const sx = Math.max(0, daysBetween(chartStart, endDate)) * pxPerDay;
-    const sy = rowIdx * ROW_H + ROW_H - OUTPUT_NODE_BOTTOM_OFFSET; // near the bottom of the bar row
+    const sy = rowIdx * ROW_H + ROW_H / 2; // vertical center of the bar row
     conn.sx = sx;
     conn.sy = sy;
 
