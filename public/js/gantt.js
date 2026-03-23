@@ -76,7 +76,6 @@
     snappedDays: 0,
     origLeftPx: 0,      // original CSS left (px) for pixel-precise drag
     origWidthPx: 0,     // original CSS width (px)
-    snapBroken: false,  // true once snap is intentionally broken this drag
     snapActivePx: null, // current snap target pixel (null = not snapping)
   };
 
@@ -105,8 +104,9 @@
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
 
-  // ── snap indicator line ───────────────────────────────────────────────────
-  let snapLineEl = null;
+  // ── snap indicator lines (two lines: one per edge) ───────────────────────
+  let snapLineEl  = null;
+  let snapLine2El = null;
 
   function showSnapLine(px) {
     if (!ganttRows) return;
@@ -119,8 +119,20 @@
     snapLineEl.style.display = 'block';
   }
 
+  function showSnapLine2(px) {
+    if (!ganttRows) return;
+    if (!snapLine2El) {
+      snapLine2El = document.createElement('div');
+      snapLine2El.className = 'gantt-snap-line';
+      ganttRows.appendChild(snapLine2El);
+    }
+    snapLine2El.style.left = px + 'px';
+    snapLine2El.style.display = 'block';
+  }
+
   function hideSnapLine() {
-    if (snapLineEl) snapLineEl.style.display = 'none';
+    if (snapLineEl)  snapLineEl.style.display  = 'none';
+    if (snapLine2El) snapLine2El.style.display = 'none';
   }
 
 
@@ -1293,10 +1305,11 @@
   // Drag – resize & move
   // =========================================================================
 
-  // Returns snap-adjusted edge pixel position (or rawPx if snap is broken/none).
+  // Returns snap-adjusted edge pixel position (or rawPx if no snap target nearby).
   // Snaps the dragged edge to the nearest start/end of another task within snapPx pixels.
-  // Once a snap is broken (moved > snapPx away), sets drag.snapBroken = true and
-  // stops snapping for the rest of this drag operation.
+  // When the user moves beyond snapPx away from the current snap point the snap is
+  // released and a new target is searched for on the next call, so snapping always
+  // re-engages whenever the cursor enters range of any task edge.
   // snapPx is configurable via setSnapPx() and persisted in localStorage.
   let snapPx = Math.max(0, parseInt(localStorage.getItem('ganttSnapPx') || '5', 10));
   function setSnapPx(val) {
@@ -1305,21 +1318,32 @@
   }
 
   function applyEdgeSnap(rawPx) {
-    if (snapPx === 0 || drag.snapBroken) return rawPx;
+    if (snapPx === 0) return rawPx;
 
     // If currently snapped, check whether the snap has been broken
     if (drag.snapActivePx !== null) {
       if (Math.abs(rawPx - drag.snapActivePx) > snapPx) {
-        drag.snapBroken   = true;
         drag.snapActivePx = null;
-        hideSnapLine();
-        return rawPx;
+        // fall through to find a new snap target
+      } else {
+        return drag.snapActivePx; // stay snapped
       }
-      return drag.snapActivePx; // stay snapped
     }
 
     // Look for a new snap target
+    const bestPx = nearestSnapTarget(rawPx);
+    if (bestPx !== null) {
+      drag.snapActivePx = bestPx;
+      return bestPx;
+    }
+    return rawPx;
+  }
+
+  // Returns the pixel position of the nearest task edge within snapPx of rawPx,
+  // or null if no edge is close enough.
+  function nearestSnapTarget(rawPx) {
     let bestPx   = null;
+    // bestDist starts at snapPx+1 so only edges strictly within snapPx qualify
     let bestDist = snapPx + 1;
     const entries = S().ganttEntries;
     for (let i = 0; i < entries.length; i++) {
@@ -1335,13 +1359,7 @@
       if (dS < bestDist) { bestDist = dS; bestPx = startPx; }
       if (dE < bestDist) { bestDist = dE; bestPx = endPx; }
     }
-
-    if (bestPx !== null) {
-      drag.snapActivePx = bestPx;
-      showSnapLine(bestPx);
-      return bestPx;
-    }
-    return rawPx;
+    return bestPx;
   }
 
   function startDrag(e, type, entry, barEl, containerEl) {
@@ -1356,7 +1374,6 @@
     drag.snappedDays = 0;
     drag.origLeftPx  = parseFloat(containerEl.style.left)  || 0;
     drag.origWidthPx = parseFloat(containerEl.style.width) || 0;
-    drag.snapBroken  = false;
     drag.snapActivePx = null;
 
     barEl.style.opacity    = '0.75';
@@ -1371,7 +1388,24 @@
       const deltaX = e.pageX - drag.startX;
 
       if (drag.type === 'move') {
-        drag.containerEl.style.left = (drag.origLeftPx + deltaX) + 'px';
+        const rawLeft  = drag.origLeftPx + deltaX;
+        const rawRight = rawLeft + drag.origWidthPx;
+
+        // Snap the closer end to the nearest task edge
+        let effectiveLeft = rawLeft;
+        if (snapPx > 0) {
+          const snapL = nearestSnapTarget(rawLeft);
+          const snapR = nearestSnapTarget(rawRight);
+          if (snapL !== null || snapR !== null) {
+            const dL = snapL !== null ? Math.abs(rawLeft  - snapL) : Infinity;
+            const dR = snapR !== null ? Math.abs(rawRight - snapR) : Infinity;
+            effectiveLeft = dL <= dR ? snapL : snapR - drag.origWidthPx;
+          }
+        }
+
+        drag.containerEl.style.left = effectiveLeft + 'px';
+        showSnapLine(effectiveLeft);
+        showSnapLine2(effectiveLeft + drag.origWidthPx);
       } else if (drag.type === 'resize-left') {
         const rawLeft  = drag.origLeftPx  + deltaX;
         const rawWidth = drag.origWidthPx - deltaX;
@@ -1382,6 +1416,8 @@
             drag.containerEl.style.left  = effectivePx + 'px';
             drag.containerEl.style.width = effectiveWidth + 'px';
           }
+          showSnapLine(effectivePx);
+          showSnapLine2(drag.origLeftPx + drag.origWidthPx);
         }
       } else if (drag.type === 'resize-right') {
         const rawWidth = drag.origWidthPx + deltaX;
@@ -1392,6 +1428,8 @@
           if (effectiveWidth >= MIN_DAYS * pxPerDay) {
             drag.containerEl.style.width = effectiveWidth + 'px';
           }
+          showSnapLine(drag.origLeftPx);
+          showSnapLine2(effectiveRightPx);
         }
       }
 
@@ -1458,7 +1496,14 @@
     let deltaDays;
     const snapActivePx = drag.snapActivePx;
     const dragType = drag.type;
-    if (snapActivePx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
+    if (dragType === 'move') {
+      // Use actual container position to account for snap adjustment.
+      // Fallback to mouse delta if style.left is somehow unparseable.
+      const actualLeft = parseFloat(drag.containerEl.style.left);
+      deltaDays = isNaN(actualLeft)
+        ? Math.round((e.pageX - drag.startX) / pxPerDay)
+        : Math.round((actualLeft - drag.origLeftPx) / pxPerDay);
+    } else if (snapActivePx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
       if (dragType === 'resize-left') {
         deltaDays = Math.round((snapActivePx - drag.origLeftPx) / pxPerDay);
       } else {
