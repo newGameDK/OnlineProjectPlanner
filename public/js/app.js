@@ -71,6 +71,15 @@ async function init() {
   connectWS();
   startSync();
   setupEventListeners();
+
+  // Show admin-only settings if the current user is an admin
+  try {
+    const adminRes = await api('GET', '/api/admin/status');
+    if (adminRes && adminRes.isAdmin) {
+      const el = document.getElementById('adminOnlySettings');
+      if (el) el.style.display = '';
+    }
+  } catch (e) { console.warn('Admin status check failed:', e.message); }
 }
 
 // ==========================================================================
@@ -304,7 +313,7 @@ function setupEventListeners() {
   // Update app
   document.getElementById('updateBtn').addEventListener('click', () => openUpdateModal());
 
-  // Snap aggressiveness slider
+  // Snap aggressiveness slider (admin-only)
   (function initSnapSlider() {
     const slider = document.getElementById('snapPxSlider');
     const label  = document.getElementById('snapPxLabel');
@@ -316,6 +325,38 @@ function setupEventListeners() {
       label.textContent = slider.value;
       if (window.ganttModule && window.ganttModule.setSnapPx) {
         window.ganttModule.setSnapPx(parseInt(slider.value, 10));
+      }
+    });
+  })();
+
+  // Node proximity distance slider (admin-only)
+  (function initProximitySlider() {
+    const slider = document.getElementById('proximityPxSlider');
+    const label  = document.getElementById('proximityPxLabel');
+    if (!slider || !label) return;
+    const saved = parseInt(localStorage.getItem('ganttProximityPx') || '60', 10);
+    slider.value = saved;
+    label.textContent = saved;
+    slider.addEventListener('input', () => {
+      label.textContent = slider.value;
+      if (window.ganttModule && window.ganttModule.setProximityPx) {
+        window.ganttModule.setProximityPx(parseInt(slider.value, 10));
+      }
+    });
+  })();
+
+  // Enable snap checkbox
+  (function initSnapEnabledCheckbox() {
+    const checkbox = document.getElementById('settingsSnapEnabled');
+    if (!checkbox) return;
+    const saved = localStorage.getItem('ganttSnapEnabled');
+    const enabled = saved === null ? true : saved === 'true';
+    checkbox.checked = enabled;
+    checkbox.addEventListener('change', () => {
+      const val = checkbox.checked;
+      localStorage.setItem('ganttSnapEnabled', val);
+      if (window.ganttModule && window.ganttModule.setSnapEnabled) {
+        window.ganttModule.setSnapEnabled(val);
       }
     });
   })();
