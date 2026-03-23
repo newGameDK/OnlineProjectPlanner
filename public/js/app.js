@@ -320,6 +320,22 @@ function setupEventListeners() {
     });
   })();
 
+  // Show/hide zoom buttons setting
+  (function initShowZoomSetting() {
+    const checkbox = document.getElementById('settingsShowZoom');
+    const group    = document.getElementById('zoomBtnGroup');
+    if (!checkbox || !group) return;
+    const saved = localStorage.getItem('ganttShowZoom');
+    const show  = saved === null ? true : saved === 'true';
+    checkbox.checked  = show;
+    group.style.display = show ? '' : 'none';
+    checkbox.addEventListener('change', () => {
+      const val = checkbox.checked;
+      localStorage.setItem('ganttShowZoom', val);
+      group.style.display = val ? '' : 'none';
+    });
+  })();
+
   // New team
   document.getElementById('newTeamBtn').addEventListener('click', () => {
     openModal('New Team', `

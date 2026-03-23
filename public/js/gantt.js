@@ -325,14 +325,13 @@
       if (conn.active) { e.preventDefault(); cancelConnecting(); }
     });
 
-    // Toggle dependency arrows button
-    const toggleDepsBtn = document.getElementById('toggleDepsBtn');
-    if (toggleDepsBtn) {
+    // Toggle dependency arrows – driven by the settings checkbox
+    const showArrowsCheck = document.getElementById('settingsShowArrows');
+    if (showArrowsCheck) {
+      depsVisible = showArrowsCheck.checked;
       ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
-      toggleDepsBtn.classList.toggle('active', depsVisible);
-      toggleDepsBtn.addEventListener('click', () => {
-        depsVisible = !depsVisible;
-        toggleDepsBtn.classList.toggle('active', depsVisible);
+      showArrowsCheck.addEventListener('change', () => {
+        depsVisible = showArrowsCheck.checked;
         ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
         render();
       });
@@ -1393,19 +1392,35 @@
 
         // Snap the closer end to the nearest task edge
         let effectiveLeft = rawLeft;
+        let leftSnapped = false;
+        let rightSnapped = false;
         if (snapPx > 0) {
           const snapL = nearestSnapTarget(rawLeft);
           const snapR = nearestSnapTarget(rawRight);
           if (snapL !== null || snapR !== null) {
             const dL = snapL !== null ? Math.abs(rawLeft  - snapL) : Infinity;
             const dR = snapR !== null ? Math.abs(rawRight - snapR) : Infinity;
-            effectiveLeft = dL <= dR ? snapL : snapR - drag.origWidthPx;
+            if (dL <= dR) {
+              effectiveLeft = snapL;
+              leftSnapped = true;
+            } else {
+              effectiveLeft = snapR - drag.origWidthPx;
+              rightSnapped = true;
+            }
           }
         }
 
         drag.containerEl.style.left = effectiveLeft + 'px';
-        showSnapLine(effectiveLeft);
-        showSnapLine2(effectiveLeft + drag.origWidthPx);
+        // Only show snap lines when the bar edge aligns with another task edge
+        if (leftSnapped) {
+          showSnapLine(effectiveLeft);
+          if (snapLine2El) snapLine2El.style.display = 'none';
+        } else if (rightSnapped) {
+          showSnapLine2(effectiveLeft + drag.origWidthPx);
+          if (snapLineEl) snapLineEl.style.display = 'none';
+        } else {
+          hideSnapLine();
+        }
       } else if (drag.type === 'resize-left') {
         const rawLeft  = drag.origLeftPx  + deltaX;
         const rawWidth = drag.origWidthPx - deltaX;
@@ -1416,8 +1431,12 @@
             drag.containerEl.style.left  = effectivePx + 'px';
             drag.containerEl.style.width = effectiveWidth + 'px';
           }
-          showSnapLine(effectivePx);
-          showSnapLine2(drag.origLeftPx + drag.origWidthPx);
+          // Only show snap line when snapped to a task edge
+          if (drag.snapActivePx !== null) {
+            showSnapLine(effectivePx);
+          } else {
+            hideSnapLine();
+          }
         }
       } else if (drag.type === 'resize-right') {
         const rawWidth = drag.origWidthPx + deltaX;
@@ -1428,8 +1447,12 @@
           if (effectiveWidth >= MIN_DAYS * pxPerDay) {
             drag.containerEl.style.width = effectiveWidth + 'px';
           }
-          showSnapLine(drag.origLeftPx);
-          showSnapLine2(effectiveRightPx);
+          // Only show snap line when snapped to a task edge
+          if (drag.snapActivePx !== null) {
+            showSnapLine(effectiveRightPx);
+          } else {
+            hideSnapLine();
+          }
         }
       }
 
