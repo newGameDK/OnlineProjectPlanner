@@ -48,6 +48,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 }
 .btn:hover { filter: brightness(0.92); }
 .btn:active { filter: brightness(0.85); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
 .btn-primary { background: var(--primary); color: #fff; }
 .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); }
 .btn-danger { background: var(--danger); color: #fff; }
