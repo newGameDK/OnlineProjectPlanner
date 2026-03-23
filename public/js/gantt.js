@@ -76,6 +76,8 @@
     snappedDays: 0,
     origLeftPx: 0,      // original CSS left (px) for pixel-precise drag
     origWidthPx: 0,     // original CSS width (px)
+    snapBroken: false,  // true once snap is intentionally broken this drag
+    snapActivePx: null, // current snap target pixel (null = not snapping)
   };
 
   // ── connecting state ──────────────────────────────────────────────────────
@@ -540,7 +542,7 @@
       if (isCompleted) {
         const check = document.createElement('span');
         check.className = 'gantt-completed-check';
-        check.textContent = '\u2713'; // ✓
+        check.textContent = '\u2705'; // ✅
         check.title = 'Task completed';
         row.appendChild(check);
       }
@@ -1128,7 +1130,7 @@
     if (isCompleted) {
       const barCheck = document.createElement('span');
       barCheck.className   = 'gantt-bar-completed-check';
-      barCheck.textContent = '\u2713'; // ✓
+      barCheck.textContent = '\u2705'; // ✅
       barCheck.title       = 'Task completed';
       bar.appendChild(barCheck);
     }
@@ -1267,6 +1269,50 @@
   // =========================================================================
   // Drag – resize & move
   // =========================================================================
+
+  // Returns snap-adjusted edge pixel position (or rawPx if snap is broken/none).
+  // Snaps the dragged edge to the nearest start/end of another task within 5px.
+  // Once a snap is broken (moved > 5px away), sets drag.snapBroken = true and
+  // stops snapping for the rest of this drag operation.
+  const SNAP_PX = 5;
+  function applyEdgeSnap(rawPx) {
+    if (drag.snapBroken) return rawPx;
+
+    // If currently snapped, check whether the snap has been broken
+    if (drag.snapActivePx !== null) {
+      if (Math.abs(rawPx - drag.snapActivePx) > SNAP_PX) {
+        drag.snapBroken   = true;
+        drag.snapActivePx = null;
+        return rawPx;
+      }
+      return drag.snapActivePx; // stay snapped
+    }
+
+    // Look for a new snap target
+    let bestPx   = null;
+    let bestDist = SNAP_PX + 1;
+    const entries = S().ganttEntries;
+    for (let i = 0; i < entries.length; i++) {
+      const en = entries[i];
+      if (en.id === drag.entryId) continue;
+      const startDate = parseDate(en.start_date);
+      const endDate   = parseDate(en.end_date);
+      if (!startDate || !endDate || !chartStart) continue;
+      const startPx = daysBetween(chartStart, startDate) * pxPerDay;
+      const endPx   = daysBetween(chartStart, endDate)   * pxPerDay;
+      const dS = Math.abs(rawPx - startPx);
+      const dE = Math.abs(rawPx - endPx);
+      if (dS < bestDist) { bestDist = dS; bestPx = startPx; }
+      if (dE < bestDist) { bestDist = dE; bestPx = endPx; }
+    }
+
+    if (bestPx !== null) {
+      drag.snapActivePx = bestPx;
+      return bestPx;
+    }
+    return rawPx;
+  }
+
   function startDrag(e, type, entry, barEl, containerEl) {
     drag.active      = true;
     drag.type        = type;
@@ -1279,6 +1325,8 @@
     drag.snappedDays = 0;
     drag.origLeftPx  = parseFloat(containerEl.style.left)  || 0;
     drag.origWidthPx = parseFloat(containerEl.style.width) || 0;
+    drag.snapBroken  = false;
+    drag.snapActivePx = null;
 
     barEl.style.opacity    = '0.75';
     barEl.style.cursor     = type === 'move' ? 'grabbing' : 'col-resize';
@@ -1291,20 +1339,28 @@
     if (drag.active) {
       const deltaX = e.pageX - drag.startX;
 
-      // Move/resize the bar at pixel precision so the edge stays at the cursor
       if (drag.type === 'move') {
         drag.containerEl.style.left = (drag.origLeftPx + deltaX) + 'px';
       } else if (drag.type === 'resize-left') {
-        const newLeft  = drag.origLeftPx  + deltaX;
-        const newWidth = drag.origWidthPx - deltaX;
-        if (newWidth >= MIN_DAYS * pxPerDay) {
-          drag.containerEl.style.left  = newLeft  + 'px';
-          drag.containerEl.style.width = newWidth + 'px';
+        const rawLeft  = drag.origLeftPx  + deltaX;
+        const rawWidth = drag.origWidthPx - deltaX;
+        if (rawWidth >= MIN_DAYS * pxPerDay) {
+          const effectivePx = applyEdgeSnap(rawLeft);
+          const effectiveWidth = drag.origLeftPx + drag.origWidthPx - effectivePx;
+          if (effectiveWidth >= MIN_DAYS * pxPerDay) {
+            drag.containerEl.style.left  = effectivePx + 'px';
+            drag.containerEl.style.width = effectiveWidth + 'px';
+          }
         }
       } else if (drag.type === 'resize-right') {
-        const newWidth = drag.origWidthPx + deltaX;
-        if (newWidth >= MIN_DAYS * pxPerDay) {
-          drag.containerEl.style.width = newWidth + 'px';
+        const rawWidth = drag.origWidthPx + deltaX;
+        if (rawWidth >= MIN_DAYS * pxPerDay) {
+          const rawRightPx = drag.origLeftPx + rawWidth;
+          const effectiveRightPx = applyEdgeSnap(rawRightPx);
+          const effectiveWidth = effectiveRightPx - drag.origLeftPx;
+          if (effectiveWidth >= MIN_DAYS * pxPerDay) {
+            drag.containerEl.style.width = effectiveWidth + 'px';
+          }
         }
       }
 
@@ -1365,8 +1421,21 @@
     document.body.style.userSelect = '';
     if (drag.ghostEl) { drag.ghostEl.style.opacity = ''; drag.ghostEl.style.cursor = ''; }
 
-    // Capture drag state and reset immediately to prevent sticking
-    const deltaDays    = Math.round((e.pageX - drag.startX) / pxPerDay);
+    // Capture drag state and reset immediately to prevent sticking.
+    // When a snap is active, compute deltaDays from the snapped pixel position
+    // so the saved dates match the visually snapped bar position.
+    let deltaDays;
+    const snapPx   = drag.snapActivePx;
+    const dragType = drag.type;
+    if (snapPx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
+      if (dragType === 'resize-left') {
+        deltaDays = Math.round((snapPx - drag.origLeftPx) / pxPerDay);
+      } else {
+        deltaDays = Math.round((snapPx - drag.origLeftPx - drag.origWidthPx) / pxPerDay);
+      }
+    } else {
+      deltaDays = Math.round((e.pageX - drag.startX) / pxPerDay);
+    }
     const { newStart, newEnd } = calcDragDates(deltaDays);
     const entryId      = drag.entryId;
     const containerEl  = drag.containerEl;
@@ -1375,6 +1444,7 @@
 
     drag.active = false; drag.type = null; drag.entryId = null;
     drag.ghostEl = null; drag.containerEl = null;
+    drag.snapActivePx = null;
 
     if (deltaDays === 0) {
       // No movement → treat as a click: select the entry.
