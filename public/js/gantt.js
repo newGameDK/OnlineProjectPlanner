@@ -148,7 +148,7 @@
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected };
+  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
@@ -499,7 +499,11 @@
       // Drag handle for reparenting / reordering
       const grip = document.createElement('span');
       grip.className = 'gantt-task-grip';
-      grip.textContent = '\u2261';  // ≡
+      grip.innerHTML = '<svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor" aria-hidden="true">' +
+        '<circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/>' +
+        '<circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/>' +
+        '<circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/>' +
+        '</svg>';
       grip.title = 'Drag to reorder or move under another task';
       grip.setAttribute('aria-label', 'Drag to reorder or move under another task');
       grip.addEventListener('mousedown', (e) => {
@@ -1271,16 +1275,22 @@
   // =========================================================================
 
   // Returns snap-adjusted edge pixel position (or rawPx if snap is broken/none).
-  // Snaps the dragged edge to the nearest start/end of another task within 5px.
-  // Once a snap is broken (moved > 5px away), sets drag.snapBroken = true and
+  // Snaps the dragged edge to the nearest start/end of another task within snapPx pixels.
+  // Once a snap is broken (moved > snapPx away), sets drag.snapBroken = true and
   // stops snapping for the rest of this drag operation.
-  const SNAP_PX = 5;
+  // snapPx is configurable via setSnapPx() and persisted in localStorage.
+  let snapPx = Math.max(0, parseInt(localStorage.getItem('ganttSnapPx') || '5', 10));
+  function setSnapPx(val) {
+    snapPx = Math.max(0, Math.min(30, parseInt(val, 10) || 0));
+    localStorage.setItem('ganttSnapPx', snapPx);
+  }
+
   function applyEdgeSnap(rawPx) {
-    if (drag.snapBroken) return rawPx;
+    if (snapPx === 0 || drag.snapBroken) return rawPx;
 
     // If currently snapped, check whether the snap has been broken
     if (drag.snapActivePx !== null) {
-      if (Math.abs(rawPx - drag.snapActivePx) > SNAP_PX) {
+      if (Math.abs(rawPx - drag.snapActivePx) > snapPx) {
         drag.snapBroken   = true;
         drag.snapActivePx = null;
         return rawPx;
@@ -1290,7 +1300,7 @@
 
     // Look for a new snap target
     let bestPx   = null;
-    let bestDist = SNAP_PX + 1;
+    let bestDist = snapPx + 1;
     const entries = S().ganttEntries;
     for (let i = 0; i < entries.length; i++) {
       const en = entries[i];
@@ -1425,13 +1435,13 @@
     // When a snap is active, compute deltaDays from the snapped pixel position
     // so the saved dates match the visually snapped bar position.
     let deltaDays;
-    const snapPx   = drag.snapActivePx;
+    const snapActivePx = drag.snapActivePx;
     const dragType = drag.type;
-    if (snapPx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
+    if (snapActivePx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
       if (dragType === 'resize-left') {
-        deltaDays = Math.round((snapPx - drag.origLeftPx) / pxPerDay);
+        deltaDays = Math.round((snapActivePx - drag.origLeftPx) / pxPerDay);
       } else {
-        deltaDays = Math.round((snapPx - drag.origLeftPx - drag.origWidthPx) / pxPerDay);
+        deltaDays = Math.round((snapActivePx - drag.origLeftPx - drag.origWidthPx) / pxPerDay);
       }
     } else {
       deltaDays = Math.round((e.pageX - drag.startX) / pxPerDay);
@@ -1629,8 +1639,21 @@
       const tgtEntry = entries[tgtIdx];
       if (!srcEntry || !tgtEntry) return;
 
-      const x1 = Math.max(0, daysBetween(chartStart, parseDate(srcEntry.end_date)))   * pxPerDay;
-      const x2 = Math.max(0, daysBetween(chartStart, parseDate(tgtEntry.start_date))) * pxPerDay;
+      // Use the same clamping + MIN_DAYS logic as buildBar so the arrow
+      // always starts from the visual right edge of the source bar.
+      const srcStart    = parseDate(srcEntry.start_date);
+      const srcEnd      = parseDate(srcEntry.end_date);
+      const srcClipped  = (srcStart && srcStart < chartStart) ? chartStart : srcStart;
+      const x1 = srcClipped
+        ? (daysBetween(chartStart, srcClipped) + Math.max(MIN_DAYS, daysBetween(srcClipped, srcEnd))) * pxPerDay
+        : Math.max(0, daysBetween(chartStart, srcEnd)) * pxPerDay;
+
+      // Target: left edge of the visual bar (clamped to chart start)
+      const tgtStart    = parseDate(tgtEntry.start_date);
+      const tgtClipped  = (tgtStart && tgtStart < chartStart) ? chartStart : tgtStart;
+      const x2 = tgtClipped
+        ? Math.max(0, daysBetween(chartStart, tgtClipped)) * pxPerDay
+        : Math.max(0, daysBetween(chartStart, parseDate(tgtEntry.start_date))) * pxPerDay;
       const y1 = srcIdx * ROW_H + ROW_H / 2;
       const y2 = tgtIdx * ROW_H + ROW_H / 2;
 
