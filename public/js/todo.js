@@ -373,6 +373,7 @@
     const data = await API('PUT', `/api/todos/${todo.id}`, { status });
     const idx = S().todos.findIndex(t => t.id === todo.id);
     if (idx !== -1) S().todos[idx] = data.todo;
+    if (status === 'done') window.soundsModule?.play('task_done');
     render();
   }
 

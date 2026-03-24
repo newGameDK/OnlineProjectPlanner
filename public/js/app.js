@@ -347,23 +347,6 @@ function setupEventListeners() {
     });
   })();
 
-  // Dep-node opacity slider (admin-only)
-  (function initDepNodeOpacitySlider() {
-    const slider = document.getElementById('depNodeOpacitySlider');
-    const label  = document.getElementById('depNodeOpacityLabel');
-    if (!slider || !label) return;
-    const saved = parseFloat(localStorage.getItem('ganttDepNodeOpacity'));
-    const pct = Math.round((isNaN(saved) ? 1 : Math.max(0.05, Math.min(1, saved))) * 100);
-    slider.value = pct;
-    label.textContent = pct;
-    slider.addEventListener('input', () => {
-      label.textContent = slider.value;
-      if (window.ganttModule && window.ganttModule.setDepNodeOpacity) {
-        window.ganttModule.setDepNodeOpacity(parseInt(slider.value, 10) / 100);
-      }
-    });
-  })();
-
   // Enable snap checkbox
   (function initSnapEnabledCheckbox() {
     const checkbox = document.getElementById('settingsSnapEnabled');
@@ -543,6 +526,16 @@ function setupEventListeners() {
 
   // Export CSV
   document.getElementById('exportCsvBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); exportCSV(); });
+
+  // Sound settings
+  const soundsBtn = document.getElementById('soundsBtn');
+  if (soundsBtn) {
+    soundsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllDropdowns();
+      window.soundsModule?.openSettingsModal();
+    });
+  }
 
   // Export PDF (print)
   document.getElementById('exportPdfBtn').addEventListener('click', (e) => { e.stopPropagation(); closeAllDropdowns(); exportPDF(); });
