@@ -170,15 +170,26 @@ async function openUpdateModal() {
     try {
       let data;
 
-      // Primary path: browser downloads the ZIP directly and uploads it to the
-      // server.  This avoids server-side download timeouts (nginx proxy_read_timeout,
-      // PHP execution limits, allow_url_fopen restrictions) that would cause the
-      // server to return a non-JSON error page.
+      // Step 1: Try to download the ZIP directly in the browser.
+      // This avoids server-side download timeouts (nginx proxy_read_timeout,
+      // PHP execution limits, allow_url_fopen restrictions).
+      // If the browser download fails (e.g. CORS), fall back to the server-side
+      // download path.  If it succeeds but the subsequent upload fails (e.g.
+      // auth error), surface that error directly – the server-side path would
+      // fail for the same reason.
+      let zipBlob = null;
       try {
         const zipRes = await fetch(url);
-        if (!zipRes.ok) throw new Error('Download failed: HTTP ' + zipRes.status);
-        const zipBlob = await zipRes.blob();
+        if (!zipRes.ok) throw new Error('HTTP ' + zipRes.status);
+        zipBlob = await zipRes.blob();
+      } catch (downloadErr) {
+        // Browser-side download failed (CORS, network, etc.) – will use
+        // server-side fallback below.
+        console.debug('Browser download failed, falling back to server:', downloadErr);
+      }
 
+      if (zipBlob) {
+        // Primary path: upload the browser-downloaded ZIP to the server.
         progressBar.style.width = '60%';
         statusEl.textContent = 'Installing…';
 
@@ -196,7 +207,7 @@ async function openUpdateModal() {
         }
         data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Update failed');
-      } catch (browserErr) {
+      } else {
         // Fallback: ask the server to download from GitHub.
         // This may fail on hosting environments with restrictive timeouts.
         progressBar.style.width = '30%';
