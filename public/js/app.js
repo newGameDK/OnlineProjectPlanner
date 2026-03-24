@@ -270,6 +270,8 @@ function showWelcome() {
 function setupEventListeners() {
   // Sidebar toggle
   document.getElementById('sidebarToggle').addEventListener('click', () => {
+    // On mobile, the sidebar is managed as an overlay by mobile.js.
+    if (document.documentElement.classList.contains('is-mobile')) return;
     document.getElementById('sidebar').classList.toggle('collapsed');
   });
 

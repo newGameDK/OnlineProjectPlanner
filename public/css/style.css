@@ -778,10 +778,97 @@ body.connecting-mode .gantt-task-row:hover {
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* Responsive */
+/* =====================================================================
+   Mobile – sidebar backdrop overlay
+   ===================================================================== */
+.sidebar-backdrop {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 149;
+}
+html.is-mobile .sidebar-backdrop.visible { display: block; }
+
+/* =====================================================================
+   Responsive – tablets and phones  (≤ 768 px)
+   ===================================================================== */
 @media (max-width: 768px) {
-  :root { --sidebar-w: 200px; --task-col-w: 200px; }
-  .toolbar-group { flex-wrap: wrap; }
+  :root {
+    --sidebar-w: 280px;
+    --task-col-w: 200px;
+    --row-h: 44px;        /* larger touch target for task rows */
+  }
+
+  /* ── Sidebar: slide-in overlay ──────────────────────────────────── */
+  html.is-mobile .sidebar {
+    position: fixed;
+    top: var(--topbar-h);
+    left: 0;
+    bottom: 0;
+    height: calc(100vh - var(--topbar-h));
+    z-index: 150;
+    width: var(--sidebar-w);
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    box-shadow: var(--shadow-md);
+    overflow-y: auto;
+  }
+  /* Override the desktop collapsed state (width:0 / overflow:hidden) without
+     !important by using higher specificity than .sidebar.collapsed */
+  html.is-mobile .sidebar.collapsed {
+    width: var(--sidebar-w);
+    overflow-y: auto;
+  }
+  html.is-mobile .sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* ── Topbar: hide breadcrumb on very small screens ──────────────── */
+  .breadcrumb { display: none; }
+
+  /* ── Toolbar: single scrollable row ────────────────────────────── */
+  .project-toolbar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .project-toolbar::-webkit-scrollbar { display: none; }
+  .toolbar-group { flex-shrink: 0; flex-wrap: nowrap; }
+
+  /* ── Larger touch targets ───────────────────────────────────────── */
+  .btn    { min-height: 36px; }
+  .btn-sm { min-height: 32px; padding: 5px 10px; font-size: 12px; }
+  .icon-btn { min-width: 36px; min-height: 36px; }
+  .sidebar-item { padding: 10px 12px; }
+  .toolbar-dropdown-item { padding: 11px 14px; }
+  .view-tab { padding: 10px 18px; }
+
+  /* ── Gantt task-row actions: always visible (no hover) ─────────── */
+  .gantt-task-actions { display: flex; }
+
+  /* ── Gantt bar resize handles: always visible (no hover needed) ── */
+  /* !important needed: gantt.js sets opacity via inline style on mousemove/mouseleave */
+  .gantt-bar-handle { opacity: 0.6 !important; }
+
+  /* ── Dep nodes: always visible ──────────────────────────────────── */
+  /* !important needed: gantt.js sets opacity/transform via inline style on proximity events */
+  .dep-node.always-visible,
+  .dep-node { opacity: 1 !important; transform: translateY(-50%) scale(1) !important; }
+
+  /* ── Hours panel: hide on phones to save width ──────────────────── */
+  .gantt-hours-panel,
+  .gantt-ruler-hours-spacer,
+  #ganttHoursHeader { display: none !important; }
+
+  /* ── Modal: full-width on phones ────────────────────────────────── */
+  .modal {
+    width: calc(100vw - 24px);
+    max-width: none;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+  }
 }
 
 /* =====================================================================
