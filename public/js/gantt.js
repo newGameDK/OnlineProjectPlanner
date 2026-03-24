@@ -200,7 +200,7 @@
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx };
+  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx, setDepNodeOpacity };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
@@ -1393,7 +1393,7 @@
     inputNode.addEventListener('mouseleave', () => {
       inputNode.classList.remove('connecting-target');
     });
-    bar.appendChild(inputNode);
+    container.appendChild(inputNode);
 
     // ── Output node (bottom-right of bar – sends dependency arrows) ────────
     const outputNode = document.createElement('div');
@@ -1406,10 +1406,10 @@
       e.stopPropagation();
       if (!conn.active) startConnecting(entry, container);
     });
-    bar.appendChild(outputNode);
+    container.appendChild(outputNode);
 
     // ── Proximity-based scaling for output node and resize handles ─────────
-    bar.addEventListener('mousemove', (e) => {
+    container.addEventListener('mousemove', (e) => {
       if (drag.active) return;
       const rect = bar.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -1438,7 +1438,7 @@
       const opRight = Math.max(0, Math.min(1, 1 - distRight / prox));
       hRight.style.opacity = opRight;
     });
-    bar.addEventListener('mouseleave', () => {
+    container.addEventListener('mouseleave', () => {
       if (drag.active) return;
       if (!outputNode.classList.contains('always-visible')) {
         outputNode.style.transform = 'translateY(-50%) scale(0)';
@@ -1548,6 +1548,18 @@
   function setProximityPx(val) {
     proximityPx = Math.max(10, Math.min(200, parseInt(val, 10) || 60));
     localStorage.setItem('ganttProximityPx', proximityPx);
+  }
+
+  // Dep-node opacity – controls the opacity of always-visible dependency anchor nodes.
+  (function initDepNodeOpacity() {
+    const saved = parseFloat(localStorage.getItem('ganttDepNodeOpacity'));
+    const opacity = isNaN(saved) ? 1 : Math.max(0.05, Math.min(1, saved));
+    document.documentElement.style.setProperty('--dep-node-opacity', opacity);
+  })();
+  function setDepNodeOpacity(val) {
+    const opacity = Math.max(0.05, Math.min(1, parseFloat(val) || 1));
+    localStorage.setItem('ganttDepNodeOpacity', opacity);
+    document.documentElement.style.setProperty('--dep-node-opacity', opacity);
   }
 
   function applyEdgeSnap(rawPx) {
