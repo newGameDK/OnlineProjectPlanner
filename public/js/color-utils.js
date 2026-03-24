@@ -88,3 +88,14 @@ function lightenColor(hex, amount) {
   const [h, s, l] = rgbToHsl(r, g, b);
   return hslToHex(h, s, Math.min(0.92, l + amount));
 }
+
+/**
+ * Return a darker version of a hex color by decreasing HSL lightness.
+ * @param {string} hex   - Input color e.g. '#4CAF50'
+ * @param {number} amount - How much to subtract from lightness (0–1 range)
+ */
+function darkenColor(hex, amount) {
+  const [r, g, b] = hexToRgb(hex);
+  const [h, s, l] = rgbToHsl(r, g, b);
+  return hslToHex(h, s, Math.max(0, l - amount));
+}

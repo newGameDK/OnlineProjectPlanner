@@ -700,20 +700,17 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   border: 2px solid rgba(255,255,255,0.9);
   cursor: crosshair; z-index: 20; opacity: 0;
   transition: opacity .15s, transform .15s;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 8px; color: #fff; font-weight: 700;
   box-shadow: 0 1px 4px rgba(0,0,0,.35);
 }
 .gantt-bar:hover .dep-node.input-node,
 .dep-node.input-node.always-visible { opacity: 1; }
 .dep-node.output-node.always-visible { opacity: 1; transform: translateY(-50%) scale(1); }
 .deps-hidden .dep-node { display: none !important; }
-.dep-node.input-node  { left: -7px;  background: #1565C0; }
+.dep-node.input-node  { left: -8px; }
 .dep-node.output-node {
-  top: 50%; right: -7px;
+  top: 50%; right: -8px;
   transform: translateY(-50%) scale(0);
   transform-origin: left center;
-  background: #2e7d32;
 }
 .dep-node.input-node:hover  { transform: translateY(-50%) scale(1.3); }
 .dep-node.output-node:hover { transform: translateY(-50%) scale(1.3); }
