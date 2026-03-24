@@ -8,6 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <title>OnlineProjectPlanner</title>
   <link rel="stylesheet" href="css/style.css?v=1.1.0">
+  <script>if(localStorage.getItem('ganttDarkMode')==='true')document.documentElement.classList.add('dark-mode');</script>
 </head>
 <body class="app-page">
 
@@ -138,6 +139,9 @@
                   </label>
                   <label class="toolbar-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
                     <input type="checkbox" id="settingsSnapEnabled" checked> Enable snap
+                  </label>
+                  <label class="toolbar-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="settingsDarkMode"> Dark mode
                   </label>
                 </div>
                 <div id="adminOnlySettings" style="display:none">
