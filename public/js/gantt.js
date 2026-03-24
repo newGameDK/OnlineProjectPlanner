@@ -1083,7 +1083,8 @@
   // ─── rows & bars ──────────────────────────────────────────────────────────
   function renderRowsAndBars(entries, timelineW) {
     ganttRows.style.width = timelineW + 'px';
-    if (snapLineEl) { snapLineEl.remove(); snapLineEl = null; }
+    if (snapLineEl)  { snapLineEl.remove();  snapLineEl  = null; }
+    if (snapLine2El) { snapLine2El.remove(); snapLine2El = null; }
     ganttRows.innerHTML   = '';
 
     entries.forEach(entry => {
