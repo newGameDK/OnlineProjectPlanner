@@ -414,6 +414,16 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-task-row:hover .gantt-task-grip { opacity: 1; }
 .gantt-task-grip:active { cursor: grabbing; }
 
+/* Long-press visual feedback: ring expands inward over 500 ms to signal drag will activate */
+@keyframes lp-fill {
+  from { box-shadow: 0 0 0 0   rgba(33,150,243,0.2); }
+  to   { box-shadow: 0 0 0 4px rgba(33,150,243,0.65); }
+}
+.long-press-pending {
+  animation: lp-fill 0.5s linear forwards !important;
+  user-select: none !important;
+}
+
 /* Reparent ghost (floating row during drag) */
 .reparent-ghost {
   position: fixed; z-index: 1000; pointer-events: none;
@@ -847,6 +857,10 @@ html.is-mobile .sidebar-backdrop.visible { display: block; }
 
   /* ── Gantt task-row actions: always visible (no hover) ─────────── */
   .gantt-task-actions { display: flex; }
+
+  /* ── Drag grip: always visible on touch devices ─────────────────── */
+  /* !important needed: gantt.js sets opacity via CSS transition on hover */
+  .gantt-task-grip { opacity: 0.6 !important; }
 
   /* ── Gantt bar resize handles: always visible (no hover needed) ── */
   /* !important needed: gantt.js sets opacity via inline style on mousemove/mouseleave */
