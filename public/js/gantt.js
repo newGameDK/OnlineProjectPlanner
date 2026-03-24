@@ -101,6 +101,14 @@
     dropIndicatorTimelineEl: null, // matching horizontal line shown in timeline rows
   };
 
+  // ── Long-press touch-drag state ────────────────────────────────────────────
+  let _lpTimer   = null;  // setTimeout handle for long-press detection
+  let _lpTouchId = null;  // Touch.identifier being tracked
+  let _lpStartX  = 0;     // initial touch X (clientX / pageX depending on context)
+  let _lpStartY  = 0;
+  const _LP_DELAY     = 500; // ms hold required to activate drag
+  const _LP_THRESHOLD = 8;   // px movement that cancels the long-press
+
   // ─── DOM refs ─────────────────────────────────────────────────────────────
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
@@ -651,10 +659,45 @@
       });
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        // contextmenu is handled globally when connecting; skip here
-        if (conn.active) return;
+        // contextmenu is handled globally when connecting; also skip during drag
+        if (conn.active || reparentDrag.active) return;
         showEntryContextMenu(e.pageX, e.pageY, entry);
       });
+
+      // ── Touch: long-press on row to start reparent / reorder drag ──────────
+      row.addEventListener('touchstart', (e) => {
+        if (reparentDrag.active || drag.active || conn.active) return;
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        _lpTouchId = t.identifier;
+        _lpStartX  = t.clientX;
+        _lpStartY  = t.clientY;
+        row.classList.add('long-press-pending');
+        _lpTimer = setTimeout(() => {
+          row.classList.remove('long-press-pending');
+          if (navigator.vibrate) navigator.vibrate(10);
+          startReparentDrag(_touchProxy(t), entry, row);
+          // startReparentDrag adds mouse listeners – swap them for touch listeners
+          document.removeEventListener('mousemove', onReparentMove);
+          document.removeEventListener('mouseup',   onReparentUp);
+          document.addEventListener('touchmove',   _onReparentTouchMove,  { passive: false });
+          document.addEventListener('touchend',    _onReparentTouchEnd);
+          document.addEventListener('touchcancel', _onReparentTouchEnd);
+        }, _LP_DELAY);
+      }, { passive: true });
+
+      row.addEventListener('touchmove', (e) => {
+        if (!_lpTimer) return;
+        const t = _findTouch(e.changedTouches, _lpTouchId);
+        if (!t) return;
+        if (Math.abs(t.clientX - _lpStartX) > _LP_THRESHOLD ||
+            Math.abs(t.clientY - _lpStartY) > _LP_THRESHOLD) {
+          _lpCancel(row);
+        }
+      }, { passive: true });
+
+      row.addEventListener('touchend',    () => _lpCancel(row));
+      row.addEventListener('touchcancel', () => _lpCancel(row));
 
       ganttTaskList.appendChild(row);
     });
@@ -692,6 +735,70 @@
 
     document.addEventListener('mousemove', onReparentMove);
     document.addEventListener('mouseup', onReparentUp);
+  }
+
+  // ─── Touch / long-press helpers ───────────────────────────────────────────
+
+  /** Cancel a pending long-press and clear visual feedback from el (if given). */
+  function _lpCancel(el) {
+    if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+    if (el) el.classList.remove('long-press-pending');
+    _lpTouchId = null;
+  }
+
+  /** Build a minimal mouse-event proxy from a Touch object. */
+  function _touchProxy(t) {
+    return {
+      clientX:  t.clientX  || 0,
+      clientY:  t.clientY  || 0,
+      pageX:    t.pageX    || 0,
+      pageY:    t.pageY    || 0,
+      shiftKey: false,
+    };
+  }
+
+  /** Find a touch by identifier in a TouchList without allocating an array. */
+  function _findTouch(list, id) {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].identifier === id) return list[i];
+    }
+    return null;
+  }
+
+  // Touch handlers for reparent (task-list) drag ────────────────────────────
+  function _onReparentTouchMove(e) {
+    if (!reparentDrag.active) return;
+    const t = _findTouch(e.touches, _lpTouchId);
+    if (!t) return;
+    e.preventDefault(); // stop page scroll while dragging
+    onReparentMove(_touchProxy(t));
+  }
+
+  function _onReparentTouchEnd() {
+    document.removeEventListener('touchmove',   _onReparentTouchMove);
+    document.removeEventListener('touchend',    _onReparentTouchEnd);
+    document.removeEventListener('touchcancel', _onReparentTouchEnd);
+    _lpTouchId = null;
+    onReparentUp({});
+  }
+
+  // Touch handlers for bar move / resize drag ───────────────────────────────
+  function _onBarTouchMove(e) {
+    if (!drag.active) return;
+    const t = _findTouch(e.touches, _lpTouchId);
+    if (!t) return;
+    e.preventDefault(); // stop page scroll while dragging
+    onMouseMove(_touchProxy(t));
+  }
+
+  async function _onBarTouchEnd(e) {
+    document.removeEventListener('touchmove',   _onBarTouchMove);
+    document.removeEventListener('touchend',    _onBarTouchEnd);
+    document.removeEventListener('touchcancel', _onBarTouchEnd);
+    const ch = e.changedTouches;
+    const t  = _findTouch(ch, _lpTouchId) || ch[0] || {};
+    _lpTouchId = null;
+    await onMouseUp(_touchProxy(t));
   }
 
   function _clearReparentFeedback() {
@@ -1234,6 +1341,16 @@
       e.preventDefault(); e.stopPropagation();
       startDrag(e, 'resize-left', entry, bar, container);
     });
+    hLeft.addEventListener('touchstart', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      _lpTouchId = t.identifier;
+      startDrag(_touchProxy(t), 'resize-left', entry, bar, container);
+      document.addEventListener('touchmove',   _onBarTouchMove,  { passive: false });
+      document.addEventListener('touchend',    _onBarTouchEnd);
+      document.addEventListener('touchcancel', _onBarTouchEnd);
+    }, { passive: false });
     bar.appendChild(hLeft);
 
     // ── Right resize handle ────────────────────────────────────────────────
@@ -1245,6 +1362,16 @@
       e.preventDefault(); e.stopPropagation();
       startDrag(e, 'resize-right', entry, bar, container);
     });
+    hRight.addEventListener('touchstart', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      _lpTouchId = t.identifier;
+      startDrag(_touchProxy(t), 'resize-right', entry, bar, container);
+      document.addEventListener('touchmove',   _onBarTouchMove,  { passive: false });
+      document.addEventListener('touchend',    _onBarTouchEnd);
+      document.addEventListener('touchcancel', _onBarTouchEnd);
+    }, { passive: false });
     bar.appendChild(hRight);
 
     // ── Input node (left edge of bar – receives dependency arrows) ─────────
@@ -1331,6 +1458,41 @@
       startDrag(e, 'move', entry, bar, container);
     });
 
+    // Touch: long-press on bar body to start move drag
+    bar.addEventListener('touchstart', (e) => {
+      if (conn.active) return;
+      if (e.target === hLeft || e.target === hRight ||
+          e.target === inputNode || e.target === outputNode ||
+          e.target === barIndicator) return;
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      _lpTouchId = t.identifier;
+      _lpStartX  = t.pageX;
+      _lpStartY  = t.pageY;
+      bar.classList.add('long-press-pending');
+      _lpTimer = setTimeout(() => {
+        bar.classList.remove('long-press-pending');
+        if (navigator.vibrate) navigator.vibrate(10);
+        startDrag(_touchProxy(t), 'move', entry, bar, container);
+        document.addEventListener('touchmove',   _onBarTouchMove,  { passive: false });
+        document.addEventListener('touchend',    _onBarTouchEnd);
+        document.addEventListener('touchcancel', _onBarTouchEnd);
+      }, _LP_DELAY);
+    }, { passive: true });
+
+    bar.addEventListener('touchmove', (e) => {
+      if (!_lpTimer) return;
+      const t = _findTouch(e.changedTouches, _lpTouchId);
+      if (!t) return;
+      if (Math.abs(t.pageX - _lpStartX) > _LP_THRESHOLD ||
+          Math.abs(t.pageY - _lpStartY) > _LP_THRESHOLD) {
+        _lpCancel(bar);
+      }
+    }, { passive: true });
+
+    bar.addEventListener('touchend',    () => _lpCancel(bar));
+    bar.addEventListener('touchcancel', () => _lpCancel(bar));
+
     bar.addEventListener('dblclick', (e) => {
       if (conn.active) return;
       e.stopPropagation();
@@ -1338,8 +1500,8 @@
     });
     bar.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      // contextmenu is handled globally when connecting; skip here
-      if (conn.active) return;
+      // contextmenu is handled globally when connecting; also skip during drag
+      if (conn.active || drag.active) return;
       showEntryContextMenu(e.pageX, e.pageY, entry);
     });
 
