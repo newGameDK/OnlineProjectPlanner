@@ -377,6 +377,21 @@ function setupEventListeners() {
     });
   })();
 
+  // Dark mode toggle
+  (function initDarkMode() {
+    const checkbox = document.getElementById('settingsDarkMode');
+    if (!checkbox) return;
+    const saved = localStorage.getItem('ganttDarkMode');
+    const dark  = saved === 'true';
+    checkbox.checked = dark;
+    document.documentElement.classList.toggle('dark-mode', dark);
+    checkbox.addEventListener('change', () => {
+      const val = checkbox.checked;
+      localStorage.setItem('ganttDarkMode', val);
+      document.documentElement.classList.toggle('dark-mode', val);
+    });
+  })();
+
   // New team
   document.getElementById('newTeamBtn').addEventListener('click', () => {
     openModal('New Team', `
