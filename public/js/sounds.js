@@ -108,7 +108,7 @@
         if (cached) {
           config = JSON.parse(cached);
         } else {
-          const resp = await fetch('sounds/sounds-config.json?_=' + Date.now(), { cache: 'no-store' });
+          const resp = await fetch('sounds/sounds-config.json', { cache: 'no-store' });
           if (resp.ok) {
             config = await resp.json();
             sessionStorage.setItem(configKey, JSON.stringify(config));
@@ -246,7 +246,8 @@
     manifest._instructions = [
       'This JSON bundle was exported from the OnlineProjectPlanner sound settings.',
       'To deploy server-side: decode each base64 audio entry and save the file to public/sounds/ using the filename shown.',
-      'Alternatively, extract using: node -e "const d=require(\'./sounds-pack.json\');const fs=require(\'fs\');Object.values(d.sounds).forEach(s=>{if(s.data)fs.writeFileSync(\'public/sounds/\'+s.file,Buffer.from(s.data,\'base64\'))})"',
+      'IMPORTANT: Validate that filenames do not contain path separators (/, \\, ..) before writing files.',
+      'Safe extraction example (Node.js): node -e "const d=require(\'./sounds-pack.json\');const fs=require(\'fs\'),path=require(\'path\');Object.values(d.sounds).forEach(s=>{if(!s.data||s.file.includes(\'..\'))return;fs.writeFileSync(path.join(\'public/sounds\',path.basename(s.file)),Buffer.from(s.data,\'base64\'))})"',
       'See public/sounds/sounds-config.json for event-to-filename mapping.'
     ];
 
