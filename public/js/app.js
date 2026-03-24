@@ -717,7 +717,7 @@ function getUserColor(userId, variation) {
 // Expose globally for cross-module use
 window.appState = state;
 window.appAPI = api;
-window.appUtils = { escHtml, formatDate, getUserColor, isColorDark, lightenColor, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn, updateUndoRedoBtns };
+window.appUtils = { escHtml, formatDate, getUserColor, isColorDark, lightenColor, darkenColor, generateColorVariations, openModal, closeModal, showContextMenu, updateDeleteBtn, updateUndoRedoBtns };
 
 // Start app
 init();

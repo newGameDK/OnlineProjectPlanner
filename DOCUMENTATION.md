@@ -145,7 +145,7 @@ Self-contained Gantt chart module. Exposed as `window.ganttModule`.
 - **Drag-to-move** – click and drag the body of a bar to move it in time (start and end shift together). Snaps to whole days.
 - **Drag-to-resize** – drag the left edge to change `start_date`; drag the right edge to change `end_date`.
 - **Sub-charts (hierarchy)** – double-click any entry to drill into it; all its children are shown as the new top level. A breadcrumb trail tracks the navigation path. Entries can be infinitely nested.
-- **Dependency arrows** – each bar has an output node (▶, right edge) and an input node (◀, left edge). Click the output node to enter *connecting mode*, then click an input node on another entry to draw a dependency arrow (SVG Bézier curve). Click an arrow to delete the dependency.
+- **Dependency arrows** – each bar has an output node (right edge) and an input node (left edge), shown as small circles in a darker shade of the task colour. Click the output node to enter *connecting mode*, then click an input node on another entry to draw a dependency arrow (SVG Bézier curve). Click an arrow to delete the dependency.
 - **Intensity bar** – a canvas-drawn chart above the timeline showing scheduled hours per day vs. team capacity. Green = under capacity, red = over capacity.
 - **Hours panel** – a right-side column showing total estimated hours per task, with recursive sums for parent tasks.
 - **Selection** – click to select a single entry, Shift+click to multi-select. The **Delete Selected** button or the Delete key removes all selected entries.

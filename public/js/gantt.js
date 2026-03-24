@@ -8,7 +8,7 @@
 //  • Drag bar body        → move entry (changes start + end together)
 //  • Drag LEFT handle     → resize: changes start_date only
 //  • Drag RIGHT handle    → resize: changes end_date only
-//  • Dependency nodes     → output node (right edge, green ▶) + input node (left edge, blue ◀)
+//  • Dependency nodes     → output node (right edge) + input node (left edge), darker-shade circles
 //      Click output node  → enter connecting mode; rubber-band SVG line follows mouse
 //      Click input node   → finish connection and save to server
 //      Click arrow        → delete dependency (with confirm)
@@ -1378,8 +1378,8 @@
     const inputNode = document.createElement('div');
     inputNode.className = 'dep-node input-node' + (hasDepsIn ? ' always-visible' : '');
     inputNode.title     = 'Input: this task depends on another (click while connecting)';
-    inputNode.dataset.help = 'Input node (◀): click here while in connecting mode to set this task as a dependency target';
-    inputNode.textContent = '\u25C4';
+    inputNode.dataset.help = 'Input node: click here while in connecting mode to set this task as a dependency target';
+    inputNode.style.background = U().darkenColor(color, 0.25);
 
     inputNode.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1399,8 +1399,8 @@
     const outputNode = document.createElement('div');
     outputNode.className = 'dep-node output-node' + (hasDepsOut ? ' always-visible' : '');
     outputNode.title     = 'Output: click to connect a dependency to another task';
-    outputNode.dataset.help = 'Output node (▶): click to start connecting a dependency arrow from this task to another';
-    outputNode.textContent = '\u25BA';
+    outputNode.dataset.help = 'Output node: click to start connecting a dependency arrow from this task to another';
+    outputNode.style.background = U().darkenColor(color, 0.25);
 
     outputNode.addEventListener('click', (e) => {
       e.stopPropagation();
