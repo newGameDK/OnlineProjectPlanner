@@ -43,6 +43,7 @@ html.dark-mode {
   --danger-light: #3e1a1a;
   --shadow: 0 2px 8px rgba(0,0,0,.3);
   --shadow-md: 0 4px 16px rgba(0,0,0,.4);
+  color-scheme: dark;
 }
 html.dark-mode .file-protocol-warning { background: #3e2a00; color: #ffb74d; }
 html.dark-mode .file-protocol-warning code { background: #4a3000; }
