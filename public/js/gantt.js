@@ -128,6 +128,8 @@
     el.style.height = ((botRow - topRow + 1) * ROW_H) + 'px';
   }
 
+  let _snapLineVisible = false;
+
   function showSnapLine(px) {
     if (!ganttRows) return;
     if (!snapLineEl) {
@@ -137,6 +139,7 @@
     }
     snapLineEl.style.left = px + 'px';
     _setSnapLineRowBounds(snapLineEl);
+    if (!_snapLineVisible) { _snapLineVisible = true; window.soundsModule?.play('snap_line'); }
     snapLineEl.style.display = 'block';
   }
 
@@ -153,6 +156,7 @@
   }
 
   function hideSnapLine() {
+    _snapLineVisible = false;
     if (snapLineEl)  snapLineEl.style.display  = 'none';
     if (snapLine2El) snapLine2El.style.display = 'none';
   }
@@ -200,7 +204,7 @@
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx, setDepNodeOpacity };
+  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
@@ -1255,7 +1259,6 @@
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
     const isSelected  = S().selectedGanttIds.has(entry.id);
     const deps        = S().dependencies || [];
-    const hasDepsIn   = deps.some(d => d.target_id === entry.id);
     const hasDepsOut  = deps.some(d => d.source_id === entry.id);
     const linkedTodo  = S().todos.find(t => t.gantt_entry_id === entry.id);
     const isCompleted = linkedTodo && linkedTodo.status === 'done';
@@ -1376,7 +1379,7 @@
 
     // ── Input node (left edge of bar – receives dependency arrows) ─────────
     const inputNode = document.createElement('div');
-    inputNode.className = 'dep-node input-node' + (hasDepsIn ? ' always-visible' : '');
+    inputNode.className = 'dep-node input-node';
     inputNode.title     = 'Input: this task depends on another (click while connecting)';
     inputNode.dataset.help = 'Input node: click here while in connecting mode to set this task as a dependency target';
     inputNode.style.background = U().darkenColor(color, 0.25);
@@ -1548,18 +1551,6 @@
   function setProximityPx(val) {
     proximityPx = Math.max(10, Math.min(200, parseInt(val, 10) || 60));
     localStorage.setItem('ganttProximityPx', proximityPx);
-  }
-
-  // Dep-node opacity – controls the opacity of always-visible dependency anchor nodes.
-  (function initDepNodeOpacity() {
-    const saved = parseFloat(localStorage.getItem('ganttDepNodeOpacity'));
-    const opacity = isNaN(saved) ? 1 : Math.max(0.05, Math.min(1, saved));
-    document.documentElement.style.setProperty('--dep-node-opacity', opacity);
-  })();
-  function setDepNodeOpacity(val) {
-    const opacity = Math.max(0.05, Math.min(1, parseFloat(val) || 1));
-    localStorage.setItem('ganttDepNodeOpacity', opacity);
-    document.documentElement.style.setProperty('--dep-node-opacity', opacity);
   }
 
   function applyEdgeSnap(rawPx) {
@@ -1816,6 +1807,15 @@
       return;
     }
 
+    // Play sound based on drag type and direction
+    if (dragType === 'move') {
+      window.soundsModule?.play('task_placed');
+    } else if (dragType === 'resize-right') {
+      window.soundsModule?.play(deltaDays > 0 ? 'stretch' : 'compress');
+    } else if (dragType === 'resize-left') {
+      window.soundsModule?.play(deltaDays < 0 ? 'stretch' : 'compress');
+    }
+
     if (deltaDays !== 0) {
       // Expand chart date range if entry moved/resized outside it
       expandChartRange({ start_date: newStart, end_date: newEnd });
@@ -1875,6 +1875,7 @@
     conn.active   = true;
     conn.sourceId = entry.id;
     document.body.classList.add('connecting-mode');
+    window.soundsModule?.play('anchor_click');
 
     // Source point: right edge of bar at row vertical center (matches output node)
     const rowIdx = rowIndexMap[entry.id] !== undefined ? rowIndexMap[entry.id] : 0;
@@ -1914,6 +1915,7 @@
       if (!S().dependencies.some(d => d.id === data.dep.id)) {
         S().dependencies.push(data.dep);
       }
+      window.soundsModule?.play('anchor_connect');
       render();
     } catch (err) {
       console.error('Create dependency failed:', err);

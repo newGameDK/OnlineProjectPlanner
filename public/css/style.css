@@ -28,6 +28,7 @@
   --task-col-w: 260px;
   --row-h: 40px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --dep-node-opacity: 0.55;
 }
 
 /* Dark mode overrides */
@@ -702,9 +703,8 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   transition: opacity .15s, transform .15s;
   box-shadow: 0 1px 4px rgba(0,0,0,.35);
 }
-.gantt-bar-container:hover .dep-node.input-node,
-.dep-node.input-node.always-visible { opacity: var(--dep-node-opacity, 1); }
-.dep-node.output-node.always-visible { opacity: var(--dep-node-opacity, 1); transform: translateY(-50%) scale(1); }
+.connecting-mode .dep-node.input-node { opacity: var(--dep-node-opacity); }
+.dep-node.output-node.always-visible { opacity: var(--dep-node-opacity); transform: translateY(-50%) scale(1); }
 .deps-hidden .dep-node { display: none !important; }
 .dep-node.input-node  { left: -8px; }
 .dep-node.output-node {

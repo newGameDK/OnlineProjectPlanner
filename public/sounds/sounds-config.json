@@ -1,0 +1,20 @@
+{
+  "_instructions": [
+    "Place your sound files in this directory (public/sounds/).",
+    "Each entry below maps a UI event to a sound file name.",
+    "Supported formats: mp3, ogg, wav, webm.",
+    "You can override individual sounds by placing a file with the exact name listed below.",
+    "Use the in-app Sound Settings menu (🔊) to upload and preview sounds directly in the browser.",
+    "The in-app upload stores sounds in your browser (IndexedDB) and takes priority over these files.",
+    "Use 'Download Pack' in the Sound Settings menu to export your uploaded sounds as a JSON bundle."
+  ],
+  "sounds": {
+    "stretch":        { "file": "stretch.mp3",        "label": "Stretch task (resize wider)" },
+    "compress":       { "file": "compress.mp3",       "label": "Compress task (resize narrower)" },
+    "anchor_click":   { "file": "anchor_click.mp3",   "label": "Anchor point click (start arrow)" },
+    "anchor_connect": { "file": "anchor_connect.mp3", "label": "Anchor point connect (arrow attached)" },
+    "task_done":      { "file": "task_done.mp3",      "label": "Task marked as done" },
+    "task_placed":    { "file": "task_placed.mp3",    "label": "Task placed after being moved" },
+    "snap_line":      { "file": "snap_line.mp3",      "label": "Blue snap line appears" }
+  }
+}
