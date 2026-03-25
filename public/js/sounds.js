@@ -314,7 +314,7 @@
         See <code>public/sounds/sounds-config.json</code> for file names and instructions.
       </div>`;
 
-    U.openModal('🔊 Sound Settings', html, () => {}, 'Close');
+    U.openModal('🔊 Sound Settings', html, () => U.closeModal(), 'Close');
 
     // Wire up events after modal is open
     setTimeout(() => {
