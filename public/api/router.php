@@ -219,7 +219,7 @@ function apply_zip_update($zipFilePath) {
         if (isset($vData['version'])) $newVersion = $vData['version'];
     }
 
-    $protectedPaths = ['api/data/'];
+    $protectedPaths = ['api/data/', 'sounds/'];
     $extracted = 0;
     $skipped   = 0;
 
