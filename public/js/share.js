@@ -466,8 +466,10 @@ function renderDependencyArrows(entries) {
     const tgtIdx = rowIndexMap[dep.target_id];
     if (srcIdx === undefined || tgtIdx === undefined) return;
 
-    const srcEntry = entries[srcIdx];
-    const tgtEntry = entries[tgtIdx];
+    // Look up the actual entry by ID (entries[idx] would be the row owner
+    // for same-row entries, giving wrong dates / positions).
+    const srcEntry = S.entries.find(e => e.id === dep.source_id) || entries[srcIdx];
+    const tgtEntry = S.entries.find(e => e.id === dep.target_id) || entries[tgtIdx];
     if (!srcEntry || !tgtEntry) return;
 
     const x1 = Math.max(0, daysBetween(chartStart, parseDate(srcEntry.end_date)))   * pxPerDay;

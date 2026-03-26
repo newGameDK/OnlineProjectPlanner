@@ -179,6 +179,8 @@
   /**
    * Get the display colour for an entry.  When inline-expanded (depth > 0)
    * the colour is derived from the root visible ancestor, lightened by depth.
+   * If the subtask has its own colour variation that differs from the parent,
+   * use the subtask's colour (still lightened by depth).
    */
   function getEntryColor(entry) {
     const depth = entry._depth || 0;
@@ -189,6 +191,14 @@
         const parent = S().ganttEntries.find(e => e.id === ancestor.parent_id);
         if (!parent) break;
         ancestor = parent;
+      }
+      // If the subtask has its own colour variation that differs from the
+      // parent's, honour it (still lightened by depth for visual distinction).
+      const ownVar = entry.color_variation || 0;
+      const ancestorVar = ancestor.color_variation || 0;
+      if (ownVar !== ancestorVar) {
+        const ownColor = U().getUserColor(entry.user_id, entry.color_variation);
+        return U().lightenColor(ownColor, depth * 0.15);
       }
       const baseColor = U().getUserColor(ancestor.user_id, ancestor.color_variation);
       return U().lightenColor(baseColor, depth * 0.15);
@@ -2073,9 +2083,25 @@
               } catch (err) { console.error('Clear new owner same_row failed:', err); }
             }
             try {
-              const data = await API('PUT', '/api/gantt/' + entryId, { same_row: resolvedTarget });
+              // Release parent-child relationship if source is child of target
+              const movedEntry = S().ganttEntries.find(en => en.id === entryId);
+              const updatePayload = { same_row: resolvedTarget };
+              if (movedEntry && movedEntry.parent_id === resolvedTarget) {
+                updatePayload.parent_id = null;
+              }
+              const data = await API('PUT', '/api/gantt/' + entryId, updatePayload);
               const idx = S().ganttEntries.findIndex(en => en.id === entryId);
               if (idx !== -1) S().ganttEntries[idx] = data.entry;
+
+              // Also release the reverse: if target is child of source
+              const targetEntry2 = S().ganttEntries.find(en => en.id === resolvedTarget);
+              if (targetEntry2 && targetEntry2.parent_id === entryId) {
+                try {
+                  const data2 = await API('PUT', '/api/gantt/' + resolvedTarget, { parent_id: null });
+                  const idx2 = S().ganttEntries.findIndex(en => en.id === resolvedTarget);
+                  if (idx2 !== -1) S().ganttEntries[idx2] = data2.entry;
+                } catch (err2) { console.error('Release child from parent on drag failed:', err2); }
+              }
             } catch (err) {
               console.error('Share row via bar drag failed:', err);
             }
@@ -2282,8 +2308,10 @@
       const tgtIdx = rowIndexMap[dep.target_id];
       if (srcIdx === undefined || tgtIdx === undefined) return;
 
-      const srcEntry = entries[srcIdx];
-      const tgtEntry = entries[tgtIdx];
+      // Look up the actual entry by ID (entries[idx] would be the row owner
+      // for same-row entries, giving wrong dates / positions).
+      const srcEntry = S().ganttEntries.find(e => e.id === dep.source_id) || entries[srcIdx];
+      const tgtEntry = S().ganttEntries.find(e => e.id === dep.target_id) || entries[tgtIdx];
       if (!srcEntry || !tgtEntry) return;
 
       // Use the same clamping + MIN_DAYS logic as buildBar so the arrow
@@ -2704,9 +2732,10 @@
 
     const colorPickerHtml = isSubtask
       ? '<div class="form-group"><label>Phase / Colour Variation</label>' +
+          '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
           '<input type="hidden" id="feColorVar" value="' + (entry.color_variation || 0) + '">' +
           '<small style="color:var(--text-muted);font-size:11px;display:block">' +
-            'Colour is inherited from the parent task and cannot be changed for sub-tasks.' +
+            'Colour is inherited from the parent task by default. Select a swatch to override.' +
           '</small>' +
         '</div>'
       : '<div class="form-group"><label>Phase / Colour Variation</label>' +
@@ -2874,9 +2903,28 @@
     if (resolvedTarget === sourceId) return;
 
     try {
-      const data = await API('PUT', '/api/gantt/' + sourceId, { same_row: resolvedTarget });
+      // If the source is a child of the resolved target, release the
+      // parent-child relationship so moving one doesn't stretch the other.
+      const sourceEntry = S().ganttEntries.find(e => e.id === sourceId);
+      const updatePayload = { same_row: resolvedTarget };
+      if (sourceEntry && sourceEntry.parent_id === resolvedTarget) {
+        updatePayload.parent_id = null;
+      }
+
+      const data = await API('PUT', '/api/gantt/' + sourceId, updatePayload);
       const idx = S().ganttEntries.findIndex(e => e.id === sourceId);
       if (idx !== -1) S().ganttEntries[idx] = data.entry;
+
+      // Also release the reverse: if the target is a child of the source
+      const resolvedEntry = S().ganttEntries.find(e => e.id === resolvedTarget);
+      if (resolvedEntry && resolvedEntry.parent_id === sourceId) {
+        try {
+          const data2 = await API('PUT', '/api/gantt/' + resolvedTarget, { parent_id: null });
+          const idx2 = S().ganttEntries.findIndex(e => e.id === resolvedTarget);
+          if (idx2 !== -1) S().ganttEntries[idx2] = data2.entry;
+        } catch (err2) { console.error('Release child from parent failed:', err2); }
+      }
+
       render();
     } catch (err) {
       console.error('Share row failed:', err);
