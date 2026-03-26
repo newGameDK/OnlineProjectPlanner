@@ -50,29 +50,68 @@ function closeModal() {
  * @param {number} x     - Left position (clientX / pageX)
  * @param {number} y     - Top position  (clientY / pageY)
  * @param {Array}  items - Menu item descriptors:
- *   { label, icon?, action, danger? } | { separator: true }
+ *   { label, icon?, action, danger? } | { separator: true } | { label, icon?, children: [...] }
+ *   Items with a `children` array render as a submenu that opens on hover.
  */
 function showContextMenu(x, y, items) {
   const menu = document.getElementById('contextMenu');
   const list = document.getElementById('contextMenuList');
   list.innerHTML = '';
-  items.forEach(item => {
-    if (item.separator) {
+
+  function buildList(parentUl, itemList) {
+    itemList.forEach(item => {
+      if (!item) return;
+      if (item.separator) {
+        const li = document.createElement('li');
+        li.className = 'separator';
+        parentUl.appendChild(li);
+        return;
+      }
       const li = document.createElement('li');
-      li.className = 'separator';
-      list.appendChild(li);
-      return;
-    }
-    const li = document.createElement('li');
-    if (item.danger) li.className = 'danger';
-    li.innerHTML = `${item.icon || ''} ${escHtml(item.label)}`;
-    li.addEventListener('click', (e) => {
-      e.stopPropagation();
-      menu.classList.add('hidden');
-      item.action();
+      if (item.danger) li.classList.add('danger');
+
+      if (item.children && item.children.length) {
+        li.classList.add('has-submenu');
+        const span = document.createElement('span');
+        span.innerHTML = (item.icon ? item.icon + ' ' : '') + escHtml(item.label);
+        li.appendChild(span);
+        const arrow = document.createElement('span');
+        arrow.className = 'submenu-arrow';
+        arrow.textContent = '▶';
+        li.appendChild(arrow);
+
+        const sub = document.createElement('ul');
+        sub.className = 'context-submenu';
+        buildList(sub, item.children);
+        li.appendChild(sub);
+
+        let hideTimer;
+        li.addEventListener('mouseenter', () => {
+          clearTimeout(hideTimer);
+          const liRect = li.getBoundingClientRect();
+          sub.classList.toggle('submenu-left', liRect.right + 170 > window.innerWidth);
+          sub.classList.add('open');
+        });
+        li.addEventListener('mouseleave', () => {
+          hideTimer = setTimeout(() => sub.classList.remove('open'), 120);
+        });
+        sub.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+        sub.addEventListener('mouseleave', () => {
+          hideTimer = setTimeout(() => sub.classList.remove('open'), 120);
+        });
+      } else {
+        li.innerHTML = (item.icon ? item.icon + ' ' : '') + escHtml(item.label);
+        li.addEventListener('click', (e) => {
+          e.stopPropagation();
+          menu.classList.add('hidden');
+          item.action();
+        });
+      }
+      parentUl.appendChild(li);
     });
-    list.appendChild(li);
-  });
+  }
+
+  buildList(list, items);
   // Position off-screen first so the browser can compute dimensions
   menu.style.left = '-9999px';
   menu.style.top  = '-9999px';

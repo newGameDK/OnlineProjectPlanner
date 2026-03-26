@@ -58,9 +58,13 @@
     startDay: 0,
     endDay: 0,
     mouseStartX: 0,
+    mouseStartY: 0,      // Y coordinate when drag started
+    startRowIndex: -1,   // row index where drag started
+    endRowIndex: -1,     // row index at current mouse position
+    shiftKey: false,     // whether Shift was held when the drag began
     overlayEl: null,
-    rowTop: 0,       // top px of the row where drag started (single-row selection)
-    rowIndex: -1,    // index of the row where drag started
+    rowTop: 0,       // top px of the row where drag started (kept for compat)
+    rowIndex: -1,    // index of the row where drag started (kept for compat)
   };
 
   // ── drag state ────────────────────────────────────────────────────────────
@@ -443,13 +447,13 @@
     // Right-click on empty timeline space → add task at clicked date
     ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
 
-    // Left-button drag on empty timeline → date-range selection (single row)
+    // Left-button drag on empty timeline → marquee selection
     ganttTimeline.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (conn.active || drag.active) return;
       if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
 
-      // Clear any existing selection
+      // Clear any existing selection overlay
       clearTimelineSelection();
 
       const rect = ganttTimeline.getBoundingClientRect();
@@ -463,12 +467,16 @@
       const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
       const rowTop   = rowIndex * ROW_H;
 
-      timelineSel.active      = true;
-      timelineSel.startDay    = day;
-      timelineSel.endDay      = day;
-      timelineSel.mouseStartX = e.pageX;
-      timelineSel.rowTop      = rowTop;
-      timelineSel.rowIndex    = rowIndex;
+      timelineSel.active         = true;
+      timelineSel.startDay       = day;
+      timelineSel.endDay         = day;
+      timelineSel.mouseStartX    = e.pageX;
+      timelineSel.mouseStartY    = e.pageY;
+      timelineSel.startRowIndex  = rowIndex;
+      timelineSel.endRowIndex    = rowIndex;
+      timelineSel.shiftKey       = e.shiftKey;
+      timelineSel.rowTop         = rowTop;
+      timelineSel.rowIndex       = rowIndex;
 
       const overlay = document.createElement('div');
       overlay.className = 'gantt-time-selection';
@@ -487,6 +495,35 @@
     }
     timelineSel.active    = false;
     timelineSel.overlayEl = null;
+  }
+
+  // Select all gantt entries whose bar visually overlaps the current marquee.
+  // addToExisting = true → Shift-mode: add to selection; false → replace.
+  function selectEntriesInMarquee(addToExisting) {
+    const startRow = Math.min(timelineSel.startRowIndex, timelineSel.endRowIndex);
+    const endRow   = Math.max(timelineSel.startRowIndex, timelineSel.endRowIndex);
+    const startDay = Math.min(timelineSel.startDay, timelineSel.endDay);
+    const endDay   = Math.max(timelineSel.startDay, timelineSel.endDay);
+
+    const selStartDate = addDays(chartStart, startDay);
+    const selEndDate   = addDays(chartStart, endDay);
+
+    if (!addToExisting) S().selectedGanttIds.clear();
+
+    S().ganttEntries.forEach(entry => {
+      const rowIdx = rowIndexMap[entry.id];
+      if (rowIdx === undefined || rowIdx < startRow || rowIdx > endRow) return;
+      const entryStart = parseDate(entry.start_date);
+      const entryEnd   = parseDate(entry.end_date);
+      if (!entryStart || !entryEnd) return;
+      // Overlap: entry ends on or after selection start, starts on or before selection end
+      if (entryEnd >= selStartDate && entryStart <= selEndDate) {
+        S().selectedGanttIds.add(entry.id);
+      }
+    });
+
+    U().updateDeleteBtn();
+    render();
   }
 
   function autoScale() {
@@ -541,6 +578,47 @@
       items.push({ icon: '📋', label: 'Paste task here',
         action: () => pasteEntries(dateStr) });
     }
+
+    // ── Quick settings submenu ─────────────────────────────────────────────
+    items.push({ separator: true });
+    items.push({
+      icon: '⚙',
+      label: 'Settings',
+      children: [
+        {
+          icon: snapEnabled ? '\u2713' : '',
+          label: 'Snap to task edges',
+          action: () => {
+            const nv = !snapEnabled;
+            setSnapEnabled(nv);
+            const cb = document.getElementById('settingsSnapEnabled');
+            if (cb) cb.checked = nv;
+          },
+        },
+        {
+          icon: depsVisible ? '\u2713' : '',
+          label: 'Show dependency arrows',
+          action: () => {
+            depsVisible = !depsVisible;
+            ganttTimeline.classList.toggle('deps-hidden', !depsVisible);
+            const cb = document.getElementById('settingsShowArrows');
+            if (cb) cb.checked = depsVisible;
+            render();
+          },
+        },
+        {
+          icon: document.documentElement.classList.contains('dark-mode') ? '\u2713' : '',
+          label: 'Dark mode',
+          action: () => {
+            const nv = !document.documentElement.classList.contains('dark-mode');
+            localStorage.setItem('ganttDarkMode', nv);
+            document.documentElement.classList.toggle('dark-mode', nv);
+            const cb = document.getElementById('settingsDarkMode');
+            if (cb) cb.checked = nv;
+          },
+        },
+      ],
+    });
 
     U().showContextMenu(e.pageX, e.pageY, items);
   }
@@ -781,6 +859,9 @@
 
   // ─── reparent / reorder drag-and-drop ────────────────────────────────────
   function startReparentDrag(e, entry, rowEl) {
+    // Cancel any active marquee selection so it doesn't linger
+    clearTimelineSelection();
+
     reparentDrag.active  = true;
     reparentDrag.entryId = entry.id;
     reparentDrag.startY  = e.clientY;
@@ -1908,16 +1989,28 @@
       }
     }
 
-    // ── timeline date-range selection ──────────────────────────────────────
+    // ── timeline marquee selection ─────────────────────────────────────────
     if (timelineSel.active && timelineSel.overlayEl && ganttTimeline) {
-      const rect    = ganttTimeline.getBoundingClientRect();
-      const x       = e.clientX - rect.left + ganttTimeline.scrollLeft;
-      const day     = Math.floor(x / pxPerDay);
-      timelineSel.endDay = day;
+      const rect     = ganttTimeline.getBoundingClientRect();
+      const x        = e.clientX - rect.left + ganttTimeline.scrollLeft;
+      const y        = e.clientY - rect.top  + ganttTimeline.scrollTop;
+      const day      = Math.floor(x / pxPerDay);
+      const numRows  = ganttRows.querySelectorAll('.gantt-row-bg').length;
+      const maxRow   = Math.max(0, numRows - 1);
+      const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
+
+      timelineSel.endDay      = day;
+      timelineSel.endRowIndex = rowIndex;
+
       const startDay = Math.min(timelineSel.startDay, day);
       const endDay   = Math.max(timelineSel.startDay, day);
-      timelineSel.overlayEl.style.left  = (startDay * pxPerDay) + 'px';
-      timelineSel.overlayEl.style.width = ((endDay - startDay + 1) * pxPerDay) + 'px';
+      const startRow = Math.min(timelineSel.startRowIndex, rowIndex);
+      const endRow   = Math.max(timelineSel.startRowIndex, rowIndex);
+
+      timelineSel.overlayEl.style.left   = (startDay * pxPerDay) + 'px';
+      timelineSel.overlayEl.style.width  = ((endDay - startDay + 1) * pxPerDay) + 'px';
+      timelineSel.overlayEl.style.top    = (startRow * ROW_H) + 'px';
+      timelineSel.overlayEl.style.height = ((endRow - startRow + 1) * ROW_H) + 'px';
     }
 
     // ── rubber-band connecting line ────────────────────────────────────────
@@ -1940,14 +2033,19 @@
   }
 
   async function onMouseUp(e) {
-    // ── finalize timeline selection ────────────────────────────────────────
+    // ── finalize timeline marquee selection ───────────────────────────────
     if (timelineSel.active) {
       timelineSel.active = false;
-      // If barely moved (< 5px), treat as a click and clear selection
-      if (Math.abs(e.pageX - timelineSel.mouseStartX) < 5) {
+      const movedEnough = Math.abs(e.pageX - timelineSel.mouseStartX) >= 5 ||
+                          Math.abs(e.pageY - timelineSel.mouseStartY) >= 5;
+      if (!movedEnough) {
+        // Treat as a plain click – clear the overlay only
+        clearTimelineSelection();
+      } else {
+        // Marquee drag: select entries inside the rectangle, then remove overlay
+        selectEntriesInMarquee(timelineSel.shiftKey);
         clearTimelineSelection();
       }
-      // else: leave the overlay visible so the user can right-click it
     }
 
     if (!drag.active) return;
@@ -2929,6 +3027,32 @@
   // =========================================================================
   // Context Menu
   // =========================================================================
+
+  // Build color-variation submenu items for an entry
+  function buildColorSubmenu(entry) {
+    const vars = U().generateColorVariations((S().user && S().user.base_color) || '#2196F3');
+    return vars.map((color, i) => {
+      // Validate hex color before interpolating into HTML (values are generated
+      // by generateColorVariations but we guard against unexpected output).
+      const safeColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#cccccc';
+      return {
+        icon: '<span style="display:inline-block;width:14px;height:14px;background:' + safeColor +
+              ';border-radius:3px;vertical-align:middle;flex-shrink:0"></span>',
+        label: 'Phase ' + (i + 1) + (entry.color_variation === i ? ' ✓' : ''),
+        action: async () => {
+          try {
+            const data = await API('PUT', '/api/gantt/' + entry.id, { color_variation: i });
+            const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
+            if (idx !== -1) S().ganttEntries[idx] = data.entry;
+            render();
+          } catch (err) {
+            alert('Failed to update color: ' + err.message);
+          }
+        },
+      };
+    });
+  }
+
   function showEntryContextMenu(x, y, entry) {
     // ── Multi-selection context menu ───────────────────────────────────────
     const sel = S().selectedGanttIds;
@@ -2955,6 +3079,7 @@
       hasChildren
         ? { icon: '\u25BC', label: 'Open sub-chart',   action: () => drillDown(entry) }
         : null,
+      { icon: '\uD83C\uDFA8', label: 'Color',           children: buildColorSubmenu(entry) },
       { separator: true },
       canMoveUp   ? { icon: '\u2B06', label: 'Move up',   action: () => moveEntryUp(entry) }   : null,
       canMoveDown ? { icon: '\u2B07', label: 'Move down', action: () => moveEntryDown(entry) } : null,
@@ -2982,6 +3107,7 @@
       { icon: '\uD83D\uDDD1', label: 'Delete',          action: () => deleteEntry(entry), danger: true },
     ].filter(Boolean));
   }
+
 
   // =========================================================================
   // Share Row – place multiple tasks on the same visual row
