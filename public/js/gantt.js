@@ -1605,6 +1605,7 @@
 
     // ── Bar body drag (move) ───────────────────────────────────────────────
     bar.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return; // only left-click starts a drag
       if (conn.active || shareRowLink.active) return; // don't start drag during connecting/share-row mode
       if (e.target === hLeft || e.target === hRight ||
           e.target === inputNode || e.target === outputNode ||
