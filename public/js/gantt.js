@@ -2083,7 +2083,7 @@
               } catch (err) { console.error('Clear new owner same_row failed:', err); }
             }
             try {
-              // Release parent-child relationship if source is child of target (or vice-versa)
+              // Release parent-child relationship if source is child of target
               const movedEntry = S().ganttEntries.find(en => en.id === entryId);
               const updatePayload = { same_row: resolvedTarget };
               if (movedEntry && movedEntry.parent_id === resolvedTarget) {
@@ -2093,9 +2093,9 @@
               const idx = S().ganttEntries.findIndex(en => en.id === entryId);
               if (idx !== -1) S().ganttEntries[idx] = data.entry;
 
-              // Reverse: if target is child of source
-              const tgtActual = S().ganttEntries.find(en => en.id === resolvedTarget);
-              if (tgtActual && tgtActual.parent_id === entryId) {
+              // Also release the reverse: if target is child of source
+              const targetEntry2 = S().ganttEntries.find(en => en.id === resolvedTarget);
+              if (targetEntry2 && targetEntry2.parent_id === entryId) {
                 try {
                   const data2 = await API('PUT', '/api/gantt/' + resolvedTarget, { parent_id: null });
                   const idx2 = S().ganttEntries.findIndex(en => en.id === resolvedTarget);
@@ -2903,8 +2903,8 @@
     if (resolvedTarget === sourceId) return;
 
     try {
-      // If the source is a child of the resolved target (or vice-versa),
-      // release the parent-child relationship so moving one doesn't stretch the other.
+      // If the source is a child of the resolved target, release the
+      // parent-child relationship so moving one doesn't stretch the other.
       const sourceEntry = S().ganttEntries.find(e => e.id === sourceId);
       const updatePayload = { same_row: resolvedTarget };
       if (sourceEntry && sourceEntry.parent_id === resolvedTarget) {
@@ -2916,8 +2916,8 @@
       if (idx !== -1) S().ganttEntries[idx] = data.entry;
 
       // Also release the reverse: if the target is a child of the source
-      const targetActual = S().ganttEntries.find(e => e.id === resolvedTarget);
-      if (targetActual && targetActual.parent_id === sourceId) {
+      const resolvedEntry = S().ganttEntries.find(e => e.id === resolvedTarget);
+      if (resolvedEntry && resolvedEntry.parent_id === sourceId) {
         try {
           const data2 = await API('PUT', '/api/gantt/' + resolvedTarget, { parent_id: null });
           const idx2 = S().ganttEntries.findIndex(e => e.id === resolvedTarget);
