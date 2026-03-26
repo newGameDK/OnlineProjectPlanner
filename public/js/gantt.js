@@ -2060,16 +2060,16 @@
               const newOwner = dependants[0].id;
               for (let di = 1; di < dependants.length; di++) {
                 try {
-                  const d = await API('PUT', '/api/gantt/' + dependants[di].id, { same_row: newOwner });
+                  const upd = await API('PUT', '/api/gantt/' + dependants[di].id, { same_row: newOwner });
                   const idx = S().ganttEntries.findIndex(en => en.id === dependants[di].id);
-                  if (idx !== -1) S().ganttEntries[idx] = d.entry;
+                  if (idx !== -1) S().ganttEntries[idx] = upd.entry;
                 } catch (err) { console.error('Re-point same_row failed:', err); }
               }
               // Clear the first dependant's same_row (it becomes the new owner)
               try {
-                const d = await API('PUT', '/api/gantt/' + newOwner, { same_row: null });
+                const upd = await API('PUT', '/api/gantt/' + newOwner, { same_row: null });
                 const idx = S().ganttEntries.findIndex(en => en.id === newOwner);
-                if (idx !== -1) S().ganttEntries[idx] = d.entry;
+                if (idx !== -1) S().ganttEntries[idx] = upd.entry;
               } catch (err) { console.error('Clear new owner same_row failed:', err); }
             }
             try {
