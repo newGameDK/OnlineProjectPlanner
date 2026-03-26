@@ -460,6 +460,32 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   background: var(--primary);
 }
 
+/* Blue dotted drop indicators for bar vertical drag */
+.bar-row-drop-line {
+  position: absolute; left: 0; right: 0; height: 0;
+  border-top: 3px dashed #2196F3;
+  z-index: 100; pointer-events: none;
+  transform: translateY(-1.5px);
+}
+.bar-row-drop-line::before {
+  content: ''; position: absolute;
+  left: 0; top: -1.5px; transform: translateY(-50%);
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #2196F3;
+}
+.bar-row-drop-box {
+  position: absolute; left: 0; right: 0;
+  border: 2px dashed #2196F3;
+  border-radius: 4px;
+  background: rgba(33, 150, 243, 0.08);
+  z-index: 50; pointer-events: none;
+}
+.gantt-task-row.bar-row-drop-target {
+  background: rgba(33, 150, 243, 0.08) !important;
+  outline: 2px dashed #2196F3;
+  outline-offset: -2px;
+}
+
 /* Gantt timeline rows */
 .gantt-row-bg {
   height: var(--row-h); border-bottom: 1px solid var(--border);
