@@ -89,6 +89,12 @@
     sy: 0,              // source y (vertical centre of row)
   };
 
+  // ── share-row linking state ────────────────────────────────────────────────
+  const shareRowLink = {
+    active: false,
+    sourceId: null,     // entry being linked (will get same_row set)
+  };
+
   // ── reparent drag state ────────────────────────────────────────────────────
   const reparentDrag = {
     active: false,
@@ -315,6 +321,7 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         if (conn.active) { cancelConnecting(); return; }
+        if (shareRowLink.active) { cancelShareRow(); return; }
         if (timelineSel.overlayEl) { clearTimelineSelection(); return; }
         // Go back one drill-down level
         if (parentStack.length && !document.querySelector('.modal.show')) {
@@ -327,11 +334,17 @@
 
     const cancelBtn = document.getElementById('cancelConnecting');
     if (cancelBtn) cancelBtn.addEventListener('click', cancelConnecting);
+    const cancelShareRowBtn = document.getElementById('cancelShareRow');
+    if (cancelShareRowBtn) cancelShareRowBtn.addEventListener('click', cancelShareRow);
 
-    // Cancel connecting by clicking empty timeline space
+    // Cancel connecting/share-row by clicking empty timeline space
     ganttTimeline.addEventListener('click', (e) => {
       if (conn.active) {
         if (!e.target.closest('.gantt-bar-container')) cancelConnecting();
+        return;
+      }
+      if (shareRowLink.active) {
+        if (!e.target.closest('.gantt-bar-container')) cancelShareRow();
         return;
       }
       // Clear date-range selection when clicking on an empty spot
@@ -340,15 +353,16 @@
       }
     });
 
-    // Cancel connecting by clicking empty space in task list
+    // Cancel connecting/share-row by clicking empty space in task list
     ganttTaskList.addEventListener('click', (e) => {
-      if (!conn.active) return;
-      if (!e.target.closest('.gantt-task-row')) cancelConnecting();
+      if (conn.active && !e.target.closest('.gantt-task-row')) { cancelConnecting(); return; }
+      if (shareRowLink.active && !e.target.closest('.gantt-task-row')) { cancelShareRow(); return; }
     });
 
-    // Cancel connecting on right-click anywhere
+    // Cancel connecting/share-row on right-click anywhere
     document.addEventListener('contextmenu', (e) => {
       if (conn.active) { e.preventDefault(); cancelConnecting(); }
+      if (shareRowLink.active) { e.preventDefault(); cancelShareRow(); }
     });
 
     // Toggle dependency arrows – driven by the settings checkbox
@@ -472,7 +486,7 @@
 
   // ── Right-click on empty timeline → add task at clicked date ─────────────
   function onTimelineContextMenu(e) {
-    if (conn.active) return;
+    if (conn.active || shareRowLink.active) return;
     if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
 
     e.preventDefault();
@@ -525,6 +539,13 @@
     // Rebuild row-index map
     rowIndexMap = {};
     entries.forEach((e, i) => { rowIndexMap[e.id] = i; });
+
+    // Map same-row entries to their target's row index
+    S().ganttEntries.forEach(e => {
+      if (e.same_row && rowIndexMap[e.same_row] !== undefined) {
+        rowIndexMap[e.id] = rowIndexMap[e.same_row];
+      }
+    });
 
     renderTaskList(entries);
     renderRuler(timelineW, totalDays);
@@ -613,6 +634,16 @@
       name.title = entry.title + (entry.notes ? '\n\n' + entry.notes : '');
       row.appendChild(name);
 
+      // Same-row badge (show count of tasks sharing this row)
+      const sameRowCount = S().ganttEntries.filter(e => e.same_row === entry.id).length;
+      if (sameRowCount > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'gantt-same-row-badge';
+        badge.textContent = '+' + sameRowCount;
+        badge.title = sameRowCount + ' additional task' + (sameRowCount > 1 ? 's' : '') + ' sharing this row';
+        row.appendChild(badge);
+      }
+
       // Persistent folder-link icon (always visible when URL is set)
       if (entry.folder_url) {
         const folderLink = document.createElement('a');
@@ -640,13 +671,21 @@
       actions.appendChild(makeBtn('\uD83D\uDDD1', 'Delete', () => deleteEntry(entry)));
       row.appendChild(actions);
 
-      // Selection / connecting
+      // Selection / connecting / share-row
       row.addEventListener('click', (e) => {
         // When in connecting mode, clicking a task list row finishes the connection
         if (conn.active) {
           if (conn.sourceId !== entry.id) {
             e.stopPropagation();
             finishConnecting(entry);
+          }
+          return;
+        }
+        // When in share-row mode, clicking a task list row finishes the share
+        if (shareRowLink.active) {
+          if (shareRowLink.sourceId !== entry.id) {
+            e.stopPropagation();
+            finishShareRow(entry);
           }
           return;
         }
@@ -663,8 +702,8 @@
       });
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        // contextmenu is handled globally when connecting; also skip during drag
-        if (conn.active || reparentDrag.active) return;
+        // contextmenu is handled globally when connecting/share-row; also skip during drag
+        if (conn.active || shareRowLink.active || reparentDrag.active) return;
         showEntryContextMenu(e.pageX, e.pageY, entry);
       });
 
@@ -1235,6 +1274,14 @@
 
       const bar = buildBar(entry);
       if (bar) rowBg.appendChild(bar);
+
+      // Also render bars for entries that share this row (same_row === entry.id)
+      const sameRowEntries = S().ganttEntries.filter(e => e.same_row === entry.id);
+      sameRowEntries.forEach(srEntry => {
+        const srBar = buildBar(srEntry);
+        if (srBar) rowBg.appendChild(srBar);
+      });
+
       ganttRows.appendChild(rowBg);
     });
 
@@ -1453,7 +1500,7 @@
 
     // ── Bar body drag (move) ───────────────────────────────────────────────
     bar.addEventListener('mousedown', (e) => {
-      if (conn.active) return; // don't start drag during connecting mode
+      if (conn.active || shareRowLink.active) return; // don't start drag during connecting/share-row mode
       if (e.target === hLeft || e.target === hRight ||
           e.target === inputNode || e.target === outputNode ||
           e.target === barIndicator) return;
@@ -1463,7 +1510,7 @@
 
     // Touch: long-press on bar body to start move drag
     bar.addEventListener('touchstart', (e) => {
-      if (conn.active) return;
+      if (conn.active || shareRowLink.active) return;
       if (e.target === hLeft || e.target === hRight ||
           e.target === inputNode || e.target === outputNode ||
           e.target === barIndicator) return;
@@ -1503,8 +1550,8 @@
     });
     bar.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      // contextmenu is handled globally when connecting; also skip during drag
-      if (conn.active || drag.active) return;
+      // contextmenu is handled globally when connecting/share-row; also skip during drag
+      if (conn.active || shareRowLink.active || drag.active) return;
       showEntryContextMenu(e.pageX, e.pageY, entry);
     });
 
@@ -1513,6 +1560,10 @@
       if (conn.active && conn.sourceId !== entry.id) {
         e.stopPropagation();
         finishConnecting(entry);
+      }
+      if (shareRowLink.active && shareRowLink.sourceId !== entry.id) {
+        e.stopPropagation();
+        finishShareRow(entry);
       }
     });
 
@@ -2503,6 +2554,8 @@
     const sibIdx = siblings.findIndex(e => e.id === entry.id);
     const canMoveUp   = sibIdx > 0;
     const canMoveDown = sibIdx < siblings.length - 1;
+    const hasSameRow  = !!entry.same_row;
+    const sameRowTargets = S().ganttEntries.filter(e => e.same_row === entry.id);
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
       { icon: '+',      label: 'Add sub-task',          action: () => showAddEntryModal(entry.id) },
@@ -2519,6 +2572,12 @@
         ? { icon: '\uD83D\uDCCB', label: 'Paste here', action: () => pasteEntries(entry.start_date) }
         : null,
       { separator: true },
+      hasSameRow
+        ? { icon: '\u2936', label: 'Unshare row',       action: () => unshareRow(entry) }
+        : { icon: '\u2194', label: 'Share row\u2026',   action: () => startShareRow(entry) },
+      sameRowTargets.length > 0
+        ? { icon: '\u2936', label: 'Detach all shared',  action: () => unshareAllFromRow(entry) }
+        : null,
       { icon: '\uD83D\uDCC2',
         label: entry.folder_url ? 'Open SharePoint folder' : 'Set SharePoint folder\u2026',
         action: () => entry.folder_url
@@ -2529,6 +2588,81 @@
       { separator: true },
       { icon: '\uD83D\uDDD1', label: 'Delete',          action: () => deleteEntry(entry), danger: true },
     ].filter(Boolean));
+  }
+
+  // =========================================================================
+  // Share Row – place multiple tasks on the same visual row
+  // =========================================================================
+  function startShareRow(entry) {
+    shareRowLink.active   = true;
+    shareRowLink.sourceId = entry.id;
+    document.body.classList.add('share-row-mode');
+    const banner = document.getElementById('shareRowBanner');
+    if (banner) banner.classList.remove('hidden');
+  }
+
+  async function finishShareRow(targetEntry) {
+    if (!shareRowLink.active || shareRowLink.sourceId === targetEntry.id) return;
+    const sourceId = shareRowLink.sourceId;
+    cancelShareRow();
+
+    // Resolve the target: walk the chain until we find the root row owner
+    let resolvedTarget = targetEntry.id;
+    const visited = new Set([sourceId]);
+    let cursor = targetEntry;
+    while (cursor && cursor.same_row) {
+      if (visited.has(cursor.same_row)) break; // prevent infinite loop
+      visited.add(cursor.same_row);
+      const next = S().ganttEntries.find(e => e.id === cursor.same_row);
+      if (!next) break;
+      resolvedTarget = next.id;
+      cursor = next;
+    }
+
+    // Prevent circular: source cannot share its own row
+    if (resolvedTarget === sourceId) return;
+
+    try {
+      const data = await API('PUT', '/api/gantt/' + sourceId, { same_row: resolvedTarget });
+      const idx = S().ganttEntries.findIndex(e => e.id === sourceId);
+      if (idx !== -1) S().ganttEntries[idx] = data.entry;
+      render();
+    } catch (err) {
+      console.error('Share row failed:', err);
+    }
+  }
+
+  function cancelShareRow() {
+    shareRowLink.active = false;
+    shareRowLink.sourceId = null;
+    document.body.classList.remove('share-row-mode');
+    const banner = document.getElementById('shareRowBanner');
+    if (banner) banner.classList.add('hidden');
+  }
+
+  async function unshareRow(entry) {
+    try {
+      const data = await API('PUT', '/api/gantt/' + entry.id, { same_row: null });
+      const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
+      if (idx !== -1) S().ganttEntries[idx] = data.entry;
+      render();
+    } catch (err) {
+      console.error('Unshare row failed:', err);
+    }
+  }
+
+  async function unshareAllFromRow(entry) {
+    const targets = S().ganttEntries.filter(e => e.same_row === entry.id);
+    for (const t of targets) {
+      try {
+        const data = await API('PUT', '/api/gantt/' + t.id, { same_row: null });
+        const idx = S().ganttEntries.findIndex(e => e.id === t.id);
+        if (idx !== -1) S().ganttEntries[idx] = data.entry;
+      } catch (err) {
+        console.error('Unshare row failed:', err);
+      }
+    }
+    render();
   }
 
   // =========================================================================
@@ -2760,10 +2894,16 @@
       group.sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1))
     );
 
+    // Build a set of entry IDs that share another entry's row
+    const sameRowEntryIds = new Set();
+    all.forEach(e => { if (e.same_row) sameRowEntryIds.add(e.id); });
+
     const roots  = childrenOf[currentParentId] || [];
     const result = [];
 
     function addWithChildren(entry, depth) {
+      // Skip entries that share another entry's row (they'll be drawn as extra bars)
+      if (sameRowEntryIds.has(entry.id)) return;
       entry._depth = depth;           // transient, used for indent
       result.push(entry);
       if (expandedIds.has(entry.id)) {
@@ -2784,7 +2924,15 @@
     let earliest = new Date(today), latest = new Date(today);
     latest.setDate(latest.getDate() + 90);
 
-    entries.forEach(e => {
+    // Include both visible entries and same-row entries in the range calculation
+    const allRelevant = entries.slice();
+    S().ganttEntries.forEach(e => {
+      if (e.same_row && entries.some(v => v.id === e.same_row)) {
+        allRelevant.push(e);
+      }
+    });
+
+    allRelevant.forEach(e => {
       const s = parseDate(e.start_date), en = parseDate(e.end_date);
       if (s && s < earliest) earliest = s;
       if (en && en > latest)  latest   = en;

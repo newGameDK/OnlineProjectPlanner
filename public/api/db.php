@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS gantt_entries (
   notes TEXT NOT NULL DEFAULT '',
   folder_url TEXT NOT NULL DEFAULT '',
   subtract_hours INTEGER NOT NULL DEFAULT 0,
+  same_row TEXT DEFAULT NULL,
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -145,6 +146,11 @@ CREATE TABLE IF NOT EXISTS gantt_dependencies (
 // Migration: add subtract_hours to existing databases
 try {
     $db->exec("ALTER TABLE gantt_entries ADD COLUMN subtract_hours INTEGER NOT NULL DEFAULT 0");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
+// Migration: add same_row to gantt_entries (allows multiple tasks on the same visual row)
+try {
+    $db->exec("ALTER TABLE gantt_entries ADD COLUMN same_row TEXT DEFAULT NULL");
 } catch (Exception $e) { /* column already exists – ignore */ }
 
 // App settings table (admin user IDs etc.)
