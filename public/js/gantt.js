@@ -58,9 +58,12 @@
     startDay: 0,
     endDay: 0,
     mouseStartX: 0,
+    mouseStartY: 0,
     overlayEl: null,
-    rowTop: 0,       // top px of the row where drag started (single-row selection)
+    rowTop: 0,       // top px of the row where drag started
     rowIndex: -1,    // index of the row where drag started
+    shiftKey: false, // whether shift was held when drag started
+    prevSelectedIds: null, // previous selection to preserve during shift+marquee
   };
 
   // ── drag state ────────────────────────────────────────────────────────────
@@ -443,21 +446,19 @@
     // Right-click on empty timeline space → add task at clicked date
     ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
 
-    // Left-button drag on empty timeline → date-range selection (single row)
+    // Left-button drag on empty timeline → marquee multi-row selection
     ganttTimeline.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (conn.active || drag.active) return;
       if (e.target.closest('.gantt-bar-container') || e.target.closest('.gantt-bar')) return;
 
-      // Clear any existing selection
+      // Clear any existing overlay
       clearTimelineSelection();
 
       const rect = ganttTimeline.getBoundingClientRect();
       const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
       const y    = e.clientY - rect.top  + ganttTimeline.scrollTop;
       const day  = Math.floor(x / pxPerDay);
-      // Clamp row index to [0, numVisibleRows-1] so clicks below the last row
-      // are handled gracefully.
       const numRows  = ganttRows.querySelectorAll('.gantt-row-bg').length;
       const maxRow   = Math.max(0, numRows - 1);
       const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
@@ -467,8 +468,17 @@
       timelineSel.startDay    = day;
       timelineSel.endDay      = day;
       timelineSel.mouseStartX = e.pageX;
+      timelineSel.mouseStartY = y;
       timelineSel.rowTop      = rowTop;
       timelineSel.rowIndex    = rowIndex;
+      timelineSel.shiftKey    = e.shiftKey;
+      // Preserve existing selection when shift is held
+      timelineSel.prevSelectedIds = e.shiftKey ? new Set(S().selectedGanttIds) : null;
+
+      if (!e.shiftKey) {
+        S().selectedGanttIds.clear();
+        U().updateDeleteBtn();
+      }
 
       const overlay = document.createElement('div');
       overlay.className = 'gantt-time-selection';
@@ -485,8 +495,9 @@
     if (timelineSel.overlayEl && timelineSel.overlayEl.parentNode) {
       timelineSel.overlayEl.parentNode.removeChild(timelineSel.overlayEl);
     }
-    timelineSel.active    = false;
-    timelineSel.overlayEl = null;
+    timelineSel.active          = false;
+    timelineSel.overlayEl       = null;
+    timelineSel.prevSelectedIds = null;
   }
 
   function autoScale() {
@@ -1728,6 +1739,54 @@
     drag.rowDropTargetId = null;
   }
 
+  /** Update selectedGanttIds based on entries whose bars intersect the marquee. */
+  function _updateMarqueeSelection(startDay, endDay, topRow, bottomRow) {
+    const vis = visibleEntries();
+    const newSel = timelineSel.shiftKey && timelineSel.prevSelectedIds
+      ? new Set(timelineSel.prevSelectedIds)
+      : new Set();
+
+    // Also check same-row entries that share a visible row
+    const allEntries = S().ganttEntries;
+    const entriesToCheck = vis.concat(allEntries.filter(e => e.same_row));
+
+    entriesToCheck.forEach(entry => {
+      const rowIdx = rowIndexMap[entry.id];
+      if (rowIdx === undefined) return;
+      if (rowIdx < topRow || rowIdx > bottomRow) return;
+
+      // Check horizontal overlap: bar's day range vs marquee day range
+      const eStart = parseDate(entry.start_date);
+      const eEnd   = parseDate(entry.end_date);
+      if (!eStart || !eEnd) return;
+      const barStartDay = daysBetween(chartStart, eStart);
+      const barEndDay   = daysBetween(chartStart, eEnd);
+      // Overlap check: bar overlaps marquee if barStart <= endDay && barEnd >= startDay
+      if (barStartDay <= endDay && barEndDay >= startDay) {
+        newSel.add(entry.id);
+      }
+    });
+
+    // Apply the new selection without a full render – directly toggle CSS classes
+    const prevSel = S().selectedGanttIds;
+    S().selectedGanttIds = newSel;
+
+    // Update task list row highlights
+    ganttTaskList.querySelectorAll('.gantt-task-row').forEach(row => {
+      const id = row.dataset.id;
+      if (newSel.has(id)) row.classList.add('selected');
+      else                row.classList.remove('selected');
+    });
+    // Update bar highlights
+    ganttRows.querySelectorAll('.gantt-bar').forEach(bar => {
+      const container = bar.closest('.gantt-bar-container');
+      const id = container && container.dataset.id;
+      if (id && newSel.has(id)) bar.classList.add('selected');
+      else                      bar.classList.remove('selected');
+    });
+    U().updateDeleteBtn();
+  }
+
   function onMouseMove(e) {
     // ── drag live preview (pixel-precise, snaps on release) ────────────────
     if (drag.active) {
@@ -1908,16 +1967,35 @@
       }
     }
 
-    // ── timeline date-range selection ──────────────────────────────────────
+    // ── timeline marquee selection (multi-row) ───────────────────────────
     if (timelineSel.active && timelineSel.overlayEl && ganttTimeline) {
       const rect    = ganttTimeline.getBoundingClientRect();
       const x       = e.clientX - rect.left + ganttTimeline.scrollLeft;
+      const y       = e.clientY - rect.top  + ganttTimeline.scrollTop;
       const day     = Math.floor(x / pxPerDay);
       timelineSel.endDay = day;
+
+      // Horizontal bounds
       const startDay = Math.min(timelineSel.startDay, day);
       const endDay   = Math.max(timelineSel.startDay, day);
       timelineSel.overlayEl.style.left  = (startDay * pxPerDay) + 'px';
       timelineSel.overlayEl.style.width = ((endDay - startDay + 1) * pxPerDay) + 'px';
+
+      // Vertical bounds (multi-row)
+      const numRows = ganttRows.querySelectorAll('.gantt-row-bg').length;
+      const maxY    = Math.max(0, numRows * ROW_H);
+      const clampedY     = Math.max(0, Math.min(y, maxY));
+      const clampedStart = Math.max(0, Math.min(timelineSel.mouseStartY, maxY));
+      const topPx    = Math.min(clampedStart, clampedY);
+      const bottomPx = Math.max(clampedStart, clampedY);
+      // Snap to row boundaries
+      const topRow    = Math.floor(topPx / ROW_H);
+      const bottomRow = Math.min(numRows - 1, Math.floor(bottomPx / ROW_H));
+      timelineSel.overlayEl.style.top    = (topRow * ROW_H) + 'px';
+      timelineSel.overlayEl.style.height = ((bottomRow - topRow + 1) * ROW_H) + 'px';
+
+      // Select entries whose bars intersect the marquee rectangle
+      _updateMarqueeSelection(startDay, endDay, topRow, bottomRow);
     }
 
     // ── rubber-band connecting line ────────────────────────────────────────
@@ -1940,14 +2018,26 @@
   }
 
   async function onMouseUp(e) {
-    // ── finalize timeline selection ────────────────────────────────────────
+    // ── finalize timeline marquee selection ─────────────────────────────────
     if (timelineSel.active) {
       timelineSel.active = false;
-      // If barely moved (< 5px), treat as a click and clear selection
-      if (Math.abs(e.pageX - timelineSel.mouseStartX) < 5) {
+      const rect = ganttTimeline.getBoundingClientRect();
+      const curY = e.clientY - rect.top + ganttTimeline.scrollTop;
+      const dx = Math.abs(e.pageX - timelineSel.mouseStartX);
+      const dy = Math.abs(curY - timelineSel.mouseStartY);
+      if (dx < 5 && dy < 5) {
+        // Barely moved → treat as a click, clear overlay and selection
         clearTimelineSelection();
+        if (!timelineSel.shiftKey) {
+          S().selectedGanttIds.clear();
+          U().updateDeleteBtn();
+          render();
+        }
+      } else {
+        // Finalize: selectedGanttIds already updated by _updateMarqueeSelection
+        // Do a full re-render to ensure all visuals are in sync
+        render();
       }
-      // else: leave the overlay visible so the user can right-click it
     }
 
     if (!drag.active) return;
@@ -2736,46 +2826,62 @@
       '<div class="color-var-swatch" data-idx="' + i + '" style="background:' + c + '" title="Phase ' + (i + 1) + '"></div>'
     ).join('');
 
-    // Notes & folder fields are only shown if ALL selected entries have them empty
-    const anyHasNotes  = entries.some(e => e.notes && e.notes.trim());
-    const anyHasFolder = entries.some(e => e.folder_url && e.folder_url.trim());
+    // Check which fields already have a common value across all entries
+    const allSameStart = entries.every(e => e.start_date === entries[0].start_date);
+    const allSameEnd   = entries.every(e => e.end_date   === entries[0].end_date);
+    const allSameHours = entries.every(e => +e.hours_estimate === +entries[0].hours_estimate);
 
     let html =
       '<p style="color:var(--text-muted);margin:0 0 12px">' +
-        'Editing <strong>' + entries.length + '</strong> tasks. Only the fields below will be changed.' +
+        'Editing <strong>' + entries.length + '</strong> tasks. ' +
+        'Only fields you fill in will be changed; leave a field empty to keep current values.' +
       '</p>' +
+      '<div class="form-row" style="display:flex;gap:12px">' +
+        '<div class="form-group" style="flex:1">' +
+          '<label>Start Date</label>' +
+          '<input type="date" id="feBulkStart" value="' + (allSameStart ? entries[0].start_date : '') + '">' +
+        '</div>' +
+        '<div class="form-group" style="flex:1">' +
+          '<label>End Date</label>' +
+          '<input type="date" id="feBulkEnd" value="' + (allSameEnd ? entries[0].end_date : '') + '">' +
+        '</div>' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label>Hours Estimate</label>' +
+        '<input type="number" id="feBulkHours" min="0" step="0.5" value="' +
+          (allSameHours && +entries[0].hours_estimate ? entries[0].hours_estimate : '') +
+        '" placeholder="Leave empty to keep current">' +
+      '</div>' +
       '<div class="form-group"><label>Phase / Colour Variation</label>' +
         '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
         '<input type="hidden" id="feColorVar" value="">' +
         '<small style="color:var(--text-muted);font-size:11px;display:block">' +
           'Select a colour to apply to all selected tasks. Leave unselected to keep current colours.' +
         '</small>' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label>Folder Link</label>' +
+        '<input type="url" id="feFolderUrl" value="" ' +
+          'placeholder="https://\u2026sharepoint.com/\u2026  or any URL" style="width:100%">' +
+      '</div>' +
+      '<div class="form-group"><label>Notes</label>' +
+        '<textarea id="feNotes" placeholder="Leave empty to keep current notes"></textarea>' +
       '</div>';
 
-    if (!anyHasFolder) {
-      html +=
-        '<div class="form-group">' +
-          '<label>Folder Link (optional)</label>' +
-          '<input type="url" id="feFolderUrl" value="" ' +
-            'placeholder="https://\u2026sharepoint.com/\u2026  or any URL" style="width:100%">' +
-        '</div>';
-    }
-
-    if (!anyHasNotes) {
-      html +=
-        '<div class="form-group"><label>Notes</label>' +
-          '<textarea id="feNotes" placeholder="Optional notes"></textarea>' +
-        '</div>';
-    }
-
     U().openModal('Edit ' + entries.length + ' Tasks', html, async () => {
-      const colorVal = document.getElementById('feColorVar')?.value;
-      const notesEl  = document.getElementById('feNotes');
-      const folderEl = document.getElementById('feFolderUrl');
+      const colorVal  = document.getElementById('feColorVar')?.value;
+      const startEl   = document.getElementById('feBulkStart');
+      const endEl     = document.getElementById('feBulkEnd');
+      const hoursEl   = document.getElementById('feBulkHours');
+      const notesEl   = document.getElementById('feNotes');
+      const folderEl  = document.getElementById('feFolderUrl');
 
       const payload = {};
-      if (colorVal !== '') payload.color_variation = parseInt(colorVal, 10);
-      if (notesEl && notesEl.value.trim())  payload.notes = notesEl.value;
+      if (colorVal !== '')                      payload.color_variation = parseInt(colorVal, 10);
+      if (startEl  && startEl.value)            payload.start_date     = startEl.value;
+      if (endEl    && endEl.value)              payload.end_date       = endEl.value;
+      if (hoursEl  && hoursEl.value !== '')     payload.hours_estimate = parseFloat(hoursEl.value) || 0;
+      if (notesEl  && notesEl.value.trim())     payload.notes          = notesEl.value;
       if (folderEl && folderEl.value.trim()) {
         let url = folderEl.value.trim();
         if (url && !/^https?:\/\//i.test(url) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
