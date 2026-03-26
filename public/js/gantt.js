@@ -78,6 +78,14 @@
     origWidthPx: 0,     // original CSS width (px)
     snapActivePx: null,       // current snap target pixel (null = not snapping)
     snapTargetEntryId: null,  // entry whose edge is currently snapped to
+    // ── vertical row-drag fields ──────────────────────────────────────────
+    startY: 0,                  // initial pageY for vertical tracking
+    origRowIndex: -1,           // index of entry's row in visibleEntries()
+    parentRowBg: null,          // the .gantt-row-bg element containing the bar
+    rowDropMode: null,          // null | 'onto' | 'between-before' | 'between-after'
+    rowDropTargetId: null,      // id of the target row entry
+    rowDropIndicatorEl: null,   // blue dotted indicator in timeline
+    rowDropIndicatorTaskEl: null, // matching indicator in task list
   };
 
   // ── connecting state ──────────────────────────────────────────────────────
@@ -1666,10 +1674,42 @@
     drag.origWidthPx = parseFloat(containerEl.style.width) || 0;
     drag.snapActivePx = null;
 
+    // ── vertical row-drag init ──────────────────────────────────────────
+    drag.startY = e.pageY;
+    drag.rowDropMode = null;
+    drag.rowDropTargetId = null;
+    drag.rowDropIndicatorEl = null;
+    drag.rowDropIndicatorTaskEl = null;
+    const rowBg = containerEl.closest('.gantt-row-bg');
+    drag.parentRowBg = rowBg;
+    const rowEntryId = rowBg?.dataset?.id;
+    const vis = visibleEntries();
+    drag.origRowIndex = vis.findIndex(en => en.id === rowEntryId);
+
     barEl.style.opacity    = '0.75';
     barEl.style.cursor     = type === 'move' ? 'grabbing' : 'col-resize';
     document.body.style.cursor    = type === 'move' ? 'grabbing' : 'col-resize';
     document.body.style.userSelect = 'none';
+
+    // Disable hover transition during drag to prevent visual jitter
+    if (type === 'move') containerEl.style.transition = 'none';
+  }
+
+  /** Clear blue dotted row-drop indicators shown during vertical bar drag. */
+  function _clearBarRowIndicator() {
+    if (drag.rowDropIndicatorEl) {
+      drag.rowDropIndicatorEl.remove();
+      drag.rowDropIndicatorEl = null;
+    }
+    if (drag.rowDropIndicatorTaskEl) {
+      drag.rowDropIndicatorTaskEl.remove();
+      drag.rowDropIndicatorTaskEl = null;
+    }
+    // Remove any highlight classes from task list rows
+    const highlighted = ganttTaskList.querySelectorAll('.bar-row-drop-target');
+    highlighted.forEach(r => r.classList.remove('bar-row-drop-target'));
+    drag.rowDropMode = null;
+    drag.rowDropTargetId = null;
   }
 
   function onMouseMove(e) {
@@ -1715,6 +1755,98 @@
           if (snapLineEl) snapLineEl.style.display = 'none';
         } else {
           hideSnapLine();
+        }
+
+        // ── Vertical row drag detection ──────────────────────────────────────
+        const rawDeltaY = e.pageY - drag.startY;
+        _clearBarRowIndicator();
+
+        if (Math.abs(rawDeltaY) > ROW_H * 0.3) {
+          // Translate bar vertically to follow cursor
+          drag.containerEl.style.transform = 'translateY(' + rawDeltaY + 'px)';
+          drag.containerEl.style.zIndex = '1000';
+          if (drag.parentRowBg) drag.parentRowBg.style.zIndex = '100';
+
+          // Determine which row the cursor is over
+          const rowsRect = ganttRows.getBoundingClientRect();
+          const relY = e.clientY - rowsRect.top;
+          const vis = visibleEntries();
+          const curRowIdx = Math.floor(relY / ROW_H);
+          const posInRow = relY - curRowIdx * ROW_H;
+          const threshold = ROW_H * 0.3;
+
+          if (curRowIdx >= 0 && curRowIdx < vis.length && curRowIdx !== drag.origRowIndex) {
+            const targetId = vis[curRowIdx].id;
+            if (posInRow < threshold) {
+              // Between: line above this row → reorder before
+              drag.rowDropMode = 'between-before';
+              drag.rowDropTargetId = targetId;
+              const ind = document.createElement('div');
+              ind.className = 'bar-row-drop-line';
+              ind.style.top = (curRowIdx * ROW_H) + 'px';
+              ganttRows.appendChild(ind);
+              drag.rowDropIndicatorEl = ind;
+              // Matching indicator in task list
+              const taskInd = document.createElement('div');
+              taskInd.className = 'bar-row-drop-line';
+              const taskRow = ganttTaskList.querySelector('.gantt-task-row[data-id="' + targetId + '"]');
+              if (taskRow) {
+                const listRect = ganttTaskList.getBoundingClientRect();
+                taskInd.style.top = (taskRow.getBoundingClientRect().top - listRect.top + ganttTaskList.scrollTop) + 'px';
+                ganttTaskList.appendChild(taskInd);
+                drag.rowDropIndicatorTaskEl = taskInd;
+              }
+            } else if (posInRow > ROW_H - threshold) {
+              // Between: line below this row → reorder after
+              drag.rowDropMode = 'between-after';
+              drag.rowDropTargetId = targetId;
+              const ind = document.createElement('div');
+              ind.className = 'bar-row-drop-line';
+              ind.style.top = ((curRowIdx + 1) * ROW_H) + 'px';
+              ganttRows.appendChild(ind);
+              drag.rowDropIndicatorEl = ind;
+              // Matching indicator in task list
+              const taskInd = document.createElement('div');
+              taskInd.className = 'bar-row-drop-line';
+              const taskRow = ganttTaskList.querySelector('.gantt-task-row[data-id="' + targetId + '"]');
+              if (taskRow) {
+                const listRect = ganttTaskList.getBoundingClientRect();
+                taskInd.style.top = (taskRow.getBoundingClientRect().bottom - listRect.top + ganttTaskList.scrollTop) + 'px';
+                ganttTaskList.appendChild(taskInd);
+                drag.rowDropIndicatorTaskEl = taskInd;
+              }
+            } else {
+              // Onto: box around this row → share row
+              drag.rowDropMode = 'onto';
+              drag.rowDropTargetId = targetId;
+              const ind = document.createElement('div');
+              ind.className = 'bar-row-drop-box';
+              ind.style.top = (curRowIdx * ROW_H) + 'px';
+              ind.style.height = ROW_H + 'px';
+              ganttRows.appendChild(ind);
+              drag.rowDropIndicatorEl = ind;
+              // Highlight matching task list row
+              const taskRow = ganttTaskList.querySelector('.gantt-task-row[data-id="' + targetId + '"]');
+              if (taskRow) taskRow.classList.add('bar-row-drop-target');
+            }
+          } else if (curRowIdx >= vis.length && vis.length > 0) {
+            // Below all rows → insert after last row
+            const lastIdx = vis.length - 1;
+            if (lastIdx !== drag.origRowIndex) {
+              drag.rowDropMode = 'between-after';
+              drag.rowDropTargetId = vis[lastIdx].id;
+              const ind = document.createElement('div');
+              ind.className = 'bar-row-drop-line';
+              ind.style.top = (vis.length * ROW_H) + 'px';
+              ganttRows.appendChild(ind);
+              drag.rowDropIndicatorEl = ind;
+            }
+          }
+        } else {
+          // Not enough vertical movement → clear vertical state
+          drag.containerEl.style.transform = '';
+          drag.containerEl.style.zIndex = '';
+          if (drag.parentRowBg) drag.parentRowBg.style.zIndex = '';
         }
       } else if (drag.type === 'resize-left') {
         const rawLeft  = drag.origLeftPx  + deltaX;
@@ -1836,12 +1968,27 @@
     const origStart    = drag.origStart;
     const origEnd      = drag.origEnd;
 
+    // Capture vertical row-drop state before resetting
+    const rowDropMode      = drag.rowDropMode;
+    const rowDropTargetId  = drag.rowDropTargetId;
+    const hasRowChange     = rowDropMode && rowDropTargetId && rowDropTargetId !== entryId;
+
+    // Clean up vertical visual state
+    _clearBarRowIndicator();
+    if (containerEl) {
+      containerEl.style.transform  = '';
+      containerEl.style.zIndex     = '';
+      containerEl.style.transition = '';
+    }
+    if (drag.parentRowBg) drag.parentRowBg.style.zIndex = '';
+
     drag.active = false; drag.type = null; drag.entryId = null;
     drag.ghostEl = null; drag.containerEl = null;
     drag.snapActivePx = null; drag.snapTargetEntryId = null;
+    drag.parentRowBg = null; drag.origRowIndex = -1;
     hideSnapLine();
 
-    if (deltaDays === 0) {
+    if (deltaDays === 0 && !hasRowChange) {
       // No movement → treat as a click: select the entry.
       if (e.shiftKey) {
         if (S().selectedGanttIds.has(entryId)) {
@@ -1867,6 +2014,7 @@
       window.soundsModule?.play(deltaDays < 0 ? 'stretch' : 'compress');
     }
 
+    // ── Handle horizontal date change ──────────────────────────────────────
     if (deltaDays !== 0) {
       // Expand chart date range if entry moved/resized outside it
       expandChartRange({ start_date: newStart, end_date: newEnd });
@@ -1885,6 +2033,109 @@
         console.error('Save drag failed:', err);
         updateBarVisual(containerEl, origStart, origEnd);
       }
+    }
+
+    // ── Handle vertical row change ─────────────────────────────────────────
+    if (hasRowChange) {
+      if (rowDropMode === 'onto') {
+        // Share row with the target entry
+        const targetEntry = S().ganttEntries.find(en => en.id === rowDropTargetId);
+        if (targetEntry) {
+          // Resolve chain to find root row owner
+          let resolvedTarget = targetEntry.id;
+          const visited = new Set([entryId]);
+          let cursor = targetEntry;
+          while (cursor && cursor.same_row) {
+            if (visited.has(cursor.same_row)) break;
+            visited.add(cursor.same_row);
+            const next = S().ganttEntries.find(en => en.id === cursor.same_row);
+            if (!next) break;
+            resolvedTarget = next.id;
+            cursor = next;
+          }
+          if (resolvedTarget !== entryId) {
+            // If this entry is a row owner, re-point its dependants to the first one
+            const dependants = S().ganttEntries.filter(en => en.same_row === entryId);
+            if (dependants.length > 0) {
+              const newOwner = dependants[0].id;
+              for (let di = 1; di < dependants.length; di++) {
+                try {
+                  const d = await API('PUT', '/api/gantt/' + dependants[di].id, { same_row: newOwner });
+                  const idx = S().ganttEntries.findIndex(en => en.id === dependants[di].id);
+                  if (idx !== -1) S().ganttEntries[idx] = d.entry;
+                } catch (err) { console.error('Re-point same_row failed:', err); }
+              }
+              // Clear the first dependant's same_row (it becomes the new owner)
+              try {
+                const d = await API('PUT', '/api/gantt/' + newOwner, { same_row: null });
+                const idx = S().ganttEntries.findIndex(en => en.id === newOwner);
+                if (idx !== -1) S().ganttEntries[idx] = d.entry;
+              } catch (err) { console.error('Clear new owner same_row failed:', err); }
+            }
+            try {
+              const data = await API('PUT', '/api/gantt/' + entryId, { same_row: resolvedTarget });
+              const idx = S().ganttEntries.findIndex(en => en.id === entryId);
+              if (idx !== -1) S().ganttEntries[idx] = data.entry;
+            } catch (err) {
+              console.error('Share row via bar drag failed:', err);
+            }
+          }
+        }
+      } else if (rowDropMode === 'between-before' || rowDropMode === 'between-after') {
+        // Reorder: move this entry to the indicated position
+        const movedEntry  = S().ganttEntries.find(en => en.id === entryId);
+        const targetEntry = S().ganttEntries.find(en => en.id === rowDropTargetId);
+
+        // If entry was sharing a row, unshare first
+        if (movedEntry && movedEntry.same_row) {
+          try {
+            const data = await API('PUT', '/api/gantt/' + entryId, { same_row: null });
+            const idx = S().ganttEntries.findIndex(en => en.id === entryId);
+            if (idx !== -1) S().ganttEntries[idx] = data.entry;
+          } catch (err) {
+            console.error('Unshare before reorder failed:', err);
+          }
+        }
+
+        // If cross-parent, reparent first (same logic as onReparentUp)
+        if (movedEntry && targetEntry && movedEntry.parent_id !== targetEntry.parent_id) {
+          const newParentId = targetEntry.parent_id || null;
+          if (newParentId !== entryId) {
+            const childrenOf = {};
+            S().ganttEntries.forEach(en => {
+              const pid = en.parent_id || '__root__';
+              if (!childrenOf[pid]) childrenOf[pid] = [];
+              childrenOf[pid].push(en);
+            });
+            const isDesc = (tId, ancestorId) => {
+              const kids = childrenOf[ancestorId] || [];
+              for (const child of kids) {
+                if (child.id === tId) return true;
+                if (isDesc(tId, child.id)) return true;
+              }
+              return false;
+            };
+            if (!isDesc(newParentId, entryId)) {
+              try {
+                const updated = await API('PUT', '/api/gantt/' + entryId, { parent_id: newParentId });
+                const idx = S().ganttEntries.findIndex(x => x.id === entryId);
+                if (idx !== -1) S().ganttEntries[idx] = updated.entry;
+                if (newParentId) expandedIds.add(newParentId);
+              } catch (err) {
+                console.error('Reparent for row drag failed:', err);
+                render();
+                return;
+              }
+            }
+          }
+        }
+        await reorderEntries(entryId, rowDropTargetId, rowDropMode === 'between-before');
+        return; // reorderEntries already calls render()
+      }
+    }
+
+    // Render if any change occurred (date or row)
+    if (deltaDays !== 0 || hasRowChange) {
       render();
     }
   }
