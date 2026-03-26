@@ -219,8 +219,14 @@
   function zoomOut() { pxPerDay = Math.max(pxPerDay / 1.4, minPxPerDayForFit()); autoScale(); render(); }
 
   function editSelected() {
-    const id = S().selectedGanttIds.size > 0 ? [...S().selectedGanttIds][0] : null;
-    if (!id) return;
+    const sel = S().selectedGanttIds;
+    if (sel.size === 0) return;
+    if (sel.size > 1) {
+      const entries = S().ganttEntries.filter(e => sel.has(e.id));
+      if (entries.length > 0) showBulkEditModal(entries);
+      return;
+    }
+    const id = [...sel][0];
     const entry = S().ganttEntries.find(e => e.id === id);
     if (entry) showEditEntryModal(entry);
   }
@@ -2723,6 +2729,101 @@
     });
   }
 
+  // ── Bulk-edit modal for multiple selected tasks ────────────────────────
+  function showBulkEditModal(entries) {
+    const vars = U().generateColorVariations((S().user && S().user.base_color) || '#2196F3');
+    const swatches = vars.map((c, i) =>
+      '<div class="color-var-swatch" data-idx="' + i + '" style="background:' + c + '" title="Phase ' + (i + 1) + '"></div>'
+    ).join('');
+
+    // Notes & folder fields are only shown if ALL selected entries have them empty
+    const anyHasNotes  = entries.some(e => e.notes && e.notes.trim());
+    const anyHasFolder = entries.some(e => e.folder_url && e.folder_url.trim());
+
+    let html =
+      '<p style="color:var(--text-muted);margin:0 0 12px">' +
+        'Editing <strong>' + entries.length + '</strong> tasks. Only the fields below will be changed.' +
+      '</p>' +
+      '<div class="form-group"><label>Phase / Colour Variation</label>' +
+        '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
+        '<input type="hidden" id="feColorVar" value="">' +
+        '<small style="color:var(--text-muted);font-size:11px;display:block">' +
+          'Select a colour to apply to all selected tasks. Leave unselected to keep current colours.' +
+        '</small>' +
+      '</div>';
+
+    if (!anyHasFolder) {
+      html +=
+        '<div class="form-group">' +
+          '<label>Folder Link (optional)</label>' +
+          '<input type="url" id="feFolderUrl" value="" ' +
+            'placeholder="https://\u2026sharepoint.com/\u2026  or any URL" style="width:100%">' +
+        '</div>';
+    }
+
+    if (!anyHasNotes) {
+      html +=
+        '<div class="form-group"><label>Notes</label>' +
+          '<textarea id="feNotes" placeholder="Optional notes"></textarea>' +
+        '</div>';
+    }
+
+    U().openModal('Edit ' + entries.length + ' Tasks', html, async () => {
+      const colorVal = document.getElementById('feColorVar')?.value;
+      const notesEl  = document.getElementById('feNotes');
+      const folderEl = document.getElementById('feFolderUrl');
+
+      const payload = {};
+      if (colorVal !== '') payload.color_variation = parseInt(colorVal, 10);
+      if (notesEl && notesEl.value.trim())  payload.notes = notesEl.value;
+      if (folderEl && folderEl.value.trim()) {
+        let url = folderEl.value.trim();
+        if (url && !/^https?:\/\//i.test(url) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+          url = 'https://' + url;
+        }
+        payload.folder_url = url;
+      }
+
+      if (Object.keys(payload).length === 0) {
+        U().closeModal();
+        return;
+      }
+
+      try {
+        const results = await Promise.all(
+          entries.map(entry => API('PUT', '/api/gantt/' + entry.id, payload))
+        );
+        results.forEach(data => {
+          const idx = S().ganttEntries.findIndex(e => e.id === data.entry.id);
+          if (idx !== -1) S().ganttEntries[idx] = data.entry;
+        });
+        render();
+        U().closeModal();
+        U().updateUndoRedoBtns?.();
+      } catch (err) {
+        alert('Bulk edit failed: ' + err.message);
+      }
+    });
+  }
+
+  async function deleteSelectedEntries(entries) {
+    if (!confirm('Delete ' + entries.length + ' tasks?')) return;
+    try {
+      const ids = new Set(entries.map(e => e.id));
+      await Promise.all(entries.map(entry => API('DELETE', '/api/gantt/' + entry.id)));
+      S().ganttEntries = S().ganttEntries.filter(e => !ids.has(e.id));
+      S().dependencies = S().dependencies.filter(
+        d => !ids.has(d.source_id) && !ids.has(d.target_id)
+      );
+      ids.forEach(id => S().selectedGanttIds.delete(id));
+      U().updateDeleteBtn();
+      U().updateUndoRedoBtns?.();
+      render();
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  }
+
   function buildEntryFormHtml(entry, isSubtask) {
     const vars = U().generateColorVariations((S().user && S().user.base_color) || '#2196F3');
     const swatches = vars.map((c, i) =>
@@ -2829,6 +2930,18 @@
   // Context Menu
   // =========================================================================
   function showEntryContextMenu(x, y, entry) {
+    // ── Multi-selection context menu ───────────────────────────────────────
+    const sel = S().selectedGanttIds;
+    if (sel.size > 1 && sel.has(entry.id)) {
+      const selEntries = S().ganttEntries.filter(e => sel.has(e.id));
+      U().showContextMenu(x, y, [
+        { icon: '\u270F', label: 'Edit ' + selEntries.length + ' tasks\u2026', action: () => showBulkEditModal(selEntries) },
+        { separator: true },
+        { icon: '\uD83D\uDDD1', label: 'Delete ' + selEntries.length + ' tasks', action: () => deleteSelectedEntries(selEntries), danger: true },
+      ]);
+      return;
+    }
+
     const hasChildren = S().ganttEntries.some(e => e.parent_id === entry.id);
     const siblings = getSortedSiblings(entry);
     const sibIdx = siblings.findIndex(e => e.id === entry.id);
