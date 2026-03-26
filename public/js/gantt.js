@@ -2774,7 +2774,7 @@
       const folderEl = document.getElementById('feFolderUrl');
 
       const payload = {};
-      if (colorVal !== '') payload.color_variation = parseInt(colorVal) || 0;
+      if (colorVal !== '') payload.color_variation = parseInt(colorVal, 10);
       if (notesEl && notesEl.value.trim())  payload.notes = notesEl.value;
       if (folderEl && folderEl.value.trim()) {
         let url = folderEl.value.trim();
@@ -2790,11 +2790,13 @@
       }
 
       try {
-        for (const entry of entries) {
-          const data = await API('PUT', '/api/gantt/' + entry.id, payload);
-          const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
+        const results = await Promise.all(
+          entries.map(entry => API('PUT', '/api/gantt/' + entry.id, payload))
+        );
+        results.forEach(data => {
+          const idx = S().ganttEntries.findIndex(e => e.id === data.entry.id);
           if (idx !== -1) S().ganttEntries[idx] = data.entry;
-        }
+        });
         render();
         U().closeModal();
         U().updateUndoRedoBtns?.();
@@ -2807,14 +2809,13 @@
   async function deleteSelectedEntries(entries) {
     if (!confirm('Delete ' + entries.length + ' tasks?')) return;
     try {
-      for (const entry of entries) {
-        await API('DELETE', '/api/gantt/' + entry.id);
-        S().ganttEntries = S().ganttEntries.filter(e => e.id !== entry.id);
-        S().dependencies = S().dependencies.filter(
-          d => d.source_id !== entry.id && d.target_id !== entry.id
-        );
-        S().selectedGanttIds.delete(entry.id);
-      }
+      const ids = new Set(entries.map(e => e.id));
+      await Promise.all(entries.map(entry => API('DELETE', '/api/gantt/' + entry.id)));
+      S().ganttEntries = S().ganttEntries.filter(e => !ids.has(e.id));
+      S().dependencies = S().dependencies.filter(
+        d => !ids.has(d.source_id) && !ids.has(d.target_id)
+      );
+      ids.forEach(id => S().selectedGanttIds.delete(id));
       U().updateDeleteBtn();
       U().updateUndoRedoBtns?.();
       render();
