@@ -85,6 +85,15 @@ function showContextMenu(x, y, items) {
         buildList(sub, item.children);
         li.appendChild(sub);
 
+        // Prevent clicks on the parent item from bubbling to the document
+        // click handler (which would close the entire context menu).
+        // Also toggle the submenu open on click for pointer devices that
+        // find hover-only submenus unreliable.
+        li.addEventListener('click', (e) => {
+          e.stopPropagation();
+          sub.classList.toggle('open');
+        });
+
         let hideTimer;
         li.addEventListener('mouseenter', () => {
           clearTimeout(hideTimer);
