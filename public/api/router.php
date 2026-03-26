@@ -885,7 +885,7 @@ if ($seg1 === 'gantt') {
                 $body['notes'] ?? $existing['notes'],
                 array_key_exists('folder_url', $body) ? $body['folder_url'] : $existing['folder_url'],
                 array_key_exists('subtract_hours', $body) ? ($body['subtract_hours'] ? 1 : 0) : ($existing['subtract_hours'] ?? 0),
-                array_key_exists('same_row', $body) ? ($body['same_row'] ?: null) : ($existing['same_row'] ?? null),
+                array_key_exists('same_row', $body) ? ($body['same_row'] ?: null) : $existing['same_row'],
                 now_ms(),
                 $ganttId
             ]);

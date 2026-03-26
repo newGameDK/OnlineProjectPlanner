@@ -2606,11 +2606,21 @@
     const sourceId = shareRowLink.sourceId;
     cancelShareRow();
 
-    // Resolve the target: if target already shares another row, follow the chain
+    // Resolve the target: walk the chain until we find the root row owner
     let resolvedTarget = targetEntry.id;
-    if (targetEntry.same_row) {
-      resolvedTarget = targetEntry.same_row;
+    const visited = new Set([sourceId]);
+    let cursor = targetEntry;
+    while (cursor && cursor.same_row) {
+      if (visited.has(cursor.same_row)) break; // prevent infinite loop
+      visited.add(cursor.same_row);
+      const next = S().ganttEntries.find(e => e.id === cursor.same_row);
+      if (!next) break;
+      resolvedTarget = next.id;
+      cursor = next;
     }
+
+    // Prevent circular: source cannot share its own row
+    if (resolvedTarget === sourceId) return;
 
     try {
       const data = await API('PUT', '/api/gantt/' + sourceId, { same_row: resolvedTarget });
