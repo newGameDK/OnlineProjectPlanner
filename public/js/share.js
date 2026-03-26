@@ -592,6 +592,8 @@ function renderIntensityBar(timelineW, totalDays) {
     let hours = 0;
     for (let d = ps; d < pe; d++) hours += hoursPerDay[d];
 
+    if (hours <= 0) { ps += periodDays; continue; }
+
     const ratio = Math.min(hours / Math.max(hoursPerPeriod, 0.1), 2);
     const r     = Math.round(Math.min(255, ratio * 255));
     const g     = Math.round(Math.max(0, 255 - ratio * 255));

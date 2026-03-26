@@ -2665,6 +2665,7 @@
       if (pe <= ps) return;
       let hours = 0;
       for (let d = ps; d < pe; d++) hours += hoursPerDay[d];
+      if (hours <= 0) return;
       const daysInPeriod   = pe - ps;
       // Capacity is expressed in hours/month; scale proportionally by actual days
       // in this period relative to the standard 30-day month baseline.
