@@ -2633,9 +2633,6 @@
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, timelineW, H);
 
-    const periodDays     = scale === 'day' ? 1 : scale === 'week' ? 7 : 30;
-    const hoursPerPeriod = capacity * (periodDays / 30);
-
     const hoursPerDay = new Float64Array(totalDays + 1);
     // Build a set of entry IDs that have children so we can handle
     // parent budget remaining vs leaf hours correctly.
@@ -2664,27 +2661,52 @@
       }
     });
 
-    let ps = 0;
-    while (ps < totalDays) {
-      const pe = Math.min(ps + periodDays, totalDays);
+    function drawPeriod(ps, pe) {
+      if (pe <= ps) return;
       let hours = 0;
       for (let d = ps; d < pe; d++) hours += hoursPerDay[d];
-
+      const daysInPeriod   = pe - ps;
+      // Capacity is expressed in hours/month; scale proportionally by actual days
+      // in this period relative to the standard 30-day month baseline.
+      const hoursPerPeriod = capacity * (daysInPeriod / 30);
       const ratio = Math.min(hours / Math.max(hoursPerPeriod, 0.1), 2);
       const r = Math.round(Math.min(255, ratio * 255));
       const g = Math.round(Math.max(0, 255 - ratio * 255));
       const a = 0.15 + Math.min(ratio, 1) * 0.7;
-
       ctx.fillStyle = 'rgba(' + r + ',' + g + ',0,' + a + ')';
-      ctx.fillRect(ps * pxPerDay, 0, (pe - ps) * pxPerDay, H - 4);
-
-      if (hours > 0 && (pe - ps) * pxPerDay > 30) {
+      ctx.fillRect(ps * pxPerDay, 0, daysInPeriod * pxPerDay, H - 4);
+      if (hours > 0 && daysInPeriod * pxPerDay > 30) {
         ctx.fillStyle = ratio > 0.8 ? '#b71c1c' : '#2e7d32';
         ctx.font      = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(Math.round(ratio * 100) + '%', (ps + (pe - ps) / 2) * pxPerDay, H - 6);
+        ctx.fillText(Math.round(ratio * 100) + '%', (ps + daysInPeriod / 2) * pxPerDay, H - 6);
       }
-      ps += periodDays;
+    }
+
+    if (scale === 'day') {
+      for (let d = 0; d < totalDays; d++) drawPeriod(d, d + 1);
+    } else if (scale === 'week') {
+      // Use calendar week boundaries (Mondays) to match the ruler
+      forEachDay(chartStart, chartEnd, (d, i) => {
+        if (d.getDay() === 1 || i === 0) {
+          const daysLeft = Math.min(daysBetween(d, chartEnd), totalDays - i);
+          const cellDays = d.getDay() === 1
+            ? Math.min(7, daysLeft)
+            : Math.min((8 - d.getDay()) % 7 || 7, daysLeft); // days remaining in partial week
+          drawPeriod(i, i + cellDays);
+        }
+      });
+    } else {
+      // Month scale: use calendar month boundaries to match the ruler
+      let cur = new Date(chartStart);
+      while (true) {
+        const ps = daysBetween(chartStart, cur);
+        if (ps >= totalDays) break;
+        const nextMonth = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+        const pe = Math.min(totalDays, daysBetween(chartStart, nextMonth));
+        drawPeriod(ps, pe);
+        cur = nextMonth;
+      }
     }
 
     ctx.fillStyle = 'rgba(0,0,0,0.08)';
