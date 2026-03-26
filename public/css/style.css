@@ -757,6 +757,25 @@ body.connecting-mode .gantt-bar-container:hover .gantt-bar {
 body.connecting-mode .gantt-task-row:hover {
   outline: 2px solid rgba(46,125,50,0.6); outline-offset: -1px;
 }
+/* Share-row banner colour (re-uses .connecting-banner layout) */
+.share-row-banner { background: #e3f2fd; border-bottom-color: var(--primary); color: #0d47a1; }
+html.dark-mode .share-row-banner { background: #1a2536; color: #64b5f6; }
+/* Highlight clickable targets while in share-row mode */
+body.share-row-mode .gantt-bar { cursor: pointer; }
+body.share-row-mode .gantt-task-row { cursor: pointer; }
+body.share-row-mode .gantt-bar-container:hover .gantt-bar {
+  outline: 2px solid rgba(33,150,243,0.8); outline-offset: 1px;
+}
+body.share-row-mode .gantt-task-row:hover {
+  outline: 2px solid rgba(33,150,243,0.6); outline-offset: -1px;
+}
+/* Same-row badge in task list */
+.gantt-same-row-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 600; min-width: 18px; padding: 0 4px; height: 16px;
+  border-radius: 8px; background: var(--primary); color: #fff; flex-shrink: 0;
+  margin-left: 2px;
+}
 
 /* =====================================================================
    Toggle button active state (used for Deps and Help buttons)

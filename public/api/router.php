@@ -873,7 +873,7 @@ if ($seg1 === 'gantt') {
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
 
-            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
+            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
             $s->execute([
                 $newParentId,
                 $body['title'] ?? $existing['title'],
@@ -885,6 +885,7 @@ if ($seg1 === 'gantt') {
                 $body['notes'] ?? $existing['notes'],
                 array_key_exists('folder_url', $body) ? $body['folder_url'] : $existing['folder_url'],
                 array_key_exists('subtract_hours', $body) ? ($body['subtract_hours'] ? 1 : 0) : ($existing['subtract_hours'] ?? 0),
+                array_key_exists('same_row', $body) ? ($body['same_row'] ?: null) : ($existing['same_row'] ?? null),
                 now_ms(),
                 $ganttId
             ]);
@@ -1188,8 +1189,8 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
             $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
         }
-        $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
-        $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, now_ms(), $e['id']]);
+        $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+        $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
 
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);
@@ -1280,8 +1281,8 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
             // Save current state as undo so user can undo this redo
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
-            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,updated_at=? WHERE id=?');
-            $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, now_ms(), $e['id']]);
+            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+            $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
             $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
             $s->execute([$e['id']]);
             $result = ['redone' => 'update_gantt', 'entry' => $s->fetch()];

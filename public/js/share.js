@@ -218,6 +218,13 @@ function render() {
   rowIndexMap = {};
   entries.forEach((e, i) => { rowIndexMap[e.id] = i; });
 
+  // Map same-row entries to their target's row index
+  S.entries.forEach(e => {
+    if (e.same_row && rowIndexMap[e.same_row] !== undefined) {
+      rowIndexMap[e.id] = rowIndexMap[e.same_row];
+    }
+  });
+
   renderTaskList(entries);
   renderRuler(timelineW, totalDays);
   renderRowsAndBars(entries, timelineW);
@@ -352,6 +359,14 @@ function renderRowsAndBars(entries, timelineW) {
 
     const bar = buildBar(entry);
     if (bar) rowBg.appendChild(bar);
+
+    // Also render bars for entries that share this row (same_row === entry.id)
+    const sameRowEntries = S.entries.filter(e => e.same_row === entry.id);
+    sameRowEntries.forEach(srEntry => {
+      const srBar = buildBar(srEntry);
+      if (srBar) rowBg.appendChild(srBar);
+    });
+
     ganttRows.appendChild(rowBg);
   });
 }
@@ -647,7 +662,7 @@ function drillDown(entry) {
 
 // ─── Visible entries & auto chart range ──────────────────────────────────
 function visibleEntries() {
-  return S.entries.filter(e => e.parent_id === currentParentId);
+  return S.entries.filter(e => e.parent_id === currentParentId && !e.same_row);
 }
 
 function autoSetChartRange(entries) {

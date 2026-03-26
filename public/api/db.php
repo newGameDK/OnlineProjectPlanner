@@ -147,6 +147,11 @@ try {
     $db->exec("ALTER TABLE gantt_entries ADD COLUMN subtract_hours INTEGER NOT NULL DEFAULT 0");
 } catch (Exception $e) { /* column already exists – ignore */ }
 
+// Migration: add same_row to gantt_entries (allows multiple tasks on the same visual row)
+try {
+    $db->exec("ALTER TABLE gantt_entries ADD COLUMN same_row TEXT DEFAULT NULL");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
 // App settings table (admin user IDs etc.)
 $db->exec("
 CREATE TABLE IF NOT EXISTS app_settings (
