@@ -1342,7 +1342,7 @@ function applyZipUpdate(zipPath) {
     } catch { /* ignore */ }
   }
 
-  const protectedPaths = ['api/data/'];
+  const protectedPaths = ['api/data/', 'sounds/'];
   let extracted = 0;
   let skipped = 0;
 
