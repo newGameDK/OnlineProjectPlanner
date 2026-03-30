@@ -25,7 +25,7 @@
 (function () {
 
   // ─── constants ────────────────────────────────────────────────────────────
-  const ROW_H    = 40;  // px – must match CSS --row-h
+  const ROW_H    = 40;  // px default row height
   const MIN_DAYS = 1;   // minimum bar width in days
   const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
 
@@ -48,6 +48,21 @@
 
   // rowIndexMap: entryId -> rowIndex (rebuilt on each render)
   let rowIndexMap = {};
+  let timelineContextRowId = null;
+
+  function getEntryRowLabel(entry) {
+    return (entry.row_label && entry.row_label.trim()) || entry.title || '';
+  }
+
+  function getEntryRowHeight(entry) {
+    const h = parseInt(entry && entry.row_height, 10);
+    return Number.isFinite(h) ? Math.max(28, Math.min(240, h)) : ROW_H;
+  }
+
+  function getSnapDaysForCurrentScale() {
+    if (scale === 'month') return 7; // month view snaps to weeks
+    return 1; // week/day view snaps to days
+  }
 
   // ── clipboard state ────────────────────────────────────────────────────────
   let clipboardData = null; // { entries: [...], rootId, cut: bool }
@@ -117,6 +132,13 @@
     dropTargetId: null,           // id of the row we'd insert relative to
     dropIndicatorEl: null,        // horizontal line shown in task list
     dropIndicatorTimelineEl: null, // matching horizontal line shown in timeline rows
+  };
+
+  const rowHeightDrag = {
+    active: false,
+    entryId: null,
+    startY: 0,
+    startHeight: ROW_H,
   };
 
   // ── Long-press touch-drag state ────────────────────────────────────────────
@@ -557,6 +579,8 @@
     const dayOffset = Math.floor(x / pxPerDay);
     const clickDate = addDays(chartStart, dayOffset);
     const dateStr   = toDateStr(clickDate);
+    const rowBg = e.target.closest('.gantt-row-bg');
+    timelineContextRowId = rowBg ? rowBg.dataset.id : null;
 
     const items = [];
 
@@ -567,12 +591,14 @@
       const selStartStr = toDateStr(addDays(chartStart, selStart));
       const selEndStr   = toDateStr(addDays(chartStart, selEnd + 1));
       items.push({ icon: '+', label: 'Add task for selection (' + selStartStr + ' – ' + selEndStr + ')',
-        action: () => { clearTimelineSelection(); showAddEntryModal(undefined, selStartStr, selEndStr); } });
+        action: () => { clearTimelineSelection(); showAddEntryModal(undefined, selStartStr, selEndStr, timelineContextRowId); } });
       items.push({ separator: true });
     }
 
     items.push({ icon: '+', label: 'Add task here (' + dateStr + ')',
-      action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7))) });
+      action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7)), timelineContextRowId) });
+    items.push({ icon: '▤', label: 'Add empty row/category',
+      action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7)), null, true) });
 
     if (clipboardData) {
       items.push({ icon: '📋', label: 'Paste task here',
@@ -673,6 +699,7 @@
         + (S().selectedGanttIds.has(entry.id) ? ' selected' : '')
         + (isCompleted ? ' gantt-completed' : '');
       row.dataset.id = entry.id;
+      row.style.minHeight = getEntryRowHeight(entry) + 'px';
 
       // Drag handle for reparenting / reordering
       const grip = document.createElement('span');
@@ -732,9 +759,29 @@
       // Name
       const name = document.createElement('span');
       name.className = 'gantt-task-name';
-      name.textContent = entry.title;
-      name.title = entry.title + (entry.notes ? '\n\n' + entry.notes : '');
+      name.textContent = getEntryRowLabel(entry);
+      name.title = 'Row: ' + getEntryRowLabel(entry) + '\nTask: ' + entry.title + (entry.notes ? '\n\n' + entry.notes : '');
+      name.addEventListener('dblclick', async (e) => {
+        e.stopPropagation();
+        const newLabel = prompt('Edit row name', getEntryRowLabel(entry));
+        if (newLabel === null) return;
+        try {
+          const data = await API('PUT', '/api/gantt/' + entry.id, { row_label: newLabel });
+          const idx = S().ganttEntries.findIndex(en => en.id === entry.id);
+          if (idx !== -1) S().ganttEntries[idx] = data.entry;
+          render();
+        } catch (err) {
+          alert('Failed to rename row: ' + err.message);
+        }
+      });
       row.appendChild(name);
+
+      const rowResize = document.createElement('span');
+      rowResize.className = 'gantt-row-resize-handle';
+      rowResize.title = 'Drag to change row height';
+      rowResize.textContent = '⋮';
+      rowResize.addEventListener('mousedown', (e) => startRowHeightDrag(e, entry.id));
+      row.appendChild(rowResize);
 
       // Same-row badge (show count of tasks sharing this row)
       const sameRowCount = S().ganttEntries.filter(e => e.same_row === entry.id).length;
@@ -855,6 +902,40 @@
     b.title = title;
     b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     return b;
+  }
+
+  function startRowHeightDrag(e, entryId) {
+    e.preventDefault();
+    e.stopPropagation();
+    const entry = S().ganttEntries.find(en => en.id === entryId);
+    if (!entry) return;
+    rowHeightDrag.active = true;
+    rowHeightDrag.entryId = entryId;
+    rowHeightDrag.startY = e.clientY;
+    rowHeightDrag.startHeight = getEntryRowHeight(entry);
+    document.addEventListener('mousemove', onRowHeightDragMove);
+    document.addEventListener('mouseup', onRowHeightDragUp);
+  }
+
+  function onRowHeightDragMove(e) {
+    if (!rowHeightDrag.active) return;
+    const newHeight = Math.max(28, Math.min(240, rowHeightDrag.startHeight + (e.clientY - rowHeightDrag.startY)));
+    const idx = S().ganttEntries.findIndex(en => en.id === rowHeightDrag.entryId);
+    if (idx === -1) return;
+    S().ganttEntries[idx].row_height = newHeight;
+    render();
+  }
+
+  async function onRowHeightDragUp() {
+    if (!rowHeightDrag.active) return;
+    document.removeEventListener('mousemove', onRowHeightDragMove);
+    document.removeEventListener('mouseup', onRowHeightDragUp);
+    const entry = S().ganttEntries.find(en => en.id === rowHeightDrag.entryId);
+    if (entry) {
+      try { await API('PUT', '/api/gantt/' + entry.id, { row_height: getEntryRowHeight(entry) }); } catch (_) {}
+    }
+    rowHeightDrag.active = false;
+    rowHeightDrag.entryId = null;
   }
 
   // ─── reparent / reorder drag-and-drop ────────────────────────────────────
@@ -1345,7 +1426,7 @@
     entries.forEach(entry => {
       const rowBg = document.createElement('div');
       rowBg.className     = 'gantt-row-bg';
-      rowBg.style.height  = ROW_H + 'px';
+      rowBg.style.height  = getEntryRowHeight(entry) + 'px';
       rowBg.dataset.id    = entry.id;
       rowBg.addEventListener('dblclick', () => drillDown(entry));
 
@@ -1377,7 +1458,7 @@
         document.addEventListener('mouseup', onUp);
       });
 
-      const bar = buildBar(entry);
+      const bar = entry.row_only ? null : buildBar(entry);
       if (bar) rowBg.appendChild(bar);
 
       // Also render bars for entries that share this row (same_row === entry.id)
@@ -1416,8 +1497,10 @@
     const isCompleted = linkedTodo && linkedTodo.status === 'done';
 
     const container = document.createElement('div');
+    const rowHeight = getEntryRowHeight(entry);
+    const barPad = Math.max(4, Math.round(rowHeight * 0.1));
     container.className     = 'gantt-bar-container';
-    container.style.cssText = 'left:' + left + 'px;width:' + width + 'px;';
+    container.style.cssText = 'left:' + left + 'px;width:' + width + 'px;top:' + barPad + 'px;height:' + Math.max(16, rowHeight - (barPad * 2)) + 'px;';
     container.dataset.id    = entry.id;
 
     const bar = document.createElement('div');
@@ -1982,7 +2065,8 @@
       }
 
       // Update tooltip with day-snapped dates
-      const deltaDays = Math.round(deltaX / pxPerDay);
+      const snapDays = getSnapDaysForCurrentScale();
+      const deltaDays = Math.round((deltaX / pxPerDay) / snapDays) * snapDays;
       if (deltaDays !== drag.snappedDays) {
         drag.snappedDays = deltaDays;
         const { newStart, newEnd } = calcDragDates(deltaDays);
@@ -2065,17 +2149,21 @@
       // Use actual container position to account for snap adjustment.
       // Fallback to mouse delta if style.left is somehow unparseable.
       const actualLeft = parseFloat(drag.containerEl.style.left);
+      const snapDays = getSnapDaysForCurrentScale();
       deltaDays = isNaN(actualLeft)
-        ? Math.round((e.pageX - drag.startX) / pxPerDay)
-        : Math.round((actualLeft - drag.origLeftPx) / pxPerDay);
+        ? Math.round(((e.pageX - drag.startX) / pxPerDay) / snapDays) * snapDays
+        : Math.round(((actualLeft - drag.origLeftPx) / pxPerDay) / snapDays) * snapDays;
     } else if (snapActivePx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
       if (dragType === 'resize-left') {
-        deltaDays = Math.round((snapActivePx - drag.origLeftPx) / pxPerDay);
+        const snapDays = getSnapDaysForCurrentScale();
+        deltaDays = Math.round(((snapActivePx - drag.origLeftPx) / pxPerDay) / snapDays) * snapDays;
       } else {
-        deltaDays = Math.round((snapActivePx - drag.origLeftPx - drag.origWidthPx) / pxPerDay);
+        const snapDays = getSnapDaysForCurrentScale();
+        deltaDays = Math.round(((snapActivePx - drag.origLeftPx - drag.origWidthPx) / pxPerDay) / snapDays) * snapDays;
       }
     } else {
-      deltaDays = Math.round((e.pageX - drag.startX) / pxPerDay);
+      const snapDays = getSnapDaysForCurrentScale();
+      deltaDays = Math.round(((e.pageX - drag.startX) / pxPerDay) / snapDays) * snapDays;
     }
     const { newStart, newEnd } = calcDragDates(deltaDays);
     const entryId      = drag.entryId;
@@ -2792,21 +2880,25 @@
   // =========================================================================
   // Entry Modals
   // =========================================================================
-  function showAddEntryModal(parentId, startDateOverride, endDateOverride) {
+  function showAddEntryModal(parentId, startDateOverride, endDateOverride, sameRowIdOverride, rowOnlyOverride) {
     const today    = startDateOverride || toDateStr(new Date());
     const startDt  = parseDate(today) || new Date();
     const nextWeek = endDateOverride   || toDateStr(addDays(startDt, 7));
 
     U().openModal('Add Gantt Entry', buildEntryFormHtml({
       title: '', start_date: today, end_date: nextWeek,
+      row_label: '', row_height: ROW_H, row_only: rowOnlyOverride ? 1 : 0,
       hours_estimate: '', color_variation: 0, notes: '', folder_url: '',
     }, parentId !== undefined), async () => {
       const vals = readEntryForm();
+      if (!vals.title && vals.row_only) vals.title = vals.row_label || 'Category';
+      if (!vals.row_label) vals.row_label = vals.title;
       if (!vals.title) return alert('Title is required');
       try {
         const data = await API('POST', '/api/gantt', {
           project_id: S().currentProject.id,
           parent_id: parentId !== undefined ? parentId : currentParentId,
+          same_row: sameRowIdOverride || null,
           ...vals,
         });
         S().ganttEntries.push(data.entry);
@@ -2833,6 +2925,8 @@
   function showEditEntryModal(entry) {
     U().openModal('Edit Entry', buildEntryFormHtml(entry, !!entry.parent_id), async () => {
       const vals = readEntryForm();
+      if (!vals.title && vals.row_only) vals.title = entry.title || vals.row_label || 'Category';
+      if (!vals.row_label) vals.row_label = vals.title;
       if (!vals.title) return alert('Title is required');
       try {
         const data = await API('PUT', '/api/gantt/' + entry.id, vals);
@@ -2991,6 +3085,13 @@
       '<label>Title</label>' +
       '<input type="text" id="feTitle" value="' + U().escHtml(entry.title || '') + '" placeholder="Task name">' +
       '</div>' +
+      '<div class="form-group">' +
+      '<label>Row name</label>' +
+      '<input type="text" id="feRowLabel" value="' + U().escHtml(entry.row_label || entry.title || '') + '" placeholder="Row/category name">' +
+      '</div>' +
+      '<div class="form-group">' +
+      '<label><input type="checkbox" id="feRowOnly" ' + ((entry.row_only ? 'checked' : '')) + '> Row only (category/no bar)</label>' +
+      '</div>' +
       '<div style="display:flex;gap:12px">' +
         '<div class="form-group" style="flex:1"><label>Start Date</label>' +
           '<input type="date" id="feStart" value="' + (entry.start_date || '') + '"></div>' +
@@ -3037,8 +3138,12 @@
       // No URL scheme present (e.g. "youtube.com") – prepend https://
       folderUrl = 'https://' + folderUrl;
     }
+    const title = (document.getElementById('feTitle') && document.getElementById('feTitle').value.trim()) || '';
+    const rowLabel = (document.getElementById('feRowLabel') && document.getElementById('feRowLabel').value.trim()) || title;
     return {
-      title:           (document.getElementById('feTitle') && document.getElementById('feTitle').value.trim()) || '',
+      title:           title,
+      row_label:       rowLabel,
+      row_only:        !!(document.getElementById('feRowOnly') && document.getElementById('feRowOnly').checked),
       start_date:      (document.getElementById('feStart') && document.getElementById('feStart').value) || '',
       end_date:        (document.getElementById('feEnd')   && document.getElementById('feEnd').value)   || '',
       hours_estimate:  parseFloat((document.getElementById('feHours') && document.getElementById('feHours').value)) || 0,
@@ -3100,6 +3205,7 @@
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
       { icon: '+',      label: 'Add sub-task',          action: () => showAddEntryModal(entry.id) },
+      { icon: '≡',      label: 'Add task in this row',   action: () => showAddEntryModal(undefined, entry.start_date, entry.end_date, entry.id) },
       hasChildren
         ? { icon: '\u25BC', label: 'Open sub-chart',   action: () => drillDown(entry) }
         : null,
@@ -3239,16 +3345,32 @@
     return result;
   }
 
+  function isDescendantOf(entryId, maybeAncestorId) {
+    let cursor = S().ganttEntries.find(e => e.id === entryId);
+    while (cursor && cursor.parent_id) {
+      if (cursor.parent_id === maybeAncestorId) return true;
+      cursor = S().ganttEntries.find(e => e.id === cursor.parent_id);
+    }
+    return false;
+  }
+
   function copyEntry(entry, cut) {
-    clipboardData = { entries: collectSubtree(entry.id), rootId: entry.id, cut };
+    clipboardData = { entries: collectSubtree(entry.id), rootIds: [entry.id], cut };
   }
 
   /** Called from app.js keyboard handler – copies the first selected entry */
   function copySelected(cut) {
-    const id = S().selectedGanttIds.size > 0 ? [...S().selectedGanttIds][0] : null;
-    if (!id) return;
-    const entry = S().ganttEntries.find(e => e.id === id);
-    if (entry) copyEntry(entry, cut);
+    const selected = [...S().selectedGanttIds];
+    if (selected.length === 0) return;
+    const dedup = new Map();
+    selected.forEach(id => {
+      collectSubtree(id).forEach(e => dedup.set(e.id, e));
+    });
+    clipboardData = {
+      entries: [...dedup.values()],
+      rootIds: selected.filter(id => !selected.some(other => other !== id && isDescendantOf(id, other))),
+      cut,
+    };
   }
 
   /** Called from app.js keyboard handler – pastes at today */
@@ -3259,58 +3381,62 @@
 
   async function pasteEntries(pasteStartDate) {
     if (!clipboardData || !S().currentProject) return;
-    const { entries, rootId, cut } = clipboardData;
-    const root = entries.find(e => e.id === rootId);
-    if (!root) return;
-
-    // Calculate day offset from original root start to paste position
-    const rootStart  = parseDate(root.start_date);
+    const { entries, rootIds, cut } = clipboardData;
     const pasteStart = parseDate(pasteStartDate);
-    const dayOffset  = daysBetween(rootStart, pasteStart);
-
-    // Sort entries so parents come before their children
-    const sorted = [];
-    const addSorted = (id) => {
-      const e = entries.find(x => x.id === id);
-      if (!e || sorted.includes(e)) return;
-      sorted.push(e);
-      entries.filter(x => x.parent_id === id).forEach(c => addSorted(c.id));
-    };
-    addSorted(rootId);
-
     const idMap = {}; // old id → new id
-    for (const e of sorted) {
-      const newParentId = e.id === rootId
-        ? currentParentId  // paste root at current chart level
-        : (idMap[e.parent_id] !== undefined ? idMap[e.parent_id] : null);
-      const newStart = toDateStr(addDays(parseDate(e.start_date), dayOffset));
-      const newEnd   = toDateStr(addDays(parseDate(e.end_date),   dayOffset));
-      try {
-        const data = await API('POST', '/api/gantt', {
-          project_id:      S().currentProject.id,
-          parent_id:       newParentId,
-          title:           e.title,
-          start_date:      newStart,
-          end_date:        newEnd,
-          hours_estimate:  e.hours_estimate,
-          color_variation: e.color_variation,
-          notes:           e.notes,
-          folder_url:      e.folder_url,
-        });
-        idMap[e.id] = data.entry.id;
-        S().ganttEntries.push(data.entry);
-        expandChartRange(data.entry);
-        if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
-          expandedIds.add(data.entry.parent_id);
+
+    for (const rootId of (rootIds || [])) {
+      const root = entries.find(e => e.id === rootId);
+      if (!root) continue;
+      const rootStart  = parseDate(root.start_date);
+      const dayOffset  = daysBetween(rootStart, pasteStart);
+
+      const sorted = [];
+      const addSorted = (id) => {
+        const e = entries.find(x => x.id === id);
+        if (!e || sorted.includes(e)) return;
+        sorted.push(e);
+        entries.filter(x => x.parent_id === id).forEach(c => addSorted(c.id));
+      };
+      addSorted(rootId);
+
+      for (const e of sorted) {
+        const newParentId = e.id === rootId
+          ? currentParentId
+          : (idMap[e.parent_id] !== undefined ? idMap[e.parent_id] : null);
+        const newStart = toDateStr(addDays(parseDate(e.start_date), dayOffset));
+        const newEnd   = toDateStr(addDays(parseDate(e.end_date),   dayOffset));
+        try {
+          const data = await API('POST', '/api/gantt', {
+            project_id:      S().currentProject.id,
+            parent_id:       newParentId,
+            title:           e.title,
+            row_label:       e.row_label,
+            row_height:      e.row_height,
+            row_only:        e.row_only,
+            start_date:      newStart,
+            end_date:        newEnd,
+            hours_estimate:  e.hours_estimate,
+            color_variation: e.color_variation,
+            notes:           e.notes,
+            folder_url:      e.folder_url,
+          });
+          idMap[e.id] = data.entry.id;
+          S().ganttEntries.push(data.entry);
+          expandChartRange(data.entry);
+          if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
+            expandedIds.add(data.entry.parent_id);
+          }
+        } catch (err) {
+          console.error('Paste failed for entry "' + e.title + '":', err);
         }
-      } catch (err) {
-        console.error('Paste failed for entry "' + e.title + '":', err);
       }
     }
 
     if (cut) {
-      // Delete originals in reverse order (children before parents)
-      for (const e of [...sorted].reverse()) {
+      const uniqueSorted = [];
+      entries.forEach(e => uniqueSorted.push(e));
+      for (const e of [...uniqueSorted].reverse()) {
         try {
           await API('DELETE', '/api/gantt/' + e.id);
           S().ganttEntries = S().ganttEntries.filter(x => x.id !== e.id);

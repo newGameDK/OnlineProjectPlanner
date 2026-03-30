@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS gantt_entries (
   project_id TEXT NOT NULL,
   parent_id TEXT,
   title TEXT NOT NULL,
+  row_label TEXT NOT NULL DEFAULT '',
+  row_height INTEGER NOT NULL DEFAULT 40,
+  row_only INTEGER NOT NULL DEFAULT 0,
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
   hours_estimate REAL NOT NULL DEFAULT 0,
@@ -151,6 +154,21 @@ try {
 // Migration: add same_row to gantt_entries (allows multiple tasks on the same visual row)
 try {
     $db->exec("ALTER TABLE gantt_entries ADD COLUMN same_row TEXT DEFAULT NULL");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
+// Migration: add editable row label (separate from task title)
+try {
+    $db->exec("ALTER TABLE gantt_entries ADD COLUMN row_label TEXT NOT NULL DEFAULT ''");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
+// Migration: add per-row height
+try {
+    $db->exec("ALTER TABLE gantt_entries ADD COLUMN row_height INTEGER NOT NULL DEFAULT 40");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
+// Migration: add row-only flag (category rows without visible bars)
+try {
+    $db->exec("ALTER TABLE gantt_entries ADD COLUMN row_only INTEGER NOT NULL DEFAULT 0");
 } catch (Exception $e) { /* column already exists – ignore */ }
 
 // App settings table (admin user IDs etc.)

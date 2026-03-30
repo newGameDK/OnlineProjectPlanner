@@ -137,8 +137,8 @@ function require_auth() {
 function restore_project_contents($db, $data) {
     foreach (($data['entries'] ?? []) as $e) {
         try {
-            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
-            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '']);
+            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,subtract_hours,same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null]);
         } catch (Exception $ex) {}
     }
     foreach (($data['todos'] ?? []) as $t) {
@@ -807,11 +807,11 @@ if ($seg1 === 'gantt') {
         if (!can_access_project($db, $project_id, $userId)) json_out(['error' => 'Forbidden'], 403);
 
         $id = uuid_v4();
-        $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+        $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
         $s->execute([
-            $id, $project_id, $body['parent_id'] ?? null, $title, $start_date, $end_date,
+            $id, $project_id, $body['parent_id'] ?? null, $title, ($body['row_label'] ?? $title), ($body['row_height'] ?? 40), (($body['row_only'] ?? 0) ? 1 : 0), $start_date, $end_date,
             $body['hours_estimate'] ?? 0, $body['color_variation'] ?? 0, $userId,
-            $body['position'] ?? 0, $body['notes'] ?? '', $body['folder_url'] ?? ''
+            $body['position'] ?? 0, $body['notes'] ?? '', $body['folder_url'] ?? '', ($body['same_row'] ?? null)
         ]);
 
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
@@ -873,10 +873,13 @@ if ($seg1 === 'gantt') {
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
 
-            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
             $s->execute([
                 $newParentId,
                 $body['title'] ?? $existing['title'],
+                array_key_exists('row_label', $body) ? $body['row_label'] : ($existing['row_label'] ?: $existing['title']),
+                array_key_exists('row_height', $body) ? max(28, min(240, (int)$body['row_height'])) : ((int)($existing['row_height'] ?? 40)),
+                array_key_exists('row_only', $body) ? (($body['row_only'] ?? 0) ? 1 : 0) : ((int)($existing['row_only'] ?? 0)),
                 $body['start_date'] ?? $existing['start_date'],
                 $body['end_date'] ?? $existing['end_date'],
                 $body['hours_estimate'] ?? $existing['hours_estimate'],
@@ -1189,8 +1192,8 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
             $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
         }
-        $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
-        $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
+        $s = $db->prepare('UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+        $s->execute([$e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
 
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);
@@ -1201,8 +1204,8 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
         $s->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $e])]);
         try {
-            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
-            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '']);
+            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,subtract_hours,same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null]);
         } catch (Exception $ex) { /* entry already exists – ignore duplicate */ }
 
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
@@ -1261,8 +1264,8 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
         // Redo: recreate the entry that was originally created then undone
         $e = $data['entry'];
         try {
-            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
-            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '']);
+            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,subtract_hours,same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null]);
         } catch (Exception $ex) { /* already exists */ }
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);
@@ -1281,8 +1284,8 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
             // Save current state as undo so user can undo this redo
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
-            $s = $db->prepare('UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
-            $s->execute([$e['title'], $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
+            $s = $db->prepare('UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+            $s->execute([$e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
             $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
             $s->execute([$e['id']]);
             $result = ['redone' => 'update_gantt', 'entry' => $s->fetch()];
@@ -1504,12 +1507,12 @@ if ($seg1 === 'backup' && $seg2 === 'import' && $method === 'POST') {
 
                 foreach (($proj['entries'] ?? []) as $e) {
                     try {
-                        $s = $db->prepare('INSERT INTO gantt_entries (id, project_id, parent_id, title, start_date, end_date, hours_estimate, color_variation, user_id, position, notes, folder_url, subtract_hours) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+                        $s = $db->prepare('INSERT INTO gantt_entries (id, project_id, parent_id, title, row_label, row_height, row_only, start_date, end_date, hours_estimate, color_variation, user_id, position, notes, folder_url, subtract_hours, same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
                         $s->execute([
-                            $e['id'], $proj['id'], $e['parent_id'] ?? null, $e['title'],
-                            $e['start_date'], $e['end_date'], $e['hours_estimate'] ?? 0,
+                            $e['id'], $proj['id'], $e['parent_id'] ?? null, $e['title'], $e['row_label'] ?? ($e['title'] ?? ''),
+                            $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'] ?? 0,
                             $e['color_variation'] ?? 0, $userId, $e['position'] ?? 0,
-                            $e['notes'] ?? '', $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0
+                            $e['notes'] ?? '', $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null
                         ]);
                         $entriesImported++;
                     } catch (Exception $ex) { /* already exists */ }
