@@ -284,7 +284,7 @@ The application supports two deployment modes:
 |---------|-------------|
 | **ZIP Upload** | Upload a ZIP file manually to update the application. |
 | **Progress Tracking** | Visual progress bar with status messages during update. |
-| **Protected Paths** | The `api/data/` directory (database) is never overwritten during updates. |
+| **Protected Paths** | The `api/data/` directory (database) and `sounds/` directory (custom sound files) are never overwritten during updates. |
 | **Path Traversal Protection** | Rejects ZIP entries with `..` in paths. |
 | **Cache Busting** | HTML files are updated with new `?v=` query strings after update. |
 | **Auto-Reload** | Page reloads automatically after successful update. |
@@ -428,7 +428,7 @@ The application supports two deployment modes:
 | **Session Management** | HTTP-only, SameSite cookies with 7-day expiry. |
 | **CORS Support** | Configurable `CORS_ORIGIN` for split deployments with `SameSite=None; Secure`. |
 | **Path Traversal Protection** | Update ZIP extraction rejects `..` in paths and validates `realpath()`. |
-| **Protected Database** | Update process never overwrites the `api/data/` directory. |
+| **Protected Database** | Update process never overwrites the `api/data/` directory or the `sounds/` directory. |
 | **Admin-Only Updates** | Application updates are restricted to admin users. |
 | **SQL Injection Prevention** | All queries use prepared statements with parameterized inputs. |
 | **Input Validation** | All API endpoints validate required fields and types. |
