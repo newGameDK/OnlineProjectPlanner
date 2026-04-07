@@ -65,7 +65,7 @@
   }
 
   // ── clipboard state ────────────────────────────────────────────────────────
-  let clipboardData = null; // { entries: [...], rootIds, cut: bool }
+  let clipboardData = null; // { entries: Entry[], rootIds: number[], cut: boolean }
 
   // ── multi-select range tracking ────────────────────────────────────────────
   let lastClickedId = null; // last task clicked without shift – used for range select
@@ -3584,9 +3584,10 @@
 
     // If pasting below a specific entry, reorder the new root entries to appear after it
     if (afterEntry && newRootIds.length > 0) {
+      const newRootIdSet = new Set(newRootIds);
       const siblings = S().ganttEntries
         .filter(e => (e.parent_id === pasteParentId || (!e.parent_id && !pasteParentId)) &&
-                     !newRootIds.includes(e.id))
+                     !newRootIdSet.has(e.id))
         .sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1));
       const afterIdx = siblings.findIndex(e => e.id === afterEntry.id);
       const insertAt = afterIdx !== -1 ? afterIdx + 1 : siblings.length;
