@@ -28,6 +28,7 @@
   const ROW_H    = 40;  // px default row height
   const MIN_DAYS = 1;   // minimum bar width in days
   const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
+  const NARROW_BAR_PX = 60; // px threshold: bars narrower than this get overflow-visible text
   const DEFAULT_TASK_COL_WIDTH = 260; // px default task column width
   const MIN_TASK_COL_WIDTH = 120;     // px minimum task column width when resizing
   const MAX_TASK_COL_WIDTH = 600;     // px maximum task column width when resizing
@@ -1659,7 +1660,7 @@
     container.dataset.id    = entry.id;
 
     const bar = document.createElement('div');
-    const isNarrow = width < 60;
+    const isNarrow = width < NARROW_BAR_PX;
     bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '') + (rowHeight > ROW_H ? ' gantt-bar-tall' : '') + (isNarrow ? ' gantt-bar-narrow' : '');
     bar.style.background = color;
     bar.style.width      = '100%';
