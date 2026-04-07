@@ -745,11 +745,11 @@
 
     // Build cumulative Y-center map (accounts for variable row heights)
     rowYMap = {};
-    let _cumulY = 0;
+    let cumulativeY = 0;
     entries.forEach(e => {
       const h = getEntryRowHeight(e);
-      rowYMap[e.id] = _cumulY + h / 2;
-      _cumulY += h;
+      rowYMap[e.id] = cumulativeY + h / 2;
+      cumulativeY += h;
     });
     // Same-row entries share the owner's Y center
     S().ganttEntries.forEach(e => {
