@@ -28,6 +28,9 @@
   const ROW_H    = 40;  // px default row height
   const MIN_DAYS = 1;   // minimum bar width in days
   const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
+  const DEFAULT_TASK_COL_WIDTH = 260; // px default task column width
+  const MIN_TASK_COL_WIDTH = 120;     // px minimum task column width when resizing
+  const MAX_TASK_COL_WIDTH = 600;     // px maximum task column width when resizing
 
   // ─── state refs (injected from app.js) ───────────────────────────────────
   const S   = () => window.appState;
@@ -463,6 +466,44 @@
       addBtn.setAttribute('data-help', 'Add a new task (keyboard shortcut: N)');
       addBtn.addEventListener('click', (e) => { e.stopPropagation(); showAddEntryModal(); });
       tasksHeader.appendChild(addBtn);
+
+      // Draggable column-width resizer at the right edge of the header
+      const colResizer = document.createElement('div');
+      colResizer.className = 'gantt-task-col-resizer';
+      colResizer.title = 'Drag to resize task column';
+      colResizer.addEventListener('mousedown', (e) => {
+        if (taskListCollapsed) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--task-col-w')) || DEFAULT_TASK_COL_WIDTH;
+        colResizer.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        const onMove = (mv) => {
+          const newW = Math.max(MIN_TASK_COL_WIDTH, Math.min(MAX_TASK_COL_WIDTH, startW + (mv.clientX - startX)));
+          document.documentElement.style.setProperty('--task-col-w', newW + 'px');
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          colResizer.classList.remove('active');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          const finalW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--task-col-w')) || DEFAULT_TASK_COL_WIDTH;
+          localStorage.setItem('ganttTaskColW', finalW);
+          render();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      tasksHeader.appendChild(colResizer);
+
+      // Restore saved column width from localStorage
+      const savedColW = parseInt(localStorage.getItem('ganttTaskColW'));
+      if (savedColW >= MIN_TASK_COL_WIDTH && savedColW <= MAX_TASK_COL_WIDTH) {
+        document.documentElement.style.setProperty('--task-col-w', savedColW + 'px');
+      }
     }
 
     // Move breadcrumb above the gantt container for better visibility
@@ -1564,7 +1605,7 @@
     container.dataset.id    = entry.id;
 
     const bar = document.createElement('div');
-    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '');
+    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '') + (rowHeight > ROW_H ? ' gantt-bar-tall' : '');
     bar.style.background = color;
     bar.style.width      = '100%';
     if (U().isColorDark(color)) {
@@ -2954,10 +2995,16 @@
     const startDt  = parseDate(today) || new Date();
     const nextWeek = endDateOverride   || toDateStr(addDays(startDt, 7));
 
+    // Inherit color from the row being added to (same-row), falling back to parent, then 0
+    const rowEntry = sameRowIdOverride ? S().ganttEntries.find(e => e.id === sameRowIdOverride) : null;
+    const parentEntry = (parentId !== undefined) ? S().ganttEntries.find(e => e.id === parentId) : null;
+    const defaultColorVariation = rowEntry ? (rowEntry.color_variation || 0)
+      : parentEntry ? (parentEntry.color_variation || 0) : 0;
+
     U().openModal('Add Gantt Entry', buildEntryFormHtml({
       title: '', start_date: today, end_date: nextWeek,
       row_label: '', row_height: ROW_H, row_only: rowOnlyOverride ? 1 : 0,
-      hours_estimate: '', color_variation: 0, notes: '', folder_url: '',
+      hours_estimate: '', color_variation: defaultColorVariation, notes: '', folder_url: '',
     }, parentId !== undefined), async () => {
       const vals = readEntryForm();
       if (!vals.title && vals.row_only) vals.title = vals.row_label || 'Category';
