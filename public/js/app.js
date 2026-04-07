@@ -675,7 +675,7 @@ async function deleteSelectedGanttEntries() {
       const data = await api('DELETE', `/api/gantt/${id}`);
       (data.deleted_ids || [id]).forEach(did => deletedIds.add(did));
     } catch (_) {
-      // Entry may have been cascade-deleted already; treat as deleted
+      // Entry may have been recursively deleted along with a parent; treat as deleted
       deletedIds.add(id);
     }
   }

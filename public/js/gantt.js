@@ -3153,7 +3153,7 @@
           const data = await API('DELETE', '/api/gantt/' + entry.id);
           (data.deleted_ids || [entry.id]).forEach(id => deletedIds.add(id));
         } catch (err) {
-          // Entry may have already been cascade-deleted by a parent's delete; treat as deleted
+          // Entry may have already been recursively deleted along with a parent; treat as deleted
           deletedIds.add(entry.id);
         }
       }));
@@ -3574,7 +3574,7 @@
         // Entries with no dates (row-only categories) keep their dates empty
         const rawStart = parseDate(e.start_date);
         const rawEnd   = parseDate(e.end_date);
-        const newStart = rawStart ? toDateStr(addDays(rawStart, dayOffset)) : toDateStr(addDays(pasteStart, 0));
+        const newStart = rawStart ? toDateStr(addDays(rawStart, dayOffset)) : toDateStr(pasteStart);
         const newEnd   = rawEnd   ? toDateStr(addDays(rawEnd,   dayOffset)) : toDateStr(addDays(pasteStart, 7));
         try {
           const data = await API('POST', '/api/gantt', {
