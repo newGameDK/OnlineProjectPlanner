@@ -28,6 +28,9 @@
   const ROW_H    = 40;  // px default row height
   const MIN_DAYS = 1;   // minimum bar width in days
   const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
+  const DEFAULT_TASK_COL_WIDTH = 260; // px default task column width
+  const MIN_TASK_COL_WIDTH = 120;     // px minimum task column width when resizing
+  const MAX_TASK_COL_WIDTH = 600;     // px maximum task column width when resizing
 
   // ─── state refs (injected from app.js) ───────────────────────────────────
   const S   = () => window.appState;
@@ -473,12 +476,12 @@
         e.preventDefault();
         e.stopPropagation();
         const startX = e.clientX;
-        const startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--task-col-w')) || 260;
+        const startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--task-col-w')) || DEFAULT_TASK_COL_WIDTH;
         colResizer.classList.add('active');
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
         const onMove = (mv) => {
-          const newW = Math.max(120, Math.min(600, startW + (mv.clientX - startX)));
+          const newW = Math.max(MIN_TASK_COL_WIDTH, Math.min(MAX_TASK_COL_WIDTH, startW + (mv.clientX - startX)));
           document.documentElement.style.setProperty('--task-col-w', newW + 'px');
         };
         const onUp = () => {
@@ -487,7 +490,7 @@
           colResizer.classList.remove('active');
           document.body.style.cursor = '';
           document.body.style.userSelect = '';
-          const finalW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--task-col-w')) || 260;
+          const finalW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--task-col-w')) || DEFAULT_TASK_COL_WIDTH;
           localStorage.setItem('ganttTaskColW', finalW);
           render();
         };
@@ -498,7 +501,7 @@
 
       // Restore saved column width from localStorage
       const savedColW = parseInt(localStorage.getItem('ganttTaskColW'));
-      if (savedColW >= 120 && savedColW <= 600) {
+      if (savedColW >= MIN_TASK_COL_WIDTH && savedColW <= MAX_TASK_COL_WIDTH) {
         document.documentElement.style.setProperty('--task-col-w', savedColW + 'px');
       }
     }
