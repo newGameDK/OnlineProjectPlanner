@@ -366,6 +366,9 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   border-bottom: 1px solid var(--border); cursor: pointer; gap: 4px;
   transition: background .1s;
 }
+.gantt-task-row.row-expanded {
+  height: auto; align-items: flex-start; padding-top: 10px; padding-bottom: 10px;
+}
 .gantt-task-row:hover { background: var(--primary-light); }
 .gantt-task-row.selected { background: #e8f4fd; outline: 1px solid var(--primary); }
 .gantt-task-indent { display: inline-block; flex-shrink: 0; }
@@ -378,6 +381,9 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-task-expand.expanded { background: var(--primary); color: #fff; }
 .gantt-task-color-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .gantt-task-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.gantt-task-row.row-expanded .gantt-task-name {
+  white-space: normal; overflow: visible; word-break: break-word; overflow-wrap: break-word; line-height: 1.4;
+}
 .gantt-row-resize-handle {
   flex-shrink: 0;
   cursor: ns-resize;

@@ -65,7 +65,10 @@
   }
 
   // ── clipboard state ────────────────────────────────────────────────────────
-  let clipboardData = null; // { entries: [...], rootId, cut: bool }
+  let clipboardData = null; // { entries: Entry[], rootIds: number[], cut: boolean }
+
+  // ── multi-select range tracking ────────────────────────────────────────────
+  let lastClickedId = null; // last task clicked without shift – used for range select
 
   // ── timeline selection drag state ─────────────────────────────────────────
   const timelineSel = {
@@ -476,10 +479,14 @@
       if (conn.active || shareRowLink.active || reparentDrag.active) return;
       if (e.target.closest('.gantt-task-row')) return; // let task-row handler fire
       e.preventDefault();
-      U().showContextMenu(e.pageX, e.pageY, [
+      const menuItems = [
         { icon: '▤', label: 'Add empty row/category', action: () => showAddEmptyRowModal() },
         { icon: '+', label: 'Add task',                action: () => showAddEntryModal() },
-      ]);
+      ];
+      if (clipboardData) {
+        menuItems.push({ icon: '\uD83D\uDCCB', label: 'Paste here', action: () => pasteEntries(toDateStr(new Date())) });
+      }
+      U().showContextMenu(e.pageX, e.pageY, menuItems);
     });
 
     // Left-button drag on empty timeline → marquee selection
@@ -711,11 +718,13 @@
       const color = getEntryColor(entry);
       const linkedTodo = S().todos.find(t => t.gantt_entry_id === entry.id);
       const isCompleted = linkedTodo && linkedTodo.status === 'done';
+      const rowIsExpanded = getEntryRowHeight(entry) > ROW_H;
 
       const row = document.createElement('div');
       row.className = 'gantt-task-row'
         + (S().selectedGanttIds.has(entry.id) ? ' selected' : '')
-        + (isCompleted ? ' gantt-completed' : '');
+        + (isCompleted ? ' gantt-completed' : '')
+        + (rowIsExpanded ? ' row-expanded' : '');
       row.dataset.id = entry.id;
       row.style.minHeight = getEntryRowHeight(entry) + 'px';
 
@@ -827,6 +836,19 @@
       // Action buttons (visible on hover)
       const actions = document.createElement('div');
       actions.className = 'gantt-task-actions';
+
+      // Row height expand/collapse toggle (⊕ expand to double height, ⊖ collapse to default)
+      const expandToggleBtn = makeBtn(rowIsExpanded ? '\u229F' : '\u229E', rowIsExpanded ? 'Collapse row height' : 'Expand row height', async () => {
+        const currentH = getEntryRowHeight(entry);
+        const newH = currentH > ROW_H ? ROW_H : ROW_H * 2;
+        const idx = S().ganttEntries.findIndex(en => en.id === entry.id);
+        if (idx === -1) return;
+        S().ganttEntries[idx].row_height = newH;
+        render();
+        try { await API('PUT', '/api/gantt/' + entry.id, { row_height: newH }); } catch (_) {}
+      });
+      actions.appendChild(expandToggleBtn);
+
       actions.appendChild(makeBtn('\u270F', 'Edit',         () => showEditEntryModal(entry)));
 
       const hasTodo = S().todos.some(t => t.gantt_entry_id === entry.id);
@@ -856,13 +878,33 @@
           }
           return;
         }
-        if (e.shiftKey) {
+        if (e.shiftKey && lastClickedId) {
+          // Range select: select all visible entries between lastClickedId and this one
+          const vis = visibleEntries();
+          const aIdx = vis.findIndex(en => en.id === lastClickedId);
+          const bIdx = vis.findIndex(en => en.id === entry.id);
+          if (aIdx !== -1 && bIdx !== -1) {
+            const lo = Math.min(aIdx, bIdx);
+            const hi = Math.max(aIdx, bIdx);
+            for (let i = lo; i <= hi; i++) {
+              S().selectedGanttIds.add(vis[i].id);
+            }
+          } else {
+            // Fallback: just toggle the clicked entry
+            S().selectedGanttIds.has(entry.id)
+              ? S().selectedGanttIds.delete(entry.id)
+              : S().selectedGanttIds.add(entry.id);
+          }
+        } else if (e.shiftKey) {
+          // Shift with no prior anchor: toggle this entry
           S().selectedGanttIds.has(entry.id)
             ? S().selectedGanttIds.delete(entry.id)
             : S().selectedGanttIds.add(entry.id);
+          lastClickedId = entry.id;
         } else {
           S().selectedGanttIds.clear();
           S().selectedGanttIds.add(entry.id);
+          lastClickedId = entry.id;
         }
         U().updateDeleteBtn();
         render();
@@ -3270,8 +3312,14 @@
       U().showContextMenu(x, y, [
         { icon: '\u270F', label: 'Edit ' + selEntries.length + ' tasks\u2026', action: () => showBulkEditModal(selEntries) },
         { separator: true },
+        { icon: '\uD83D\uDCCB', label: 'Copy ' + selEntries.length + ' tasks', action: () => copySelected(false) },
+        { icon: '\u2702',       label: 'Cut '  + selEntries.length + ' tasks', action: () => copySelected(true) },
+        clipboardData
+          ? { icon: '\uD83D\uDCCB', label: 'Paste below', action: () => pasteEntries(entry.start_date, entry) }
+          : null,
+        { separator: true },
         { icon: '\uD83D\uDDD1', label: 'Delete ' + selEntries.length + ' tasks', action: () => deleteSelectedEntries(selEntries), danger: true },
-      ]);
+      ].filter(Boolean));
       return;
     }
 
@@ -3297,7 +3345,7 @@
       { icon: '\uD83D\uDCCB', label: 'Copy',            action: () => copyEntry(entry, false) },
       { icon: '\u2702',       label: 'Cut',             action: () => copyEntry(entry, true) },
       clipboardData
-        ? { icon: '\uD83D\uDCCB', label: 'Paste here', action: () => pasteEntries(entry.start_date) }
+        ? { icon: '\uD83D\uDCCB', label: 'Paste below', action: () => pasteEntries(entry.start_date, entry) }
         : null,
       { separator: true },
       hasSameRow
@@ -3453,17 +3501,37 @@
     };
   }
 
-  /** Called from app.js keyboard handler – pastes at today */
+  /** Called from app.js keyboard handler – pastes below the last selected entry (or at today if none) */
   function pasteAtDate() {
     if (!clipboardData) return;
+    const sel = [...S().selectedGanttIds];
+    if (sel.length > 0 && lastClickedId) {
+      const afterEntry = S().ganttEntries.find(e => e.id === lastClickedId);
+      if (afterEntry) {
+        pasteEntries(afterEntry.start_date, afterEntry);
+        return;
+      }
+    }
     pasteEntries(toDateStr(new Date()));
   }
 
-  async function pasteEntries(pasteStartDate) {
+  /**
+   * Paste copied/cut entries.
+   * @param {string} pasteStartDate - ISO date string to align the first root entry's start to.
+   * @param {object|null} afterEntry - If provided, pasted root entries become siblings of this
+   *   entry, inserted immediately after it in the sort order.
+   */
+  async function pasteEntries(pasteStartDate, afterEntry = null) {
     if (!clipboardData || !S().currentProject) return;
     const { entries, rootIds, cut } = clipboardData;
     const pasteStart = parseDate(pasteStartDate);
     const idMap = {}; // old id → new id
+    const newRootIds = []; // new IDs of pasted root entries, for reorder-after
+
+    // When pasting below a specific row, use that row's parent as the parent for root entries
+    const pasteParentId = afterEntry !== null
+      ? (afterEntry.parent_id !== undefined ? afterEntry.parent_id : null)
+      : currentParentId;
 
     for (const rootId of (rootIds || [])) {
       const root = entries.find(e => e.id === rootId);
@@ -3482,7 +3550,7 @@
 
       for (const e of sorted) {
         const newParentId = e.id === rootId
-          ? currentParentId
+          ? pasteParentId
           : (idMap[e.parent_id] !== undefined ? idMap[e.parent_id] : null);
         const newStart = toDateStr(addDays(parseDate(e.start_date), dayOffset));
         const newEnd   = toDateStr(addDays(parseDate(e.end_date),   dayOffset));
@@ -3507,10 +3575,36 @@
           if (data.entry.parent_id && data.entry.parent_id !== currentParentId) {
             expandedIds.add(data.entry.parent_id);
           }
+          if (e.id === rootId) newRootIds.push(data.entry.id);
         } catch (err) {
           console.error('Paste failed for entry "' + e.title + '":', err);
         }
       }
+    }
+
+    // If pasting below a specific entry, reorder the new root entries to appear after it
+    if (afterEntry && newRootIds.length > 0) {
+      const newRootIdSet = new Set(newRootIds);
+      const siblings = S().ganttEntries
+        .filter(e => (e.parent_id === pasteParentId || (!e.parent_id && !pasteParentId)) &&
+                     !newRootIdSet.has(e.id))
+        .sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1));
+      const afterIdx = siblings.findIndex(e => e.id === afterEntry.id);
+      const insertAt = afterIdx !== -1 ? afterIdx + 1 : siblings.length;
+      const newEntries = newRootIds.map(id => S().ganttEntries.find(e => e.id === id)).filter(Boolean);
+      const reordered = [
+        ...siblings.slice(0, insertAt),
+        ...newEntries,
+        ...siblings.slice(insertAt),
+      ];
+      const positions = reordered.map((e, i) => ({ id: e.id, position: i }));
+      try {
+        const result = await API('POST', '/api/gantt/' + S().currentProject.id + '/reorder', { positions });
+        result.entries.forEach(updated => {
+          const idx = S().ganttEntries.findIndex(e => e.id === updated.id);
+          if (idx !== -1) S().ganttEntries[idx].position = updated.position;
+        });
+      } catch (err) { console.error('Reorder after paste failed:', err); }
     }
 
     if (cut) {
