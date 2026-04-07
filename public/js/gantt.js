@@ -1587,6 +1587,42 @@
         if (srBar) rowBg.appendChild(srBar);
       });
 
+      // ── Overlap detection: split overlapping bars into lanes ───────────
+      const allContainers = rowBg.querySelectorAll('.gantt-bar-container');
+      if (allContainers.length > 1) {
+        const intervals = [];
+        allContainers.forEach(c => {
+          const l = parseFloat(c.style.left);
+          const w = parseFloat(c.style.width);
+          intervals.push({ el: c, left: l, right: l + w });
+        });
+        intervals.sort((a, b) => a.left - b.left);
+        // Greedy lane assignment (calendar-style)
+        const lanes = [];
+        intervals.forEach(iv => {
+          let placed = false;
+          for (let i = 0; i < lanes.length; i++) {
+            const last = lanes[i][lanes[i].length - 1];
+            if (last.right <= iv.left) {
+              lanes[i].push(iv);
+              iv.lane = i;
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) { iv.lane = lanes.length; lanes.push([iv]); }
+        });
+        if (lanes.length > 1) {
+          const barPad = Math.max(4, Math.round(entryRowHeight * 0.1));
+          const avail  = entryRowHeight - barPad * 2;
+          const laneH  = avail / lanes.length;
+          intervals.forEach(iv => {
+            iv.el.style.top    = (barPad + iv.lane * laneH) + 'px';
+            iv.el.style.height = Math.max(16, laneH) + 'px';
+          });
+        }
+      }
+
       ganttRows.appendChild(rowBg);
     });
 
@@ -1623,7 +1659,8 @@
     container.dataset.id    = entry.id;
 
     const bar = document.createElement('div');
-    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '') + (rowHeight > ROW_H ? ' gantt-bar-tall' : '');
+    const isNarrow = width < 60;
+    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '') + (rowHeight > ROW_H ? ' gantt-bar-tall' : '') + (isNarrow ? ' gantt-bar-narrow' : '');
     bar.style.background = color;
     bar.style.width      = '100%';
     if (U().isColorDark(color)) {
@@ -2077,16 +2114,38 @@
 
           if (curRowIdx >= 0 && curRowIdx < vis.length && curRowIdx !== drag.origRowIndex) {
             const targetId = vis[curRowIdx].id;
+
+            // Determine drop zone: top / middle / bottom
+            let dropMode;
             if (posInRow < threshold) {
-              // Between: line above this row → reorder before
-              drag.rowDropMode = 'between-before';
-              drag.rowDropTargetId = targetId;
+              dropMode = 'between-before';
+            } else if (posInRow > ROW_H - threshold) {
+              dropMode = 'between-after';
+            } else {
+              dropMode = 'onto';
+            }
+
+            // Adjacent-row correction: when the cursor is on the row directly
+            // above/below the source, the near-edge zone produces a no-op
+            // reorder (inserting after the row above or before the row below
+            // puts the entry back in its original position).  Redirect these
+            // zones so that a single-row move actually works.
+            if (dropMode === 'between-after' && curRowIdx === drag.origRowIndex - 1) {
+              dropMode = 'between-before';
+            }
+            if (dropMode === 'between-before' && curRowIdx === drag.origRowIndex + 1) {
+              dropMode = 'between-after';
+            }
+
+            drag.rowDropMode = dropMode;
+            drag.rowDropTargetId = targetId;
+
+            if (dropMode === 'between-before') {
               const ind = document.createElement('div');
               ind.className = 'bar-row-drop-line';
               ind.style.top = (curRowIdx * ROW_H) + 'px';
               ganttRows.appendChild(ind);
               drag.rowDropIndicatorEl = ind;
-              // Matching indicator in task list
               const taskInd = document.createElement('div');
               taskInd.className = 'bar-row-drop-line';
               const taskRow = ganttTaskList.querySelector('.gantt-task-row[data-id="' + targetId + '"]');
@@ -2096,16 +2155,12 @@
                 ganttTaskList.appendChild(taskInd);
                 drag.rowDropIndicatorTaskEl = taskInd;
               }
-            } else if (posInRow > ROW_H - threshold) {
-              // Between: line below this row → reorder after
-              drag.rowDropMode = 'between-after';
-              drag.rowDropTargetId = targetId;
+            } else if (dropMode === 'between-after') {
               const ind = document.createElement('div');
               ind.className = 'bar-row-drop-line';
               ind.style.top = ((curRowIdx + 1) * ROW_H) + 'px';
               ganttRows.appendChild(ind);
               drag.rowDropIndicatorEl = ind;
-              // Matching indicator in task list
               const taskInd = document.createElement('div');
               taskInd.className = 'bar-row-drop-line';
               const taskRow = ganttTaskList.querySelector('.gantt-task-row[data-id="' + targetId + '"]');
@@ -2117,15 +2172,12 @@
               }
             } else {
               // Onto: box around this row → share row
-              drag.rowDropMode = 'onto';
-              drag.rowDropTargetId = targetId;
               const ind = document.createElement('div');
               ind.className = 'bar-row-drop-box';
               ind.style.top = (curRowIdx * ROW_H) + 'px';
               ind.style.height = ROW_H + 'px';
               ganttRows.appendChild(ind);
               drag.rowDropIndicatorEl = ind;
-              // Highlight matching task list row
               const taskRow = ganttTaskList.querySelector('.gantt-task-row[data-id="' + targetId + '"]');
               if (taskRow) taskRow.classList.add('bar-row-drop-target');
             }

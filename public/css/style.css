@@ -535,6 +535,9 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 /* Tall bar: allow label to wrap so full title is visible when row height is increased */
 .gantt-bar.gantt-bar-tall { align-items: flex-start; padding-top: 4px; }
 .gantt-bar.gantt-bar-tall .gantt-bar-label { white-space: normal; word-break: break-word; overflow: visible; text-overflow: clip; }
+/* Narrow bar: let label text extend beyond the bar so it remains readable */
+.gantt-bar.gantt-bar-narrow { overflow: visible; }
+.gantt-bar.gantt-bar-narrow .gantt-bar-label { overflow: visible; text-overflow: clip; background: inherit; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding-right: 6px; }
 .gantt-bar-hours { font-size: 10px; opacity: 0.85; margin-left: 4px; white-space: nowrap; flex-shrink: 0; pointer-events: none; }
 .gantt-time-selection {
   position: absolute; pointer-events: none; z-index: 2;
