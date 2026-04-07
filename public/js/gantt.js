@@ -377,6 +377,8 @@
         if (parentStack.length && !document.querySelector('.modal.show')) {
           parentStack.pop();
           currentParentId = parentStack.length ? parentStack[parentStack.length - 1].entry.id : null;
+          chartStart = null;
+          chartEnd   = null;
           render();
         }
       }
@@ -468,6 +470,17 @@
 
     // Right-click on empty timeline space → add task at clicked date
     ganttTimeline.addEventListener('contextmenu', onTimelineContextMenu);
+
+    // Right-click on empty task-list space → add empty row
+    ganttTaskList.addEventListener('contextmenu', (e) => {
+      if (conn.active || shareRowLink.active || reparentDrag.active) return;
+      if (e.target.closest('.gantt-task-row')) return; // let task-row handler fire
+      e.preventDefault();
+      U().showContextMenu(e.pageX, e.pageY, [
+        { icon: '▤', label: 'Add empty row/category', action: () => showAddEmptyRowModal() },
+        { icon: '+', label: 'Add task',                action: () => showAddEntryModal() },
+      ]);
+    });
 
     // Left-button drag on empty timeline → marquee selection
     ganttTimeline.addEventListener('mousedown', (e) => {
@@ -598,7 +611,7 @@
     items.push({ icon: '+', label: 'Add task here (' + dateStr + ')',
       action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7)), timelineContextRowId) });
     items.push({ icon: '▤', label: 'Add empty row/category',
-      action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7)), null, true) });
+      action: () => showAddEmptyRowModal() });
 
     if (clipboardData) {
       items.push({ icon: '📋', label: 'Paste task here',
@@ -656,7 +669,12 @@
     if (!S().currentProject) return;
 
     const entries   = visibleEntries();
+    const wasFreshRange = !chartStart;
     autoSetChartRange(entries);
+    if (wasFreshRange) {
+      pxPerDay = minPxPerDayForFit();
+      autoScale();
+    }
 
     const totalDays = Math.max(1, daysBetween(chartStart, chartEnd));
     const timelineW = totalDays * pxPerDay;
@@ -2831,6 +2849,8 @@
     backBtn.addEventListener('click', () => {
       parentStack.pop();
       currentParentId = parentStack.length ? parentStack[parentStack.length - 1].entry.id : null;
+      chartStart = null;
+      chartEnd   = null;
       render();
     });
     ganttBreadcrumb.appendChild(backBtn);
@@ -2839,7 +2859,10 @@
     root.className  = 'gantt-bc-item';
     root.textContent = (S().currentProject && S().currentProject.name) || 'Project';
     root.addEventListener('click', () => {
-      parentStack = []; currentParentId = null; render();
+      parentStack = []; currentParentId = null;
+      chartStart = null;
+      chartEnd   = null;
+      render();
     });
     ganttBreadcrumb.appendChild(root);
 
@@ -2856,6 +2879,8 @@
         item.addEventListener('click', () => {
           parentStack = parentStack.slice(0, i + 1);
           currentParentId = crumb.entry.id;
+          chartStart = null;
+          chartEnd   = null;
           render();
         });
         ganttBreadcrumb.appendChild(item);
@@ -2874,6 +2899,8 @@
   function drillDown(entry) {
     parentStack.push({ entry, label: entry.title });
     currentParentId = entry.id;
+    chartStart = null;
+    chartEnd   = null;
     render();
   }
 
@@ -2916,6 +2943,59 @@
         if (confirm('Add "' + data.entry.title + '" to the Todo list as well?')) {
           addToTodo(data.entry);
         }
+      } catch (err) {
+        alert('Save failed: ' + err.message);
+      }
+    });
+  }
+
+  function showAddEmptyRowModal() {
+    const vars = U().generateColorVariations((S().user && S().user.base_color) || '#2196F3');
+    const swatches = vars.map((c, i) =>
+      '<div class="color-var-swatch' + (i === 0 ? ' selected' : '') +
+      '" data-idx="' + i + '" style="background:' + c + '" title="Phase ' + (i + 1) + '"></div>'
+    ).join('');
+
+    const html =
+      '<div class="form-group">' +
+        '<label>Row name</label>' +
+        '<input type="text" id="feRowLabel" placeholder="Row/category name">' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label><input type="checkbox" id="feRowOnly" checked> Row only (category/no bar)</label>' +
+      '</div>' +
+      '<div class="form-group"><label>Phase / Colour Variation</label>' +
+        '<div class="color-variation-picker" id="colorVarPicker">' + swatches + '</div>' +
+        '<input type="hidden" id="feColorVar" value="0">' +
+      '</div>';
+
+    U().openModal('Add Empty Row', html, async () => {
+      const rowLabel = (document.getElementById('feRowLabel') && document.getElementById('feRowLabel').value.trim()) || '';
+      const rowOnly  = !!(document.getElementById('feRowOnly') && document.getElementById('feRowOnly').checked);
+      const colorVar = parseInt((document.getElementById('feColorVar') && document.getElementById('feColorVar').value) || '0', 10) || 0;
+      const title    = rowLabel || 'Category';
+      const today    = toDateStr(new Date());
+      const nextWeek = toDateStr(addDays(new Date(), 7));
+      try {
+        const data = await API('POST', '/api/gantt', {
+          project_id: S().currentProject.id,
+          parent_id:  currentParentId,
+          same_row:   null,
+          title,
+          row_label:       rowLabel || title,
+          row_only:        rowOnly ? 1 : 0,
+          start_date:      today,
+          end_date:        nextWeek,
+          hours_estimate:  0,
+          color_variation: colorVar,
+          notes:           '',
+          folder_url:      '',
+        });
+        S().ganttEntries.push(data.entry);
+        expandChartRange(data.entry);
+        render();
+        U().closeModal();
+        U().updateUndoRedoBtns?.();
       } catch (err) {
         alert('Save failed: ' + err.message);
       }
