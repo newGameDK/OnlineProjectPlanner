@@ -669,10 +669,17 @@ async function performRedo() {
 async function deleteSelectedGanttEntries() {
   if (!state.selectedGanttIds.size) return;
   if (!confirm(`Delete ${state.selectedGanttIds.size} entry(ies)?`)) return;
+  const deletedIds = new Set();
   for (const id of [...state.selectedGanttIds]) {
-    await api('DELETE', `/api/gantt/${id}`);
-    state.ganttEntries = state.ganttEntries.filter(e => e.id !== id);
+    try {
+      const data = await api('DELETE', `/api/gantt/${id}`);
+      (data.deleted_ids || [id]).forEach(did => deletedIds.add(did));
+    } catch (_) {
+      // Entry may have been recursively deleted along with a parent; treat as deleted
+      deletedIds.add(id);
+    }
   }
+  state.ganttEntries = state.ganttEntries.filter(e => !deletedIds.has(e.id));
   state.selectedGanttIds.clear();
   updateDeleteBtn();
   window.ganttModule?.render();

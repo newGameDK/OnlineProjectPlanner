@@ -156,6 +156,17 @@ try {
   db.exec(`ALTER TABLE gantt_entries ADD COLUMN same_row TEXT DEFAULT NULL`);
 } catch (_) { /* column already exists – ignore */ }
 
+// Migration: add row_label, row_height, row_only to gantt_entries
+try {
+  db.exec(`ALTER TABLE gantt_entries ADD COLUMN row_label TEXT NOT NULL DEFAULT ''`);
+} catch (_) { /* column already exists – ignore */ }
+try {
+  db.exec(`ALTER TABLE gantt_entries ADD COLUMN row_height INTEGER NOT NULL DEFAULT 40`);
+} catch (_) { /* column already exists – ignore */ }
+try {
+  db.exec(`ALTER TABLE gantt_entries ADD COLUMN row_only INTEGER NOT NULL DEFAULT 0`);
+} catch (_) { /* column already exists – ignore */ }
+
 // App settings table (key-value store for admin user IDs etc.)
 db.exec(`
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -241,11 +252,11 @@ const stmts = {
   getProjectByShareToken: db.prepare(`SELECT * FROM projects WHERE share_token=?`),
 
   // Gantt
-  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`),
+  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
-  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`),
+  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`),
   updateGanttSubtractHours: db.prepare(`UPDATE gantt_entries SET subtract_hours=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
@@ -649,12 +660,16 @@ app.get('/api/gantt/:projectId', requireAuth, (req, res) => {
 });
 
 app.post('/api/gantt', requireAuth, (req, res) => {
-  const { project_id, parent_id, title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
+  const { project_id, parent_id, title, row_label, row_height, row_only, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
   if (!project_id || !title || !start_date || !end_date) return res.status(400).json({ error: 'Missing required fields' });
   if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
   const id = uuidv4();
-  stmts.createGantt.run(id, project_id, parent_id || null, title, start_date, end_date,
+  stmts.createGantt.run(id, project_id, parent_id || null, title,
+    row_label !== undefined ? row_label : (title || ''),
+    row_height !== undefined ? (parseInt(row_height, 10) || 40) : 40,
+    row_only ? 1 : 0,
+    start_date, end_date,
     hours_estimate || 0, color_variation || 0, req.session.userId, position || 0, notes || '', folder_url || '');
 
   const entry = stmts.getGantt.get(id);
@@ -694,10 +709,13 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
   stmts.clearRedoForProject.run(existing.project_id, req.session.userId);
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
 
-  const { title, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours, same_row } = req.body;
+  const { title, row_label, row_height, row_only, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours, same_row } = req.body;
   stmts.updateGantt.run(
     newParentId,
     title ?? existing.title,
+    row_label !== undefined ? row_label : (existing.row_label ?? existing.title),
+    row_height !== undefined ? (parseInt(row_height, 10) || 40) : (existing.row_height ?? 40),
+    row_only !== undefined ? (row_only ? 1 : 0) : (existing.row_only ?? 0),
     start_date ?? existing.start_date,
     end_date ?? existing.end_date,
     hours_estimate ?? existing.hours_estimate,
@@ -721,14 +739,30 @@ app.delete('/api/gantt/:id', requireAuth, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
   if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
-  // Save undo action; clear any stale redo history for this project/user
-  stmts.clearRedoForProject.run(existing.project_id, req.session.userId);
-  stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'delete_gantt', JSON.stringify({ entry: existing }));
+  // Collect entire subtree so children are removed too (server has no FK cascade on parent_id)
+  const allEntries = stmts.getProjectGantt.all(existing.project_id);
+  const subtreeIds = [];
+  const collectIds = (id) => {
+    subtreeIds.push(id);
+    allEntries.filter(e => e.parent_id === id).forEach(child => collectIds(child.id));
+  };
+  collectIds(existing.id);
+  const subtreeEntries = subtreeIds.map(id => allEntries.find(e => e.id === id)).filter(Boolean);
 
-  stmts.deleteGantt.run(existing.id);
+  // Save undo: include all descendants so they can be fully restored
+  stmts.clearRedoForProject.run(existing.project_id, req.session.userId);
+  stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'delete_gantt',
+    JSON.stringify({ entry: existing, descendants: subtreeEntries.filter(e => e.id !== existing.id) }));
+
+  // Delete all (deepest first to keep things tidy, though no FK enforces order)
+  for (let i = subtreeIds.length - 1; i >= 0; i--) {
+    stmts.deleteGantt.run(subtreeIds[i]);
+  }
   const teamId = projectTeamId(existing.project_id);
-  broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: existing.id, project_id: existing.project_id });
-  res.json({ ok: true });
+  subtreeIds.forEach(id => {
+    broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: id, project_id: existing.project_id });
+  });
+  res.json({ ok: true, deleted_ids: subtreeIds });
 });
 
 // ---------------------------------------------------------------------------
@@ -908,23 +942,32 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     if (currentEntry) {
       stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'update_gantt', JSON.stringify({ entry: currentEntry }));
     }
-    db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`)
-      .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, now(), e.id);
+    db.prepare(`UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`)
+      .run(e.title, e.row_label ?? e.title, e.row_height ?? 40, e.row_only ?? 0, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, now(), e.id);
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
     result = { undone: 'update_gantt', entry };
   } else if (action.action_type === 'delete_gantt') {
-    // Undo deletion = recreate; save to redo so it can be deleted again
+    // Undo deletion = recreate root + all descendants; save to redo so they can be deleted again
     const e = data.entry;
-    stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt', JSON.stringify({ entry: e }));
-    try {
-      stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
-    } catch (_) { /* already exists */ }
-    const entry = stmts.getGantt.get(e.id);
+    const descendants = data.descendants || [];
+    stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt',
+      JSON.stringify({ entry: e, descendants }));
     const teamId = projectTeamId(req.params.projectId);
-    if (entry) broadcastToTeam(teamId, { type: 'gantt_created', entry });
+    // Restore root first, then descendants (parent before child)
+    const toRestore = [e, ...descendants];
+    toRestore.forEach(d => {
+      try {
+        stmts.createGantt.run(d.id, d.project_id, d.parent_id, d.title,
+          d.row_label ?? d.title ?? '', d.row_height ?? 40, d.row_only ?? 0,
+          d.start_date, d.end_date, d.hours_estimate, d.color_variation,
+          d.user_id, d.position, d.notes, d.folder_url || '');
+      } catch (_) { /* already exists */ }
+      const restored = stmts.getGantt.get(d.id);
+      if (restored) broadcastToTeam(teamId, { type: 'gantt_created', entry: restored });
+    });
+    const entry = stmts.getGantt.get(e.id);
     result = { undone: 'delete_gantt', entry };
   } else if (action.action_type === 'reorder_gantt') {
     // Undo reorder = restore old positions; save current positions to redo
@@ -964,8 +1007,10 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
     // Redo: recreate the entry that was originally created then undone
     const e = data.entry;
     try {
-      stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-        e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+      stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
+        e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
+        e.start_date, e.end_date, e.hours_estimate, e.color_variation,
+        e.user_id, e.position, e.notes, e.folder_url || '');
     } catch (_) { /* already exists */ }
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
@@ -980,8 +1025,8 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
     if (currentEntry) {
       // Save current state as undo so user can undo this redo
       stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'update_gantt', JSON.stringify({ entry: currentEntry }));
-      db.prepare(`UPDATE gantt_entries SET title=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`)
-        .run(e.title, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, now(), e.id);
+      db.prepare(`UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`)
+        .run(e.title, e.row_label ?? e.title, e.row_height ?? 40, e.row_only ?? 0, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, now(), e.id);
       const entry = stmts.getGantt.get(e.id);
       const teamId = projectTeamId(req.params.projectId);
       if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
@@ -990,15 +1035,28 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
       result = { redone: 'update_gantt', entry: null };
     }
   } else if (redoAction.action_type === 'delete_gantt') {
-    // Redo: delete the entry again
+    // Redo: delete the entry again (cascade to descendants)
     const e = data.entry;
     const currentEntry = stmts.getGantt.get(e.id);
     if (currentEntry) {
+      const allEntries = stmts.getProjectGantt.all(req.params.projectId);
+      const redoSubtreeIds = [];
+      const collectRedoIds = (id) => {
+        redoSubtreeIds.push(id);
+        allEntries.filter(x => x.parent_id === id).forEach(child => collectRedoIds(child.id));
+      };
+      collectRedoIds(e.id);
+      const redoSubtreeEntries = redoSubtreeIds.map(id => allEntries.find(x => x.id === id)).filter(Boolean);
       // Save undo action so user can undo this redo
-      stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt', JSON.stringify({ entry: currentEntry }));
-      stmts.deleteGantt.run(e.id);
+      stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt',
+        JSON.stringify({ entry: currentEntry, descendants: redoSubtreeEntries.filter(x => x.id !== e.id) }));
+      for (let i = redoSubtreeIds.length - 1; i >= 0; i--) {
+        stmts.deleteGantt.run(redoSubtreeIds[i]);
+      }
       const teamId = projectTeamId(req.params.projectId);
-      broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: e.id, project_id: req.params.projectId });
+      redoSubtreeIds.forEach(id => {
+        broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: id, project_id: req.params.projectId });
+      });
     }
     result = { redone: 'delete_gantt', entry_id: e.id };
   } else if (redoAction.action_type === 'reorder_gantt') {
@@ -1044,8 +1102,10 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
     // Restore gantt entries
     for (const e of (data.entries || [])) {
       try {
-        stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-          e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+        stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
+          e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
+          e.start_date, e.end_date, e.hours_estimate, e.color_variation,
+          e.user_id, e.position, e.notes, e.folder_url || '');
       } catch (_) { /* already exists */ }
     }
     // Restore todos
@@ -1081,8 +1141,10 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
       } catch (_) { /* already exists */ }
       for (const e of (pd.entries || [])) {
         try {
-          stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title, e.start_date, e.end_date,
-            e.hours_estimate, e.color_variation, e.user_id, e.position, e.notes, e.folder_url || '');
+          stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
+            e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
+            e.start_date, e.end_date, e.hours_estimate, e.color_variation,
+            e.user_id, e.position, e.notes, e.folder_url || '');
         } catch (_) {}
       }
       for (const td of (pd.todos || [])) {
@@ -1179,6 +1241,7 @@ app.post('/api/backup/import', requireAuth, (req, res) => {
           try {
             stmts.createGantt.run(
               e.id, proj.id, e.parent_id || null, e.title,
+              e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
               e.start_date, e.end_date, e.hours_estimate || 0,
               e.color_variation || 0, userId, e.position || 0,
               e.notes || '', e.folder_url || ''

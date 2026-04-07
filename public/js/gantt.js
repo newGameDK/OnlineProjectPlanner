@@ -3147,13 +3147,21 @@
   async function deleteSelectedEntries(entries) {
     if (!confirm('Delete ' + entries.length + ' tasks?')) return;
     try {
-      const ids = new Set(entries.map(e => e.id));
-      await Promise.all(entries.map(entry => API('DELETE', '/api/gantt/' + entry.id)));
-      S().ganttEntries = S().ganttEntries.filter(e => !ids.has(e.id));
+      const deletedIds = new Set();
+      await Promise.all(entries.map(async entry => {
+        try {
+          const data = await API('DELETE', '/api/gantt/' + entry.id);
+          (data.deleted_ids || [entry.id]).forEach(id => deletedIds.add(id));
+        } catch (err) {
+          // Entry may have already been recursively deleted along with a parent; treat as deleted
+          deletedIds.add(entry.id);
+        }
+      }));
+      S().ganttEntries = S().ganttEntries.filter(e => !deletedIds.has(e.id));
       S().dependencies = S().dependencies.filter(
-        d => !ids.has(d.source_id) && !ids.has(d.target_id)
+        d => !deletedIds.has(d.source_id) && !deletedIds.has(d.target_id)
       );
-      ids.forEach(id => S().selectedGanttIds.delete(id));
+      deletedIds.forEach(id => S().selectedGanttIds.delete(id));
       U().updateDeleteBtn();
       U().updateUndoRedoBtns?.();
       render();
@@ -3536,9 +3544,8 @@
     for (const rootId of (rootIds || [])) {
       const root = entries.find(e => e.id === rootId);
       if (!root) continue;
-      const rootStart  = parseDate(root.start_date);
-      const dayOffset  = daysBetween(rootStart, pasteStart);
 
+      // Build sorted list first so we can find the earliest date if root has none
       const sorted = [];
       const addSorted = (id) => {
         const e = entries.find(x => x.id === id);
@@ -3548,12 +3555,27 @@
       };
       addSorted(rootId);
 
+      // If root has no start_date (e.g. a row-only category), use the earliest
+      // non-null child date so child bars land at pasteStart instead of being
+      // pushed thousands of days into the future.
+      let rootStart = parseDate(root.start_date);
+      if (!rootStart) {
+        const allDates = sorted.map(e => parseDate(e.start_date)).filter(Boolean);
+        rootStart = allDates.length
+          ? new Date(Math.min(...allDates.map(d => d.getTime())))
+          : pasteStart;
+      }
+      const dayOffset = daysBetween(rootStart, pasteStart);
+
       for (const e of sorted) {
         const newParentId = e.id === rootId
           ? pasteParentId
           : (idMap[e.parent_id] !== undefined ? idMap[e.parent_id] : null);
-        const newStart = toDateStr(addDays(parseDate(e.start_date), dayOffset));
-        const newEnd   = toDateStr(addDays(parseDate(e.end_date),   dayOffset));
+        // Entries with no dates (row-only categories) keep their dates empty
+        const rawStart = parseDate(e.start_date);
+        const rawEnd   = parseDate(e.end_date);
+        const newStart = rawStart ? toDateStr(addDays(rawStart, dayOffset)) : toDateStr(pasteStart);
+        const newEnd   = rawEnd   ? toDateStr(addDays(rawEnd,   dayOffset)) : toDateStr(addDays(pasteStart, 7));
         try {
           const data = await API('POST', '/api/gantt', {
             project_id:      S().currentProject.id,
@@ -3628,13 +3650,13 @@
   // =========================================================================
   async function deleteEntry(entry) {
     if (!confirm('Delete "' + entry.title + '"?')) return;
-    await API('DELETE', '/api/gantt/' + entry.id);
-    S().ganttEntries  = S().ganttEntries.filter(e => e.id !== entry.id);
-    // Remove related deps locally (server cascades)
+    const data = await API('DELETE', '/api/gantt/' + entry.id);
+    const deletedIds = new Set(data.deleted_ids || [entry.id]);
+    S().ganttEntries  = S().ganttEntries.filter(e => !deletedIds.has(e.id));
     S().dependencies  = S().dependencies.filter(
-      d => d.source_id !== entry.id && d.target_id !== entry.id
+      d => !deletedIds.has(d.source_id) && !deletedIds.has(d.target_id)
     );
-    S().selectedGanttIds.delete(entry.id);
+    deletedIds.forEach(id => S().selectedGanttIds.delete(id));
     U().updateDeleteBtn();
     U().updateUndoRedoBtns?.();
     render();
