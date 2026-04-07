@@ -51,6 +51,8 @@
 
   // rowIndexMap: entryId -> rowIndex (rebuilt on each render)
   let rowIndexMap = {};
+  // rowYMap: entryId -> Y-center position in px (accounts for variable row heights)
+  let rowYMap = {};
   let timelineContextRowId = null;
 
   function getEntryRowLabel(entry) {
@@ -738,6 +740,21 @@
     S().ganttEntries.forEach(e => {
       if (e.same_row && rowIndexMap[e.same_row] !== undefined) {
         rowIndexMap[e.id] = rowIndexMap[e.same_row];
+      }
+    });
+
+    // Build cumulative Y-center map (accounts for variable row heights)
+    rowYMap = {};
+    let _cumulY = 0;
+    entries.forEach(e => {
+      const h = getEntryRowHeight(e);
+      rowYMap[e.id] = _cumulY + h / 2;
+      _cumulY += h;
+    });
+    // Same-row entries share the owner's Y center
+    S().ganttEntries.forEach(e => {
+      if (e.same_row && rowYMap[e.same_row] !== undefined) {
+        rowYMap[e.id] = rowYMap[e.same_row];
       }
     });
 
@@ -1563,9 +1580,10 @@
       if (bar) rowBg.appendChild(bar);
 
       // Also render bars for entries that share this row (same_row === entry.id)
+      const entryRowHeight = getEntryRowHeight(entry);
       const sameRowEntries = S().ganttEntries.filter(e => e.same_row === entry.id);
       sameRowEntries.forEach(srEntry => {
-        const srBar = buildBar(srEntry);
+        const srBar = buildBar(srEntry, entryRowHeight);
         if (srBar) rowBg.appendChild(srBar);
       });
 
@@ -1578,7 +1596,7 @@
     }
   }
 
-  function buildBar(entry) {
+  function buildBar(entry, ownerRowHeight) {
     const start = parseDate(entry.start_date);
     const end   = parseDate(entry.end_date);
     if (!start || !end || start > chartEnd || end < chartStart) return null;
@@ -1598,7 +1616,7 @@
     const isCompleted = linkedTodo && linkedTodo.status === 'done';
 
     const container = document.createElement('div');
-    const rowHeight = getEntryRowHeight(entry);
+    const rowHeight = ownerRowHeight || getEntryRowHeight(entry);
     const barPad = Math.max(4, Math.round(rowHeight * 0.1));
     container.className     = 'gantt-bar-container';
     container.style.cssText = 'left:' + left + 'px;width:' + width + 'px;top:' + barPad + 'px;height:' + Math.max(16, rowHeight - (barPad * 2)) + 'px;';
@@ -2503,7 +2521,7 @@
     const rowIdx = rowIndexMap[entry.id] !== undefined ? rowIndexMap[entry.id] : 0;
     const endDate = parseDate(entry.end_date);
     const sx = Math.max(0, daysBetween(chartStart, endDate)) * pxPerDay;
-    const sy = rowIdx * ROW_H + ROW_H / 2; // vertical center of the bar row
+    const sy = rowYMap[entry.id] !== undefined ? rowYMap[entry.id] : (rowIdx * ROW_H + ROW_H / 2); // vertical center of the bar row
     conn.sx = sx;
     conn.sy = sy;
 
@@ -2623,8 +2641,8 @@
       const x2 = tgtClipped
         ? Math.max(0, daysBetween(chartStart, tgtClipped)) * pxPerDay
         : Math.max(0, daysBetween(chartStart, parseDate(tgtEntry.start_date))) * pxPerDay;
-      const y1 = srcIdx * ROW_H + ROW_H / 2;
-      const y2 = tgtIdx * ROW_H + ROW_H / 2;
+      const y1 = rowYMap[dep.source_id] !== undefined ? rowYMap[dep.source_id] : (srcIdx * ROW_H + ROW_H / 2);
+      const y2 = rowYMap[dep.target_id] !== undefined ? rowYMap[dep.target_id] : (tgtIdx * ROW_H + ROW_H / 2);
 
       // Gentler bezier curve (reduced control-point factor vs the old 0.5)
       const dx   = Math.abs(x2 - x1);
@@ -2735,6 +2753,7 @@
 
       const row = document.createElement('div');
       row.className = 'gantt-hours-row' + (total > 0 ? ' has-hours' : '');
+      row.style.height = getEntryRowHeight(entry) + 'px';
       if (total > capacity) row.classList.add('overloaded');
       row.textContent = total > 0 ? fmtH(total) : '\u2014';
       row.title = total > 0

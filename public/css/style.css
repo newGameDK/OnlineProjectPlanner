@@ -683,7 +683,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   border-radius: var(--radius-sm); box-shadow: var(--shadow-md); z-index: 600;
   min-width: 160px; overflow: visible;
 }
-.context-menu ul { list-style: none; overflow: hidden; border-radius: var(--radius-sm); }
+.context-menu ul { list-style: none; overflow: visible; border-radius: var(--radius-sm); }
 .context-menu li {
   padding: 8px 16px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px;
   transition: background .1s;
