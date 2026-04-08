@@ -424,6 +424,17 @@
     };
     ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
     if (ganttRuler) ganttRuler.addEventListener('wheel', wheelZoom, { passive: false });
+    if (ganttRuler) ganttRuler.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const rect      = ganttRuler.getBoundingClientRect();
+      const x         = e.clientX - rect.left + ganttTimeline.scrollLeft;
+      const dayOffset = Math.floor(x / pxPerDay);
+      const dateStr   = toDateStr(addDays(chartStart, dayOffset));
+      U().showContextMenu(e.pageX, e.pageY, [
+        { icon: '\uD83D\uDEA9', label: 'Add milestone here (' + dateStr + ')',
+          action: () => showAddMilestoneModal(dateStr) },
+      ]);
+    });
     if (intensityBarWrapper) intensityBarWrapper.addEventListener('wheel', wheelZoom, { passive: false });
 
     // Global mouse/key events
@@ -710,6 +721,9 @@
         action: () => { clearTimelineSelection(); showAddEntryModal(undefined, selStartStr, selEndStr, timelineContextRowId); } });
       items.push({ separator: true });
     }
+
+    items.push({ icon: '\uD83D\uDEA9', label: 'Add milestone here (' + dateStr + ')',
+      action: () => showAddMilestoneModal(dateStr) });
 
     items.push({ icon: '+', label: 'Add task here (' + dateStr + ')',
       action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7)), timelineContextRowId) });
@@ -1691,6 +1705,126 @@
     if (timelineSel.overlayEl) {
       ganttRows.appendChild(timelineSel.overlayEl);
     }
+  }
+
+  // =========================================================================
+  // Milestones / Deadlines
+  // =========================================================================
+  function renderMilestones() {
+    // Ensure ganttRows is a positioned container for the absolute milestone lines
+    ganttRows.style.position = 'relative';
+
+    // Remove stale milestone elements from ruler and rows
+    ganttRuler.querySelectorAll('.gantt-milestone-marker').forEach(el => el.remove());
+    ganttRows.querySelectorAll('.gantt-milestone-line').forEach(el => el.remove());
+
+    const milestones = S().milestones || [];
+    milestones.forEach(ms => {
+      const date = parseDate(ms.date);
+      if (!date || date < chartStart || date > chartEnd) return;
+
+      const x     = Math.round(daysBetween(chartStart, date) * pxPerDay);
+      const color = ms.color || '#e53935';
+      const label = ms.label || '';
+
+      // ── Ruler diamond marker ─────────────────────────────────────────────
+      const marker = document.createElement('div');
+      marker.className        = 'gantt-milestone-marker';
+      marker.style.left       = x + 'px';
+      marker.style.backgroundColor = color;
+      marker.title            = (label ? label + ' — ' : '') + ms.date;
+      ganttRuler.appendChild(marker);
+
+      // ── Vertical dashed line spanning all rows ───────────────────────────
+      const line = document.createElement('div');
+      line.className         = 'gantt-milestone-line';
+      line.style.left        = x + 'px';
+      line.style.borderLeftColor = color;
+
+      // Hover: reuse shared bar tooltip
+      line.addEventListener('mouseenter', (e) => {
+        const tip = _getBarTooltip();
+        tip.style.background = color;
+        tip.style.color      = U().isColorDark(color) ? '#fff' : 'rgba(0,0,0,.8)';
+        tip.innerHTML =
+          '<div class="gantt-bar-tooltip-title">' + _esc(label || 'Milestone') + '</div>' +
+          '<div class="gantt-bar-tooltip-meta">' + _esc(ms.date) + '</div>';
+        tip.classList.add('visible');
+        requestAnimationFrame(() => _positionBarTooltip(tip, e.clientX, e.clientY));
+      });
+      line.addEventListener('mousemove', (e) => _positionBarTooltip(_getBarTooltip(), e.clientX, e.clientY));
+      line.addEventListener('mouseleave', () => _hideBarTooltip());
+
+      // Right-click: edit / delete
+      line.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        _hideBarTooltip();
+        U().showContextMenu(e.pageX, e.pageY, [
+          { icon: '\u270F', label: 'Edit milestone',   action: () => showEditMilestoneModal(ms) },
+          { icon: '\uD83D\uDDD1', label: 'Delete milestone', danger: true, action: () => deleteMilestone(ms.id) },
+        ]);
+      });
+
+      ganttRows.appendChild(line);
+    });
+  }
+
+  function showAddMilestoneModal(dateStr) {
+    const html =
+      '<label style="display:block;margin-bottom:10px">Date<br>' +
+      '<input id="msDate" type="date" value="' + _esc(dateStr) + '" style="width:100%"></label>' +
+      '<label style="display:block;margin-bottom:10px">Label<br>' +
+      '<input id="msLabel" type="text" placeholder="e.g. Launch deadline" style="width:100%"></label>' +
+      '<label style="display:block">Color<br>' +
+      '<input id="msColor" type="color" value="#e53935"></label>';
+    U().openModal('Add Milestone', html, async () => {
+      const date  = document.getElementById('msDate').value;
+      const label = document.getElementById('msLabel').value.trim();
+      const color = document.getElementById('msColor').value;
+      if (!date) return alert('Date is required');
+      try {
+        const data = await API('POST', '/api/milestones', {
+          project_id: S().currentProject.id, date, label, color,
+        });
+        if (!S().milestones) S().milestones = [];
+        S().milestones.push(data.milestone);
+        render();
+        U().closeModal();
+      } catch (err) { alert('Save failed: ' + err.message); }
+    });
+  }
+
+  function showEditMilestoneModal(ms) {
+    const html =
+      '<label style="display:block;margin-bottom:10px">Date<br>' +
+      '<input id="msDate" type="date" value="' + _esc(ms.date) + '" style="width:100%"></label>' +
+      '<label style="display:block;margin-bottom:10px">Label<br>' +
+      '<input id="msLabel" type="text" value="' + _esc(ms.label || '') + '" style="width:100%"></label>' +
+      '<label style="display:block">Color<br>' +
+      '<input id="msColor" type="color" value="' + _esc(ms.color || '#e53935') + '"></label>';
+    U().openModal('Edit Milestone', html, async () => {
+      const date  = document.getElementById('msDate').value;
+      const label = document.getElementById('msLabel').value.trim();
+      const color = document.getElementById('msColor').value;
+      if (!date) return alert('Date is required');
+      try {
+        const data = await API('PUT', '/api/milestones/' + ms.id, { date, label, color });
+        const idx = (S().milestones || []).findIndex(m => m.id === ms.id);
+        if (idx !== -1) S().milestones[idx] = data.milestone;
+        render();
+        U().closeModal();
+      } catch (err) { alert('Save failed: ' + err.message); }
+    });
+  }
+
+  async function deleteMilestone(id) {
+    if (!confirm('Delete this milestone?')) return;
+    try {
+      await API('DELETE', '/api/milestones/' + id);
+      S().milestones = (S().milestones || []).filter(m => m.id !== id);
+      render();
+    } catch (err) { alert('Delete failed: ' + err.message); }
   }
 
   function buildBar(entry, ownerRowHeight) {

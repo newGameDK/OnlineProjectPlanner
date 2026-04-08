@@ -581,6 +581,27 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-ruler-cell.major { font-weight: 700; color: var(--text); font-size: 11px; }
 .gantt-ruler-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 5; opacity: .5; }
 .gantt-snap-line { position: absolute; width: 0; border-left: 2px dotted #2196f3; z-index: 10; pointer-events: none; }
+
+/* =====================================================================
+   Milestones / Deadline markers
+   ===================================================================== */
+/* Diamond marker in the ruler */
+.gantt-milestone-marker {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 11px; height: 11px;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  z-index: 6; pointer-events: none;
+}
+/* Vertical dashed line spanning all rows */
+.gantt-milestone-line {
+  position: absolute; top: 0; bottom: 0;
+  width: 10px; /* wide enough to click */
+  border-left: 2px dashed;
+  transform: translateX(-5px);
+  z-index: 5; pointer-events: auto; cursor: pointer;
+  background: transparent;
+}
+.gantt-milestone-line:hover { opacity: 0.7; }
 .gantt-ruler-today::after {
   content: 'Today'; position: absolute; top: 4px; left: 4px;
   font-size: 9px; color: var(--danger); font-weight: 700; white-space: nowrap;
