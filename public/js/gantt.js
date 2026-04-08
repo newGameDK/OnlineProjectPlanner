@@ -29,6 +29,7 @@
   const MIN_DAYS = 1;   // minimum bar width in days
   const MIN_BEZIER_CP = 20; // minimum bezier control-point distance (px) for dep arrows
   const NARROW_BAR_PX = 60; // px threshold: bars narrower than this get overflow-visible text
+  const HIDE_LABEL_PX = 30; // px threshold: bars narrower than this hide the label entirely
   const DEFAULT_TASK_COL_WIDTH = 260; // px default task column width
   const MIN_TASK_COL_WIDTH = 120;     // px minimum task column width when resizing
   const MAX_TASK_COL_WIDTH = 600;     // px maximum task column width when resizing
@@ -579,7 +580,7 @@
         { icon: '+', label: 'Add task',                action: () => showAddEntryModal() },
       ];
       if (clipboardData) {
-        menuItems.push({ icon: '\uD83D\uDCCB', label: 'Paste here', action: () => pasteEntries(toDateStr(new Date())) });
+      menuItems.push({ icon: '\uD83D\uDCCB', label: 'Paste here', action: () => pasteEntries(null) });
       }
       U().showContextMenu(e.pageX, e.pageY, menuItems);
     });
@@ -813,6 +814,7 @@
     renderTaskList(entries);
     renderRuler(timelineW, totalDays);
     renderRowsAndBars(entries, timelineW);
+    renderMilestones();
     renderDependencyArrows(entries, timelineW);
     renderIntensityBar(timelineW, totalDays);
     renderHoursPanel(entries);
@@ -1719,7 +1721,8 @@
 
     const bar = document.createElement('div');
     const isNarrow = width < NARROW_BAR_PX;
-    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '') + (rowHeight > ROW_H ? ' gantt-bar-tall' : '') + (isNarrow ? ' gantt-bar-narrow' : '');
+    const isHideLabel = width < HIDE_LABEL_PX;
+    bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '') + (rowHeight > ROW_H ? ' gantt-bar-tall' : '') + (isNarrow ? ' gantt-bar-narrow' : '') + (isHideLabel ? ' gantt-bar-hide-label' : '');
     bar.style.background = color;
     bar.style.width      = '100%';
     const isDark = U().isColorDark(color);
@@ -2485,6 +2488,32 @@
       } catch (err) {
         console.error('Save drag failed:', err);
         updateBarVisual(containerEl, origStart, origEnd);
+      }
+
+      // When moving (not resizing), shift all subtask descendants by the same delta
+      if (dragType === 'move') {
+        const descendants = [];
+        const collectDesc = (pid) => {
+          S().ganttEntries.forEach(e => {
+            if (e.parent_id === pid) { descendants.push(e); collectDesc(e.id); }
+          });
+        };
+        collectDesc(entryId);
+        for (const child of descendants) {
+          const cs = parseDate(child.start_date);
+          const ce = parseDate(child.end_date);
+          if (!cs || !ce) continue;
+          const childNewStart = toDateStr(addDays(cs, deltaDays));
+          const childNewEnd   = toDateStr(addDays(ce, deltaDays));
+          expandChartRange({ start_date: childNewStart, end_date: childNewEnd });
+          try {
+            const upd = await API('PUT', '/api/gantt/' + child.id, {
+              start_date: childNewStart, end_date: childNewEnd,
+            });
+            const ci = S().ganttEntries.findIndex(x => x.id === child.id);
+            if (ci !== -1) S().ganttEntries[ci] = upd.entry;
+          } catch (err) { console.error('Save subtask drag failed:', err); }
+        }
       }
     }
 
@@ -3685,7 +3714,10 @@
   }
 
   function copyEntry(entry, cut) {
-    clipboardData = { entries: collectSubtree(entry.id), rootIds: [entry.id], cut };
+    const entries = collectSubtree(entry.id);
+    const entryIds = new Set(entries.map(e => e.id));
+    const deps = (S().dependencies || []).filter(d => entryIds.has(d.source_id) && entryIds.has(d.target_id));
+    clipboardData = { entries, rootIds: [entry.id], cut, deps };
   }
 
   /** Called from app.js keyboard handler – copies the first selected entry */
@@ -3696,14 +3728,18 @@
     selected.forEach(id => {
       collectSubtree(id).forEach(e => dedup.set(e.id, e));
     });
+    const entries = [...dedup.values()];
+    const entryIds = new Set(entries.map(e => e.id));
+    const deps = (S().dependencies || []).filter(d => entryIds.has(d.source_id) && entryIds.has(d.target_id));
     clipboardData = {
-      entries: [...dedup.values()],
+      entries,
       rootIds: selected.filter(id => !selected.some(other => other !== id && isDescendantOf(id, other))),
       cut,
+      deps,
     };
   }
 
-  /** Called from app.js keyboard handler – pastes below the last selected entry (or at today if none) */
+  /** Called from app.js keyboard handler – pastes below the last selected entry (or at original dates if none) */
   function pasteAtDate() {
     if (!clipboardData) return;
     const sel = [...S().selectedGanttIds];
@@ -3714,7 +3750,7 @@
         return;
       }
     }
-    pasteEntries(toDateStr(new Date()));
+    pasteEntries(null);
   }
 
   /**
@@ -3862,6 +3898,25 @@
         }
       }
       // If newIds.length === 1 and owner not pasted: single orphan, leave as standalone row
+    }
+
+    // Recreate dependencies between pasted entries (where both ends were pasted)
+    const depsToRestore = clipboardData.deps || [];
+    for (const dep of depsToRestore) {
+      const newSourceId = idMap[dep.source_id];
+      const newTargetId = idMap[dep.target_id];
+      if (newSourceId !== undefined && newTargetId !== undefined) {
+        try {
+          const data = await API('POST', '/api/dependencies', {
+            project_id: S().currentProject.id,
+            source_id: newSourceId,
+            target_id: newTargetId,
+          });
+          if (data.dep && !S().dependencies.some(d => d.id === data.dep.id)) {
+            S().dependencies.push(data.dep);
+          }
+        } catch (err) { console.error('Restore dependency failed:', err); }
+      }
     }
 
     // If pasting below a specific entry, reorder the new root entries to appear after it

@@ -535,6 +535,9 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-bar.gantt-bar-tall { align-items: flex-start; padding-top: 4px; }
 .gantt-bar.gantt-bar-tall .gantt-bar-label { white-space: normal; word-break: break-word; overflow: visible; text-overflow: clip; }
 .gantt-bar.gantt-bar-narrow { overflow: hidden; }
+.gantt-bar.gantt-bar-hide-label .gantt-bar-label,
+.gantt-bar.gantt-bar-hide-label .gantt-bar-hours,
+.gantt-bar.gantt-bar-hide-label .gantt-bar-completed-check { display: none; }
 
 /* Gantt bar hover tooltip */
 .gantt-bar-tooltip {

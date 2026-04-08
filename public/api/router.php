@@ -1110,6 +1110,80 @@ if ($seg1 === 'dependencies') {
 }
 
 // =========================================================================
+// MILESTONE ROUTES
+// =========================================================================
+
+if ($seg1 === 'milestones') {
+
+    // POST milestones (create)
+    if ($seg2 === '' && $method === 'POST') {
+        $userId     = require_auth();
+        $project_id = $body['project_id'] ?? '';
+        $date       = $body['date'] ?? '';
+        if (!$project_id || !$date) json_out(['error' => 'Missing required fields'], 400);
+        if (!can_access_project($db, $project_id, $userId)) json_out(['error' => 'Forbidden'], 403);
+
+        $id = uuid_v4();
+        $s = $db->prepare('INSERT INTO gantt_milestones (id,project_id,date,label,color) VALUES (?,?,?,?,?)');
+        $s->execute([$id, $project_id, $date, $body['label'] ?? '', $body['color'] ?? '#e53935']);
+
+        $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
+        $s->execute([$id]);
+        json_out(['milestone' => $s->fetch()]);
+    }
+
+    if ($seg2) {
+        $milestoneId = $seg2;
+
+        // GET milestones/:projectId
+        if ($method === 'GET') {
+            $userId    = require_auth();
+            $projectId = $milestoneId;
+            if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
+
+            $s = $db->prepare('SELECT * FROM gantt_milestones WHERE project_id=? ORDER BY date ASC');
+            $s->execute([$projectId]);
+            json_out(['milestones' => $s->fetchAll()]);
+        }
+
+        // PUT milestones/:id
+        if ($method === 'PUT') {
+            $userId = require_auth();
+            $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
+            $s->execute([$milestoneId]);
+            $existing = $s->fetch();
+            if (!$existing) json_out(['error' => 'Not found'], 404);
+            if (!can_access_project($db, $existing['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
+
+            $newDate  = $body['date']  ?? $existing['date'];
+            $newLabel = $body['label'] ?? $existing['label'];
+            $newColor = $body['color'] ?? $existing['color'];
+
+            $s = $db->prepare('UPDATE gantt_milestones SET date=?,label=?,color=? WHERE id=?');
+            $s->execute([$newDate, $newLabel, $newColor, $milestoneId]);
+
+            $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
+            $s->execute([$milestoneId]);
+            json_out(['milestone' => $s->fetch()]);
+        }
+
+        // DELETE milestones/:id
+        if ($method === 'DELETE') {
+            $userId = require_auth();
+            $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
+            $s->execute([$milestoneId]);
+            $existing = $s->fetch();
+            if (!$existing) json_out(['error' => 'Not found'], 404);
+            if (!can_access_project($db, $existing['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
+
+            $s = $db->prepare('DELETE FROM gantt_milestones WHERE id=?');
+            $s->execute([$milestoneId]);
+            json_out(['ok' => true]);
+        }
+    }
+}
+
+// =========================================================================
 // TODO ROUTES
 // =========================================================================
 

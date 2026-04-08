@@ -31,6 +31,7 @@ const state = {
   ganttEntries: [],   // current project's entries
   todos: [],          // current project's todos
   dependencies: [],   // current project's gantt dependencies
+  milestones: [],     // current project's deadline/milestone markers
   lastSync: 0,
   selectedGanttIds: new Set(),
   undoStack: [],
@@ -238,15 +239,17 @@ async function selectProject(project) {
   document.getElementById('welcomeScreen').classList.add('hidden');
   document.getElementById('projectView').classList.remove('hidden');
 
-  // Load gantt + todos + dependencies
-  const [gdata, tdata, ddata] = await Promise.all([
+  // Load gantt + todos + dependencies + milestones
+  const [gdata, tdata, ddata, mdata] = await Promise.all([
     api('GET', `/api/gantt/${project.id}`),
     api('GET', `/api/todos/${project.id}`),
     api('GET', `/api/dependencies/${project.id}`),
+    api('GET', `/api/milestones/${project.id}`),
   ]);
   state.ganttEntries = gdata.entries;
   state.todos = tdata.todos;
   state.dependencies = ddata.dependencies;
+  state.milestones = mdata.milestones || [];
   state.lastSync = Date.now();
 
   // Init WS with project context
