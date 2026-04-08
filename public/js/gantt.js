@@ -1710,6 +1710,13 @@
   // =========================================================================
   // Milestones / Deadlines
   // =========================================================================
+
+  // Accepts only #rrggbb hex colours (what <input type=color> produces).
+  // Falls back to a safe default to prevent CSS injection.
+  function _safeColor(c, fallback) {
+    return /^#[0-9a-fA-F]{6}$/.test(c) ? c : (fallback || '#e53935');
+  }
+
   function renderMilestones() {
     // Ensure ganttRows is a positioned container for the absolute milestone lines
     ganttRows.style.position = 'relative';
@@ -1724,7 +1731,7 @@
       if (!date || date < chartStart || date > chartEnd) return;
 
       const x     = Math.round(daysBetween(chartStart, date) * pxPerDay);
-      const color = ms.color || '#e53935';
+      const color = _safeColor(ms.color);
       const label = ms.label || '';
 
       // ── Ruler diamond marker ─────────────────────────────────────────────
@@ -1781,7 +1788,7 @@
     U().openModal('Add Milestone', html, async () => {
       const date  = document.getElementById('msDate').value;
       const label = document.getElementById('msLabel').value.trim();
-      const color = document.getElementById('msColor').value;
+      const color = _safeColor(document.getElementById('msColor').value);
       if (!date) return alert('Date is required');
       try {
         const data = await API('POST', '/api/milestones', {
@@ -1802,11 +1809,11 @@
       '<label style="display:block;margin-bottom:10px">Label<br>' +
       '<input id="msLabel" type="text" value="' + _esc(ms.label || '') + '" style="width:100%"></label>' +
       '<label style="display:block">Color<br>' +
-      '<input id="msColor" type="color" value="' + _esc(ms.color || '#e53935') + '"></label>';
+      '<input id="msColor" type="color" value="' + _esc(_safeColor(ms.color)) + '"></label>';
     U().openModal('Edit Milestone', html, async () => {
       const date  = document.getElementById('msDate').value;
       const label = document.getElementById('msLabel').value.trim();
-      const color = document.getElementById('msColor').value;
+      const color = _safeColor(document.getElementById('msColor').value);
       if (!date) return alert('Date is required');
       try {
         const data = await API('PUT', '/api/milestones/' + ms.id, { date, label, color });
