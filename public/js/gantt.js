@@ -1629,7 +1629,7 @@
         document.addEventListener('mouseup', onUp);
       });
 
-      const bar = entry.row_only ? null : buildBar(entry);
+      const bar = (+entry.row_only) ? null : buildBar(entry);
       if (bar) rowBg.appendChild(bar);
 
       // Also render bars for entries that share this row (same_row === entry.id)
@@ -1656,7 +1656,7 @@
           let placed = false;
           for (let i = 0; i < lanes.length; i++) {
             const last = lanes[i][lanes[i].length - 1];
-            if (last.right <= iv.left) {
+            if (last.right <= iv.left + 0.5) {
               lanes[i].push(iv);
               iv.lane = i;
               placed = true;
@@ -2385,24 +2385,31 @@
     // Capture drag state and reset immediately to prevent sticking.
     // When a snap is active, compute deltaDays from the snapped pixel position
     // so the saved dates match the visually snapped bar position.
+    // Task-edge snaps have priority: bypass the snapDays grid rounding so
+    // the bar lands exactly on the snapped task edge (1-day precision).
     let deltaDays;
     const snapActivePx = drag.snapActivePx;
+    const snapTargetId = drag.snapTargetEntryId;
     const dragType = drag.type;
     if (dragType === 'move') {
       // Use actual container position to account for snap adjustment.
       // Fallback to mouse delta if style.left is somehow unparseable.
       const actualLeft = parseFloat(drag.containerEl.style.left);
-      const snapDays = getSnapDaysForCurrentScale();
-      deltaDays = isNaN(actualLeft)
-        ? Math.round(((e.pageX - drag.startX) / pxPerDay) / snapDays) * snapDays
-        : Math.round(((actualLeft - drag.origLeftPx) / pxPerDay) / snapDays) * snapDays;
-    } else if (snapActivePx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
-      if (dragType === 'resize-left') {
-        const snapDays = getSnapDaysForCurrentScale();
-        deltaDays = Math.round(((snapActivePx - drag.origLeftPx) / pxPerDay) / snapDays) * snapDays;
+      if (snapTargetId !== null && !isNaN(actualLeft)) {
+        // Snapped to a task edge – use exact day delta (1-day precision)
+        deltaDays = Math.round((actualLeft - drag.origLeftPx) / pxPerDay);
       } else {
         const snapDays = getSnapDaysForCurrentScale();
-        deltaDays = Math.round(((snapActivePx - drag.origLeftPx - drag.origWidthPx) / pxPerDay) / snapDays) * snapDays;
+        deltaDays = isNaN(actualLeft)
+          ? Math.round(((e.pageX - drag.startX) / pxPerDay) / snapDays) * snapDays
+          : Math.round(((actualLeft - drag.origLeftPx) / pxPerDay) / snapDays) * snapDays;
+      }
+    } else if (snapActivePx !== null && (dragType === 'resize-left' || dragType === 'resize-right')) {
+      // Snapped to a task edge during resize – use exact day delta
+      if (dragType === 'resize-left') {
+        deltaDays = Math.round((snapActivePx - drag.origLeftPx) / pxPerDay);
+      } else {
+        deltaDays = Math.round((snapActivePx - drag.origLeftPx - drag.origWidthPx) / pxPerDay);
       }
     } else {
       const snapDays = getSnapDaysForCurrentScale();
@@ -2657,7 +2664,6 @@
     path.setAttribute('stroke-width', '2');
     path.setAttribute('stroke-dasharray', '6 3');
     path.setAttribute('fill', 'none');
-    path.setAttribute('marker-end', 'url(#depArrow)');
     svgEl.appendChild(path);
     conn.tempLine = path;
 
@@ -2722,22 +2728,6 @@
     // When arrows are hidden, stop here (rubber-band temp line stays if connecting)
     if (!depsVisible) return;
 
-    // Arrowhead marker definition
-    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-    marker.setAttribute('id', 'depArrow');
-    marker.setAttribute('markerWidth', '8');
-    marker.setAttribute('markerHeight', '6');
-    marker.setAttribute('refX', '7');
-    marker.setAttribute('refY', '3');
-    marker.setAttribute('orient', 'auto');
-    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    poly.setAttribute('points', '0 0, 8 3, 0 6');
-    poly.setAttribute('fill', 'rgba(80,80,80,0.75)');
-    marker.appendChild(poly);
-    defs.appendChild(marker);
-    svg.insertBefore(defs, svg.firstChild);
-
     const deps = S().dependencies || [];
     deps.forEach(dep => {
       const srcIdx = rowIndexMap[dep.source_id];
@@ -2771,22 +2761,17 @@
       // Gentler bezier curve (reduced control-point factor vs the old 0.5)
       const dx   = Math.abs(x2 - x1);
       const cpx  = Math.max(dx * 0.25, MIN_BEZIER_CP);
-      // Shorten the path slightly so the arrowhead sits along the line
-      // instead of at the very endpoint (avoids arrows hitting bar edges
-      // when bars are split into horizontal lanes).
-      const arrowInset = 8;
-      const x2a = x2 - arrowInset; // pull endpoint back along the final tangent
+      // Line goes all the way to the target bar edge (no arrowhead, no inset)
       const d    = 'M ' + x1 + ' ' + y1 +
                    ' C ' + (x1 + cpx) + ' ' + y1 + ',' +
                    (x2 - cpx) + ' ' + y2 + ',' +
-                   x2a + ' ' + y2;
+                   x2 + ' ' + y2;
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
       path.setAttribute('stroke', 'rgba(80,80,80,0.65)');
       path.setAttribute('stroke-width', '1.8');
       path.setAttribute('fill', 'none');
-      path.setAttribute('marker-end', 'url(#depArrow)');
       path.classList.add('dep-arrow');
 
       // Wide invisible hit-area for easier clicking
@@ -3415,7 +3400,7 @@
       '<input type="text" id="feRowLabel" value="' + U().escHtml(entry.row_label || entry.title || '') + '" placeholder="Row/category name">' +
       '</div>' +
       '<div class="form-group">' +
-      '<label><input type="checkbox" id="feRowOnly" ' + ((entry.row_only ? 'checked' : '')) + '> Row only (category/no bar)</label>' +
+      '<label><input type="checkbox" id="feRowOnly" ' + ((+entry.row_only ? 'checked' : '')) + '> Row only (category/no bar)</label>' +
       '</div>' +
       '<div style="display:flex;gap:12px">' +
         '<div class="form-group" style="flex:1"><label>Start Date</label>' +
@@ -3778,7 +3763,7 @@
             title:           e.title,
             row_label:       e.row_label,
             row_height:      e.row_height,
-            row_only:        e.row_only,
+            row_only:        (+e.row_only) ? 1 : 0,
             start_date:      newStart,
             end_date:        newEnd,
             hours_estimate:  e.hours_estimate,
