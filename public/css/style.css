@@ -518,8 +518,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-row-bg:nth-child(even) { background: var(--surface2); }
 
 /* Gantt bars */
-.gantt-bar-container { position: absolute; top: 4px; height: calc(var(--row-h) - 8px); transition: top .12s, height .12s; z-index: 1; }
-.gantt-bar-container:hover { top: calc(4px - (var(--row-h) - 8px) * 0.15); height: calc((var(--row-h) - 8px) * 1.3); z-index: 10; }
+.gantt-bar-container { position: absolute; top: 4px; height: calc(var(--row-h) - 8px); z-index: 1; transform-origin: left center; transition: transform .22s cubic-bezier(.34,1.56,.64,1); }
 .gantt-bar {
   height: 100%; border-radius: var(--radius-sm); position: relative; cursor: pointer;
   display: flex; align-items: center; padding: 0 6px; overflow: hidden;
@@ -535,11 +534,8 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 /* Tall bar: allow label to wrap so full title is visible when row height is increased */
 .gantt-bar.gantt-bar-tall { align-items: flex-start; padding-top: 4px; }
 .gantt-bar.gantt-bar-tall .gantt-bar-label { white-space: normal; word-break: break-word; overflow: visible; text-overflow: clip; }
-/* Narrow bar: let label text extend beyond the bar so it remains readable */
-.gantt-bar.gantt-bar-narrow { overflow: visible; }
-.gantt-bar.gantt-bar-narrow .gantt-bar-label { overflow: visible; text-overflow: clip; background: inherit; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding-right: 6px; }
-/* Narrow + tall: keep text horizontal to prevent vertical character stacking */
-.gantt-bar.gantt-bar-tall.gantt-bar-narrow .gantt-bar-label { white-space: nowrap; word-break: normal; }
+/* Narrow bar: text stays clipped inside bar; hover scale reveals the full title */
+.gantt-bar.gantt-bar-narrow { overflow: hidden; }
 .gantt-bar-hours { font-size: 10px; opacity: 0.85; margin-left: 4px; white-space: nowrap; flex-shrink: 0; pointer-events: none; }
 .gantt-time-selection {
   position: absolute; pointer-events: none; z-index: 2;
