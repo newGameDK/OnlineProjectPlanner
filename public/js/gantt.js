@@ -3812,6 +3812,8 @@
             color_variation: e.color_variation,
             notes:           e.notes,
             folder_url:      e.folder_url,
+            position:        e.position,
+            suppress_undo:   1,
           });
           idMap[e.id] = data.entry.id;
           S().ganttEntries.push(data.entry);
@@ -3842,7 +3844,7 @@
         // Owner was also pasted – point all dependents to its new ID.
         for (const newId of newIds) {
           try {
-            const upd = await API('PUT', '/api/gantt/' + newId, { same_row: newOwner });
+            const upd = await API('PUT', '/api/gantt/' + newId, { same_row: newOwner, suppress_undo: 1 });
             const idx = S().ganttEntries.findIndex(en => en.id === newId);
             if (idx !== -1) S().ganttEntries[idx].same_row = upd.entry ? upd.entry.same_row : newOwner;
           } catch (err) { console.error('Same-row restore failed for pasted entry:', err); }
@@ -3853,7 +3855,7 @@
         const groupOwner = newIds[0]; // already created with same_row=null – it IS the owner
         for (let i = 1; i < newIds.length; i++) {
           try {
-            const upd = await API('PUT', '/api/gantt/' + newIds[i], { same_row: groupOwner });
+            const upd = await API('PUT', '/api/gantt/' + newIds[i], { same_row: groupOwner, suppress_undo: 1 });
             const idx = S().ganttEntries.findIndex(en => en.id === newIds[i]);
             if (idx !== -1) S().ganttEntries[idx].same_row = upd.entry ? upd.entry.same_row : groupOwner;
           } catch (err) { console.error('Same-row group failed for pasted entry:', err); }
@@ -3863,12 +3865,14 @@
     }
 
     // If pasting below a specific entry, reorder the new root entries to appear after it
+    let pasteOldPositions = []; // old sibling positions, captured before reorder for undo
     if (afterEntry && newRootIds.length > 0) {
       const newRootIdSet = new Set(newRootIds);
       const siblings = S().ganttEntries
         .filter(e => (e.parent_id === pasteParentId || (!e.parent_id && !pasteParentId)) &&
                      !newRootIdSet.has(e.id))
         .sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1));
+      pasteOldPositions = siblings.map(e => ({ id: e.id, position: e.position }));
       const afterIdx = siblings.findIndex(e => e.id === afterEntry.id);
       const insertAt = afterIdx !== -1 ? afterIdx + 1 : siblings.length;
       const newEntries = newRootIds.map(id => S().ganttEntries.find(e => e.id === id)).filter(Boolean);
@@ -3879,12 +3883,25 @@
       ];
       const positions = reordered.map((e, i) => ({ id: e.id, position: i }));
       try {
-        const result = await API('POST', '/api/gantt/' + S().currentProject.id + '/reorder', { positions });
+        const result = await API('POST', '/api/gantt/' + S().currentProject.id + '/reorder', { positions, suppress_undo: 1 });
         result.entries.forEach(updated => {
           const idx = S().ganttEntries.findIndex(e => e.id === updated.id);
           if (idx !== -1) S().ganttEntries[idx].position = updated.position;
         });
       } catch (err) { console.error('Reorder after paste failed:', err); }
+    }
+
+    // Record the entire paste as a single undo action
+    if (!cut) {
+      const allNewIds = Object.values(idMap);
+      if (allNewIds.length > 0) {
+        try {
+          await API('POST', '/api/gantt/' + S().currentProject.id + '/record-paste', {
+            entry_ids:     allNewIds,
+            old_positions: pasteOldPositions,
+          });
+        } catch (err) { console.error('Failed to record paste undo:', err); }
+      }
     }
 
     if (cut) {

@@ -828,10 +828,12 @@ if ($seg1 === 'gantt') {
         $entry = $s->fetch();
 
         // Save undo; clear stale redo history
-        $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
-        $s->execute([$project_id, $userId]);
-        $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-        $s->execute([uuid_v4(), $project_id, $userId, 'create_gantt', json_encode(['entry' => $entry])]);
+        if (!($body['suppress_undo'] ?? 0)) {
+            $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+            $s->execute([$project_id, $userId]);
+            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $project_id, $userId, 'create_gantt', json_encode(['entry' => $entry])]);
+        }
 
         json_out(['entry' => $entry]);
     }
@@ -877,10 +879,12 @@ if ($seg1 === 'gantt') {
             }
 
             // Save undo; clear stale redo history
-            $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
-            $s->execute([$existing['project_id'], $userId]);
-            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-            $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
+            if (!($body['suppress_undo'] ?? 0)) {
+                $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+                $s->execute([$existing['project_id'], $userId]);
+                $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+                $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
+            }
 
             $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
             $s->execute([
@@ -951,10 +955,12 @@ if ($seg1 === 'gantt' && $seg2 && $seg3 === 'reorder' && $method === 'POST') {
     }
 
     // Save ONE undo record; clear stale redo history
-    $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
-    $s->execute([$projectId, $userId]);
-    $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-    $s->execute([uuid_v4(), $projectId, $userId, 'reorder_gantt', json_encode(['positions' => $oldPositions])]);
+    if (!($body['suppress_undo'] ?? 0)) {
+        $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+        $s->execute([$projectId, $userId]);
+        $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'reorder_gantt', json_encode(['positions' => $oldPositions])]);
+    }
 
     // Apply new positions
     $ts = now_ms();
@@ -974,8 +980,37 @@ if ($seg1 === 'gantt' && $seg2 && $seg3 === 'reorder' && $method === 'POST') {
 }
 
 // =========================================================================
-// UNDO STATUS ROUTE
+// GANTT RECORD-PASTE ROUTE  (stores a single undo record for a paste batch)
 // =========================================================================
+
+if ($seg1 === 'gantt' && $seg2 && $seg3 === 'record-paste' && $method === 'POST') {
+    $userId = require_auth();
+    $projectId = $seg2;
+    if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
+
+    $entryIds    = $body['entry_ids']    ?? [];
+    $oldPositions = $body['old_positions'] ?? [];
+
+    if (empty($entryIds)) json_out(['ok' => true]);
+
+    // Fetch full entry data so we have everything needed for redo
+    $entries = [];
+    foreach ($entryIds as $eid) {
+        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=? AND project_id=?');
+        $s->execute([$eid, $projectId]);
+        $e = $s->fetch();
+        if ($e) $entries[] = $e;
+    }
+
+    // Clear stale redo history and record ONE undo entry for the whole paste
+    $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+    $s->execute([$projectId, $userId]);
+    $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+    $s->execute([uuid_v4(), $projectId, $userId, 'paste_gantt',
+        json_encode(['entries' => $entries, 'old_positions' => $oldPositions])]);
+
+    json_out(['ok' => true]);
+}
 
 if ($seg1 === 'undo-status' && $seg2 && $method === 'GET') {
     $userId = require_auth();
@@ -1245,6 +1280,47 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
             if ($e) $entries[] = $e;
         }
         $result = ['undone' => 'reorder_gantt', 'entries' => $entries];
+    } elseif ($action['action_type'] === 'paste_gantt') {
+        // Undo paste = delete all created entries and restore old sibling positions
+        $entries     = $data['entries']       ?? [];
+        $oldPositions = $data['old_positions'] ?? [];
+
+        // Capture current positions of reordered siblings before restoring (needed for redo)
+        $newPositions = [];
+        foreach ($oldPositions as $p) {
+            $s = $db->prepare('SELECT id, position FROM gantt_entries WHERE id=?');
+            $s->execute([$p['id']]);
+            $e = $s->fetch();
+            if ($e) $newPositions[] = ['id' => $e['id'], 'position' => $e['position']];
+        }
+
+        // Save to redo (full entry data + positions for both directions)
+        $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'paste_gantt',
+            json_encode(['entries' => $entries, 'old_positions' => $oldPositions, 'new_positions' => $newPositions])]);
+
+        // Delete all pasted entries (children first to avoid orphaned rows)
+        $entryIds = array_column($entries, 'id');
+        // Sort: delete entries whose parent_id is also in the set last (parents are effectively roots)
+        $entryIdSet = array_flip($entryIds);
+        usort($entries, function($a, $b) use ($entryIdSet) {
+            $aIsChild = isset($entryIdSet[$a['parent_id']]) ? 1 : 0;
+            $bIsChild = isset($entryIdSet[$b['parent_id']]) ? 1 : 0;
+            return $bIsChild - $aIsChild; // children first
+        });
+        foreach ($entries as $e) {
+            $s = $db->prepare('DELETE FROM gantt_entries WHERE id=? AND project_id=?');
+            $s->execute([$e['id'], $projectId]);
+        }
+
+        // Restore old sibling positions
+        $ts = now_ms();
+        foreach ($oldPositions as $p) {
+            $s = $db->prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=? AND project_id=?');
+            $s->execute([$p['position'], $ts, $p['id'], $projectId]);
+        }
+
+        $result = ['undone' => 'paste_gantt', 'deleted_ids' => $entryIds];
     }
 
     json_out($result);
@@ -1340,6 +1416,33 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
             if ($e) $entries[] = $e;
         }
         $result = ['redone' => 'reorder_gantt', 'entries' => $entries];
+    } elseif ($redoAction['action_type'] === 'paste_gantt') {
+        // Redo paste = recreate all entries and re-apply post-paste sibling positions
+        $entries      = $data['entries']       ?? [];
+        $oldPositions = $data['old_positions'] ?? [];
+        $newPositions = $data['new_positions'] ?? [];
+
+        // Recreate entries (parents before children – entries are stored in creation order)
+        foreach ($entries as $e) {
+            try {
+                $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,subtract_hours,same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+                $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null]);
+            } catch (Exception $ex) { /* already exists – ignore */ }
+        }
+
+        // Restore post-paste sibling positions
+        $ts = now_ms();
+        foreach ($newPositions as $p) {
+            $s = $db->prepare('UPDATE gantt_entries SET position=?, updated_at=? WHERE id=? AND project_id=?');
+            $s->execute([$p['position'], $ts, $p['id'], $projectId]);
+        }
+
+        // Save undo record so the redo can itself be undone
+        $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'paste_gantt',
+            json_encode(['entries' => $entries, 'old_positions' => $oldPositions])]);
+
+        $result = ['redone' => 'paste_gantt', 'entry_ids' => array_column($entries, 'id')];
     }
 
     json_out($result);
