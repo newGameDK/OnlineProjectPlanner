@@ -538,6 +538,8 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 /* Narrow bar: let label text extend beyond the bar so it remains readable */
 .gantt-bar.gantt-bar-narrow { overflow: visible; }
 .gantt-bar.gantt-bar-narrow .gantt-bar-label { overflow: visible; text-overflow: clip; background: inherit; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding-right: 6px; }
+/* Narrow + tall: keep text horizontal to prevent vertical character stacking */
+.gantt-bar.gantt-bar-tall.gantt-bar-narrow .gantt-bar-label { white-space: nowrap; word-break: normal; }
 .gantt-bar-hours { font-size: 10px; opacity: 0.85; margin-left: 4px; white-space: nowrap; flex-shrink: 0; pointer-events: none; }
 .gantt-time-selection {
   position: absolute; pointer-events: none; z-index: 2;
