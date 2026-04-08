@@ -3715,17 +3715,43 @@
     const pasteStart = parseDate(pasteStartDate);
     const idMap = {}; // old id → new id
     const newRootIds = []; // new IDs of pasted root entries, for reorder-after
+    const sameRowUpdates = []; // { newId, oldSameRow } – applied after all entries are created
 
     // When pasting below a specific row, use that row's parent as the parent for root entries
     const pasteParentId = afterEntry !== null
       ? (afterEntry.parent_id !== undefined ? afterEntry.parent_id : null)
       : currentParentId;
 
+    // Calculate a single shared dayOffset from the earliest start across ALL roots so that
+    // relative temporal positions between pasted entries are preserved (e.g. same-row groups).
+    let overallEarliestStart = null;
+    for (const rootId of (rootIds || [])) {
+      const root = entries.find(e => e.id === rootId);
+      if (!root) continue;
+      const tempSorted = [];
+      const addTemp = (id) => {
+        const e = entries.find(x => x.id === id);
+        if (!e || tempSorted.includes(e)) return;
+        tempSorted.push(e);
+        entries.filter(x => x.parent_id === id).forEach(c => addTemp(c.id));
+      };
+      addTemp(rootId);
+      let rootStart = parseDate(root.start_date);
+      if (!rootStart) {
+        const allDates = tempSorted.map(e => parseDate(e.start_date)).filter(Boolean);
+        rootStart = allDates.length
+          ? new Date(Math.min(...allDates.map(d => d.getTime())))
+          : pasteStart;
+      }
+      if (!overallEarliestStart || rootStart < overallEarliestStart) overallEarliestStart = rootStart;
+    }
+    const sharedDayOffset = overallEarliestStart ? daysBetween(overallEarliestStart, pasteStart) : 0;
+
     for (const rootId of (rootIds || [])) {
       const root = entries.find(e => e.id === rootId);
       if (!root) continue;
 
-      // Build sorted list first so we can find the earliest date if root has none
+      // Build sorted list (parent before children) for this root's subtree
       const sorted = [];
       const addSorted = (id) => {
         const e = entries.find(x => x.id === id);
@@ -3735,27 +3761,14 @@
       };
       addSorted(rootId);
 
-      // If root has no start_date (e.g. a row-only category), use the earliest
-      // non-null child date so child bars land at pasteStart instead of being
-      // pushed thousands of days into the future.
-      let rootStart = parseDate(root.start_date);
-      if (!rootStart) {
-        const allDates = sorted.map(e => parseDate(e.start_date)).filter(Boolean);
-        rootStart = allDates.length
-          ? new Date(Math.min(...allDates.map(d => d.getTime())))
-          : pasteStart;
-      }
-      const dayOffset = daysBetween(rootStart, pasteStart);
-
       for (const e of sorted) {
         const newParentId = e.id === rootId
           ? pasteParentId
           : (idMap[e.parent_id] !== undefined ? idMap[e.parent_id] : null);
-        // Entries with no dates (row-only categories) keep their dates empty
         const rawStart = parseDate(e.start_date);
         const rawEnd   = parseDate(e.end_date);
-        const newStart = rawStart ? toDateStr(addDays(rawStart, dayOffset)) : toDateStr(pasteStart);
-        const newEnd   = rawEnd   ? toDateStr(addDays(rawEnd,   dayOffset)) : toDateStr(addDays(pasteStart, 7));
+        const newStart = rawStart ? toDateStr(addDays(rawStart, sharedDayOffset)) : toDateStr(pasteStart);
+        const newEnd   = rawEnd   ? toDateStr(addDays(rawEnd,   sharedDayOffset)) : toDateStr(addDays(pasteStart, 7));
         try {
           const data = await API('POST', '/api/gantt', {
             project_id:      S().currentProject.id,
@@ -3778,10 +3791,46 @@
             expandedIds.add(data.entry.parent_id);
           }
           if (e.id === rootId) newRootIds.push(data.entry.id);
+          // Queue same_row update for second pass once all idMap entries are known
+          if (e.same_row) sameRowUpdates.push({ newId: data.entry.id, oldSameRow: e.same_row });
         } catch (err) {
           console.error('Paste failed for entry "' + e.title + '":', err);
         }
       }
+    }
+
+    // Restore same_row links for pasted entries whose owner was also pasted.
+    // Done as a second pass so idMap is fully populated regardless of entry ordering.
+    // Group by the original owner so we can handle orphan groups gracefully.
+    const sameRowGroups = {}; // oldOwnerId → [newId, ...]
+    for (const { newId, oldSameRow } of sameRowUpdates) {
+      if (!sameRowGroups[oldSameRow]) sameRowGroups[oldSameRow] = [];
+      sameRowGroups[oldSameRow].push(newId);
+    }
+    for (const [oldSameRow, newIds] of Object.entries(sameRowGroups)) {
+      const newOwner = idMap[oldSameRow];
+      if (newOwner !== undefined) {
+        // Owner was also pasted – point all dependants to its new ID.
+        for (const newId of newIds) {
+          try {
+            const upd = await API('PUT', '/api/gantt/' + newId, { same_row: newOwner });
+            const idx = S().ganttEntries.findIndex(en => en.id === newId);
+            if (idx !== -1) S().ganttEntries[idx].same_row = upd.entry ? upd.entry.same_row : newOwner;
+          } catch (err) { console.error('Same-row restore failed for pasted entry:', err); }
+        }
+      } else if (newIds.length > 1) {
+        // Owner was not pasted but multiple dependants share the same old owner:
+        // promote the first pasted entry as the new row owner and chain the rest to it.
+        const groupOwner = newIds[0]; // already created with same_row=null – it IS the owner
+        for (let i = 1; i < newIds.length; i++) {
+          try {
+            const upd = await API('PUT', '/api/gantt/' + newIds[i], { same_row: groupOwner });
+            const idx = S().ganttEntries.findIndex(en => en.id === newIds[i]);
+            if (idx !== -1) S().ganttEntries[idx].same_row = upd.entry ? upd.entry.same_row : groupOwner;
+          } catch (err) { console.error('Same-row group failed for pasted entry:', err); }
+        }
+      }
+      // If newIds.length === 1 and owner not pasted: single orphan, leave as standalone row
     }
 
     // If pasting below a specific entry, reorder the new root entries to appear after it
