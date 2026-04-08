@@ -1302,9 +1302,10 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         // Delete all pasted entries (children first to avoid orphaned rows)
         $entryIds = array_column($entries, 'id');
         // Sort: delete entries whose parent_id is also in the set last (parents are effectively roots)
-        usort($entries, function($a, $b) use ($entryIds) {
-            $aIsChild = in_array($a['parent_id'], $entryIds) ? 1 : 0;
-            $bIsChild = in_array($b['parent_id'], $entryIds) ? 1 : 0;
+        $entryIdSet = array_flip($entryIds);
+        usort($entries, function($a, $b) use ($entryIdSet) {
+            $aIsChild = isset($entryIdSet[$a['parent_id']]) ? 1 : 0;
+            $bIsChild = isset($entryIdSet[$b['parent_id']]) ? 1 : 0;
             return $bIsChild - $aIsChild; // children first
         });
         foreach ($entries as $e) {
