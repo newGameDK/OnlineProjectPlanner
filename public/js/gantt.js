@@ -62,7 +62,7 @@
 
   function getEntryRowHeight(entry) {
     const h = parseInt(entry && entry.row_height, 10);
-    return Number.isFinite(h) ? Math.max(28, Math.min(240, h)) : ROW_H;
+    return Number.isFinite(h) ? Math.max(28, Math.min(500, h)) : ROW_H;
   }
 
   function getSnapDaysForCurrentScale() {
@@ -1038,7 +1038,7 @@
 
   function onRowHeightDragMove(e) {
     if (!rowHeightDrag.active) return;
-    const newHeight = Math.max(28, Math.min(240, rowHeightDrag.startHeight + (e.clientY - rowHeightDrag.startY)));
+    const newHeight = Math.max(28, Math.min(500, rowHeightDrag.startHeight + (e.clientY - rowHeightDrag.startY)));
     const idx = S().ganttEntries.findIndex(en => en.id === rowHeightDrag.entryId);
     if (idx === -1) return;
     S().ganttEntries[idx].row_height = newHeight;
@@ -1542,6 +1542,7 @@
     if (snapLine2El) { snapLine2El.remove(); snapLine2El = null; }
     ganttRows.innerHTML   = '';
 
+    let cumulativeRowY = 0;
     entries.forEach(entry => {
       const rowBg = document.createElement('div');
       rowBg.className     = 'gantt-row-bg';
@@ -1620,10 +1621,16 @@
           intervals.forEach(iv => {
             iv.el.style.top    = (barPad + iv.lane * laneH) + 'px';
             iv.el.style.height = Math.max(16, laneH) + 'px';
+            // Update rowYMap so dependency arrows point to the lane center
+            const barId = iv.el.dataset.id;
+            if (barId) {
+              rowYMap[barId] = cumulativeRowY + barPad + iv.lane * laneH + laneH / 2;
+            }
           });
         }
       }
 
+      cumulativeRowY += entryRowHeight;
       ganttRows.appendChild(rowBg);
     });
 
@@ -2700,10 +2707,15 @@
       // Gentler bezier curve (reduced control-point factor vs the old 0.5)
       const dx   = Math.abs(x2 - x1);
       const cpx  = Math.max(dx * 0.25, MIN_BEZIER_CP);
+      // Shorten the path slightly so the arrowhead sits along the line
+      // instead of at the very endpoint (avoids arrows hitting bar edges
+      // when bars are split into horizontal lanes).
+      const arrowInset = 8;
+      const x2a = x2 - arrowInset; // pull endpoint back along the final tangent
       const d    = 'M ' + x1 + ' ' + y1 +
                    ' C ' + (x1 + cpx) + ' ' + y1 + ',' +
                    (x2 - cpx) + ' ' + y2 + ',' +
-                   x2 + ' ' + y2;
+                   x2a + ' ' + y2;
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
