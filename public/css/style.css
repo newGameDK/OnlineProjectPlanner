@@ -548,7 +548,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-bar-tooltip.visible { opacity: 1; }
 .gantt-bar-tooltip-title { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
 .gantt-bar-tooltip-meta { font-size: 10px; opacity: 0.82; font-weight: 500; margin-bottom: 2px; }
-.gantt-bar-tooltip-notes { font-size: 10px; font-weight: 400; opacity: 0.9; margin-top: 5px; white-space: pre-wrap; border-top: 1px solid rgba(0,0,0,.12); padding-top: 5px; }
+.gantt-bar-tooltip-notes { font-size: 10px; font-weight: 400; opacity: 0.9; margin-top: 5px; white-space: pre-wrap; border-top: 1px solid rgba(255,255,255,.35); padding-top: 5px; }
 .gantt-bar-hours { font-size: 10px; opacity: 0.85; margin-left: 4px; white-space: nowrap; flex-shrink: 0; pointer-events: none; }
 .gantt-time-selection {
   position: absolute; pointer-events: none; z-index: 2;

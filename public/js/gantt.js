@@ -180,13 +180,12 @@
     tip.style.background = color;
     tip.style.color = textColor;
     const dates = entry.start_date + ' → ' + entry.end_date;
-    const hours = entry.hours_estimate ? (+entry.hours_estimate || 0) + 'h estimated' : '';
+    const hours = entry.hours_estimate ? +entry.hours_estimate + 'h estimated' : '';
     tip.innerHTML =
       '<div class="gantt-bar-tooltip-title">' + _esc(entry.title) + '</div>' +
       '<div class="gantt-bar-tooltip-meta">' + _esc(dates) + (hours ? '&ensp;·&ensp;' + _esc(hours) : '') + '</div>' +
       (entry.notes ? '<div class="gantt-bar-tooltip-notes">' + _esc(entry.notes) + '</div>' : '');
-    // Position before making visible; recheck after first layout pass
-    _positionBarTooltip(tip, clientX, clientY);
+    // Make visible and position after first layout pass so dimensions are known
     tip.classList.add('visible');
     requestAnimationFrame(() => _positionBarTooltip(tip, _barTooltipX, _barTooltipY));
   }
@@ -196,8 +195,8 @@
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const offset = 14;
-    const tw = tip.offsetWidth  || 0;
-    const th = tip.offsetHeight || 0;
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
     const left = (clientX + offset + tw > vw - 8) ? Math.max(4, clientX - tw - offset) : clientX + offset;
     const top  = (clientY + offset + th > vh - 8) ? Math.max(4, clientY - th - offset) : clientY + offset;
     tip.style.left = left + 'px';
