@@ -3810,7 +3810,7 @@
     for (const [oldSameRow, newIds] of Object.entries(sameRowGroups)) {
       const newOwner = idMap[oldSameRow];
       if (newOwner !== undefined) {
-        // Owner was also pasted – point all dependants to its new ID.
+        // Owner was also pasted – point all dependents to its new ID.
         for (const newId of newIds) {
           try {
             const upd = await API('PUT', '/api/gantt/' + newId, { same_row: newOwner });
@@ -3819,7 +3819,7 @@
           } catch (err) { console.error('Same-row restore failed for pasted entry:', err); }
         }
       } else if (newIds.length > 1) {
-        // Owner was not pasted but multiple dependants share the same old owner:
+        // Owner was not pasted but multiple dependents share the same old owner:
         // promote the first pasted entry as the new row owner and chain the rest to it.
         const groupOwner = newIds[0]; // already created with same_row=null – it IS the owner
         for (let i = 1; i < newIds.length; i++) {
