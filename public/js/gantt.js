@@ -1810,6 +1810,21 @@
     });
     container.appendChild(outputNode);
 
+    // ── Hover: scale the bar to reveal full label text ────────────────────
+    container.addEventListener('mouseenter', () => {
+      if (drag.active) return;
+      // Compute the horizontal scale needed to show the full label.
+      // label.scrollWidth is the natural (unclipped) text width;
+      // (barW - label.offsetWidth) is the space consumed by non-label children
+      // (padding, hours badge, icons, etc.) so we preserve their room.
+      const barW   = container.offsetWidth;
+      const needed = label.scrollWidth + (barW - label.offsetWidth);
+      const sx     = Math.max(1, needed / Math.max(1, barW));
+      const sy     = 1.2;
+      container.style.zIndex    = '10';
+      container.style.transform = 'scaleX(' + sx.toFixed(3) + ') scaleY(' + sy + ')';
+    });
+
     // ── Proximity-based scaling for output node and resize handles ─────────
     container.addEventListener('mousemove', (e) => {
       if (drag.active) return;
@@ -1842,6 +1857,10 @@
     });
     container.addEventListener('mouseleave', () => {
       if (drag.active) return;
+      // Reset hover scale
+      container.style.zIndex    = '';
+      container.style.transform = '';
+      // Reset proximity handles and output node
       if (!outputNode.classList.contains('always-visible')) {
         outputNode.style.transform = 'translateY(-50%) scale(0)';
         outputNode.style.opacity   = '0';
