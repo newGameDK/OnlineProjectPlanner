@@ -167,6 +167,19 @@ try {
   db.exec(`ALTER TABLE gantt_entries ADD COLUMN row_only INTEGER NOT NULL DEFAULT 0`);
 } catch (_) { /* column already exists – ignore */ }
 
+// Milestone / deadline table
+db.exec(`
+CREATE TABLE IF NOT EXISTS gantt_milestones (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '#e53935',
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+`);
+
 // App settings table (key-value store for admin user IDs etc.)
 db.exec(`
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -291,6 +304,13 @@ const stmts = {
   getProjectDeps: db.prepare(`SELECT * FROM gantt_dependencies WHERE project_id=?`),
   deleteDep: db.prepare(`DELETE FROM gantt_dependencies WHERE id=?`),
   getDepsAfter: db.prepare(`SELECT * FROM gantt_dependencies WHERE project_id=? AND created_at>?`),
+
+  // Milestones
+  createMilestone: db.prepare(`INSERT INTO gantt_milestones (id,project_id,date,label,color) VALUES (?,?,?,?,?)`),
+  getMilestone: db.prepare(`SELECT * FROM gantt_milestones WHERE id=?`),
+  getProjectMilestones: db.prepare(`SELECT * FROM gantt_milestones WHERE project_id=? ORDER BY date ASC`),
+  updateMilestone: db.prepare(`UPDATE gantt_milestones SET date=?,label=?,color=? WHERE id=?`),
+  deleteMilestone: db.prepare(`DELETE FROM gantt_milestones WHERE id=?`),
 };
 
 // ---------------------------------------------------------------------------
@@ -850,6 +870,49 @@ app.delete('/api/dependencies/:id', requireAuth, (req, res) => {
   stmts.deleteDep.run(dep.id);
   const teamId = projectTeamId(dep.project_id);
   broadcastToTeam(teamId, { type: 'dep_deleted', dep_id: dep.id, project_id: dep.project_id });
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Milestone routes
+// ---------------------------------------------------------------------------
+
+app.get('/api/milestones/:projectId', requireAuth, (req, res) => {
+  if (!canAccessProject(req.params.projectId, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const milestones = stmts.getProjectMilestones.all(req.params.projectId);
+  res.json({ milestones });
+});
+
+app.post('/api/milestones', requireAuth, (req, res) => {
+  const { project_id, date, label, color } = req.body;
+  if (!project_id || !date) return res.status(400).json({ error: 'Missing required fields' });
+  if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const id = uuidv4();
+  stmts.createMilestone.run(id, project_id, date, label || '', color || '#e53935');
+  const milestone = stmts.getMilestone.get(id);
+  res.json({ milestone });
+});
+
+app.put('/api/milestones/:id', requireAuth, (req, res) => {
+  const existing = stmts.getMilestone.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  const { date, label, color } = req.body;
+  stmts.updateMilestone.run(
+    date  ?? existing.date,
+    label ?? existing.label,
+    color ?? existing.color,
+    existing.id
+  );
+  const milestone = stmts.getMilestone.get(existing.id);
+  res.json({ milestone });
+});
+
+app.delete('/api/milestones/:id', requireAuth, (req, res) => {
+  const existing = stmts.getMilestone.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  stmts.deleteMilestone.run(existing.id);
   res.json({ ok: true });
 });
 

@@ -179,6 +179,19 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 ");
 
+// Milestone / deadline table
+$db->exec("
+CREATE TABLE IF NOT EXISTS gantt_milestones (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '#e53935',
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+");
+
 // Global undo history (not project-scoped; survives team/project deletion)
 $db->exec("
 CREATE TABLE IF NOT EXISTS global_undo_history (
