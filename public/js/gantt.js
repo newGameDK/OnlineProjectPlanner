@@ -4121,8 +4121,9 @@
   // =========================================================================
   async function deleteEntry(entry) {
     if (!confirm('Delete "' + entry.title + '"?')) return;
+    const localSubtreeIds = collectSubtree(entry.id).map(e => e.id);
     const data = await API('DELETE', '/api/gantt/' + entry.id);
-    const deletedIds = new Set(data.deleted_ids || [entry.id]);
+    const deletedIds = new Set(data.deleted_ids || localSubtreeIds);
     S().ganttEntries  = S().ganttEntries.filter(e => !deletedIds.has(e.id));
     S().dependencies  = S().dependencies.filter(
       d => !deletedIds.has(d.source_id) && !deletedIds.has(d.target_id)

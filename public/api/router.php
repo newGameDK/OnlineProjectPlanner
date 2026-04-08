@@ -926,9 +926,24 @@ if ($seg1 === 'gantt') {
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
             $s->execute([uuid_v4(), $existing['project_id'], $userId, 'delete_gantt', json_encode(['entry' => $existing])]);
 
-            $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
-            $s->execute([$ganttId]);
-            json_out(['ok' => true]);
+            // Collect all descendant IDs (BFS) so children are also removed
+            $allIds = [$ganttId];
+            $queue  = [$ganttId];
+            $scChildren = $db->prepare('SELECT id FROM gantt_entries WHERE parent_id=?');
+            while (!empty($queue)) {
+                $parentId = array_shift($queue);
+                $scChildren->execute([$parentId]);
+                foreach ($scChildren->fetchAll(PDO::FETCH_COLUMN) as $childId) {
+                    $allIds[] = $childId;
+                    $queue[]  = $childId;
+                }
+            }
+
+            $sDel = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
+            foreach ($allIds as $idToDel) {
+                $sDel->execute([$idToDel]);
+            }
+            json_out(['ok' => true, 'deleted_ids' => $allIds]);
         }
     }
 }
