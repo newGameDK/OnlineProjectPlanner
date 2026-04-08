@@ -219,7 +219,9 @@ function apply_zip_update($zipFilePath) {
         if (isset($vData['version'])) $newVersion = $vData['version'];
     }
 
-    $protectedPaths = ['api/data/'];
+    $protectedPaths = ['api/data/', 'sounds/'];
+    // Keep sounds-config.json updatable while protecting user-uploaded sound files
+    $protectedExceptions = ['sounds/sounds-config.json'];
     $extracted = 0;
     $skipped   = 0;
 
@@ -234,7 +236,14 @@ function apply_zip_update($zipFilePath) {
         foreach ($protectedPaths as $pp) {
             if (strpos($relativePath, $pp) === 0) { $isProtected = true; break; }
         }
-        if ($isProtected) { $skipped++; continue; }
+        // Allow specific files inside protected directories to be updated
+        if ($isProtected) {
+            $isException = false;
+            foreach ($protectedExceptions as $pe) {
+                if ($relativePath === $pe) { $isException = true; break; }
+            }
+            if (!$isException) { $skipped++; continue; }
+        }
 
         $targetPath = $publicDir . '/' . $relativePath;
         $parentDir = dirname($targetPath);
