@@ -162,6 +162,58 @@
   let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
       ganttTimeline, intensityBarCanvas, intensityBarWrapper, ganttHoursPanel;
 
+  // ── Shared hover tooltip (one element reused by all bars) ─────────────────
+  let _barTooltipEl = null;
+  let _barTooltipX = 0, _barTooltipY = 0; // last known cursor position
+  function _getBarTooltip() {
+    if (!_barTooltipEl) {
+      _barTooltipEl = document.createElement('div');
+      _barTooltipEl.className = 'gantt-bar-tooltip';
+      document.body.appendChild(_barTooltipEl);
+    }
+    return _barTooltipEl;
+  }
+  function _showBarTooltip(entry, color, textColor, clientX, clientY) {
+    _barTooltipX = clientX;
+    _barTooltipY = clientY;
+    const tip = _getBarTooltip();
+    tip.style.background = color;
+    tip.style.color = textColor;
+    const dates = entry.start_date + ' → ' + entry.end_date;
+    const hours = entry.hours_estimate ? (+entry.hours_estimate || 0) + 'h estimated' : '';
+    tip.innerHTML =
+      '<div class="gantt-bar-tooltip-title">' + _esc(entry.title) + '</div>' +
+      '<div class="gantt-bar-tooltip-meta">' + _esc(dates) + (hours ? '&ensp;·&ensp;' + _esc(hours) : '') + '</div>' +
+      (entry.notes ? '<div class="gantt-bar-tooltip-notes">' + _esc(entry.notes) + '</div>' : '');
+    // Position before making visible; recheck after first layout pass
+    _positionBarTooltip(tip, clientX, clientY);
+    tip.classList.add('visible');
+    requestAnimationFrame(() => _positionBarTooltip(tip, _barTooltipX, _barTooltipY));
+  }
+  function _positionBarTooltip(tip, clientX, clientY) {
+    _barTooltipX = clientX;
+    _barTooltipY = clientY;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const offset = 14;
+    const tw = tip.offsetWidth  || 0;
+    const th = tip.offsetHeight || 0;
+    const left = (clientX + offset + tw > vw - 8) ? Math.max(4, clientX - tw - offset) : clientX + offset;
+    const top  = (clientY + offset + th > vh - 8) ? Math.max(4, clientY - th - offset) : clientY + offset;
+    tip.style.left = left + 'px';
+    tip.style.top  = top  + 'px';
+  }
+  function _hideBarTooltip() {
+    if (_barTooltipEl) _barTooltipEl.classList.remove('visible');
+  }
+  function _esc(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   // ── snap indicator lines (two lines: one per edge) ───────────────────────
   let snapLineEl  = null;
   let snapLine2El = null;
@@ -1671,12 +1723,11 @@
     bar.className        = 'gantt-bar' + (isSelected ? ' selected' : '') + (isCompleted ? ' gantt-bar-completed' : '') + (rowHeight > ROW_H ? ' gantt-bar-tall' : '') + (isNarrow ? ' gantt-bar-narrow' : '');
     bar.style.background = color;
     bar.style.width      = '100%';
-    if (U().isColorDark(color)) {
+    const isDark = U().isColorDark(color);
+    if (isDark) {
       bar.style.color = '#fff';
     }
-    bar.title = entry.title + '\n' + entry.start_date + ' \u2192 ' + entry.end_date +
-                (entry.hours_estimate ? '\n' + entry.hours_estimate + 'h estimated' : '') +
-                (entry.notes ? '\n\n' + entry.notes : '');
+    const _barTextColor = isDark ? '#fff' : 'rgba(0,0,0,.75)';
 
     // Label
     const label = document.createElement('span');
@@ -1810,24 +1861,17 @@
     });
     container.appendChild(outputNode);
 
-    // ── Hover: scale the bar to reveal full label text ────────────────────
-    container.addEventListener('mouseenter', () => {
+    // ── Hover: show styled tooltip with full task info ────────────────────
+    container.addEventListener('mouseenter', (e) => {
       if (drag.active) return;
-      // Compute the horizontal scale needed to show the full label.
-      // label.scrollWidth is the natural (unclipped) text width;
-      // (barW - label.offsetWidth) is the space consumed by non-label children
-      // (padding, hours badge, icons, etc.) so we preserve their room.
-      const barW   = container.offsetWidth;
-      const needed = label.scrollWidth + (barW - label.offsetWidth);
-      const sx     = Math.max(1, needed / Math.max(1, barW));
-      const sy     = 1.2;
-      container.style.zIndex    = '10';
-      container.style.transform = 'scaleX(' + sx.toFixed(3) + ') scaleY(' + sy + ')';
+      container.style.zIndex = '10';
+      _showBarTooltip(entry, color, _barTextColor, e.clientX, e.clientY);
     });
 
     // ── Proximity-based scaling for output node and resize handles ─────────
     container.addEventListener('mousemove', (e) => {
       if (drag.active) return;
+      _positionBarTooltip(_getBarTooltip(), e.clientX, e.clientY);
       const rect = bar.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -1857,9 +1901,8 @@
     });
     container.addEventListener('mouseleave', () => {
       if (drag.active) return;
-      // Reset hover scale
-      container.style.zIndex    = '';
-      container.style.transform = '';
+      container.style.zIndex = '';
+      _hideBarTooltip();
       // Reset proximity handles and output node
       if (!outputNode.classList.contains('always-visible')) {
         outputNode.style.transform = 'translateY(-50%) scale(0)';
@@ -1918,7 +1961,8 @@
     bar.addEventListener('dblclick', (e) => {
       if (conn.active) return;
       e.stopPropagation();
-      drillDown(entry);
+      _hideBarTooltip();
+      showEditEntryModal(entry);
     });
     bar.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -2054,6 +2098,8 @@
     barEl.style.cursor     = type === 'move' ? 'grabbing' : 'col-resize';
     document.body.style.cursor    = type === 'move' ? 'grabbing' : 'col-resize';
     document.body.style.userSelect = 'none';
+
+    _hideBarTooltip();
 
     // Disable hover transition during drag to prevent visual jitter
     if (type === 'move') containerEl.style.transition = 'none';
