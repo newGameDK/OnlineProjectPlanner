@@ -3504,6 +3504,9 @@
         { icon: '\u2702',       label: 'Cut '  + selEntries.length + ' tasks', action: () => copySelected(true) },
         clipboardData
           ? { icon: '\uD83D\uDCCB', label: 'Paste below', action: () => pasteEntries(null, entry) }
+          : null,
+        { separator: true },
+        { icon: '\uD83D\uDDD1', label: 'Delete ' + selEntries.length + ' tasks', action: () => deleteSelectedEntries(selEntries), danger: true },
       ].filter(Boolean));
       return;
     }
