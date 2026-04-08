@@ -3503,10 +3503,7 @@
         { icon: '\uD83D\uDCCB', label: 'Copy ' + selEntries.length + ' tasks', action: () => copySelected(false) },
         { icon: '\u2702',       label: 'Cut '  + selEntries.length + ' tasks', action: () => copySelected(true) },
         clipboardData
-          ? { icon: '\uD83D\uDCCB', label: 'Paste below', action: () => pasteEntries(entry.start_date, entry) }
-          : null,
-        { separator: true },
-        { icon: '\uD83D\uDDD1', label: 'Delete ' + selEntries.length + ' tasks', action: () => deleteSelectedEntries(selEntries), danger: true },
+          ? { icon: '\uD83D\uDCCB', label: 'Paste below', action: () => pasteEntries(null, entry) }
       ].filter(Boolean));
       return;
     }
@@ -3533,7 +3530,7 @@
       { icon: '\uD83D\uDCCB', label: 'Copy',            action: () => copyEntry(entry, false) },
       { icon: '\u2702',       label: 'Cut',             action: () => copyEntry(entry, true) },
       clipboardData
-        ? { icon: '\uD83D\uDCCB', label: 'Paste below', action: () => pasteEntries(entry.start_date, entry) }
+        ? { icon: '\uD83D\uDCCB', label: 'Paste below', action: () => pasteEntries(null, entry) }
         : null,
       { separator: true },
       hasSameRow
@@ -3658,6 +3655,20 @@
     let result = [Object.assign({}, entry)];
     const children = S().ganttEntries.filter(e => e.parent_id === entryId);
     children.forEach(child => { result = result.concat(collectSubtree(child.id)); });
+    // Also collect entries that share a row with any collected entry.
+    // These may have a parent_id outside the subtree (e.g. created from a higher view level).
+    const collectedIds = new Set(result.map(e => e.id));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      S().ganttEntries.forEach(e => {
+        if (e.same_row && collectedIds.has(e.same_row) && !collectedIds.has(e.id)) {
+          result.push(Object.assign({}, e));
+          collectedIds.add(e.id);
+          changed = true;
+        }
+      });
+    }
     return result;
   }
 
@@ -3696,7 +3707,7 @@
     if (sel.length > 0 && lastClickedId) {
       const afterEntry = S().ganttEntries.find(e => e.id === lastClickedId);
       if (afterEntry) {
-        pasteEntries(afterEntry.start_date, afterEntry);
+        pasteEntries(null, afterEntry);
         return;
       }
     }
@@ -3705,14 +3716,14 @@
 
   /**
    * Paste copied/cut entries.
-   * @param {string} pasteStartDate - ISO date string to align the first root entry's start to.
+   * @param {string|null} pasteStartDate - ISO date string to align the first root entry's start to.
+   *   Pass null to preserve the original dates of all pasted entries unchanged.
    * @param {object|null} afterEntry - If provided, pasted root entries become siblings of this
    *   entry, inserted immediately after it in the sort order.
    */
   async function pasteEntries(pasteStartDate, afterEntry = null) {
     if (!clipboardData || !S().currentProject) return;
     const { entries, rootIds, cut } = clipboardData;
-    const pasteStart = parseDate(pasteStartDate);
     const idMap = {}; // old id → new id
     const newRootIds = []; // new IDs of pasted root entries, for reorder-after
     const sameRowUpdates = []; // { newId, oldSameRow } – applied after all entries are created
@@ -3741,10 +3752,14 @@
         const allDates = tempSorted.map(e => parseDate(e.start_date)).filter(Boolean);
         rootStart = allDates.length
           ? new Date(Math.min(...allDates.map(d => d.getTime())))
-          : pasteStart;
+          : null;
       }
-      if (!overallEarliestStart || rootStart < overallEarliestStart) overallEarliestStart = rootStart;
+      if (rootStart && (!overallEarliestStart || rootStart < overallEarliestStart)) overallEarliestStart = rootStart;
     }
+
+    // If pasteStartDate is null, preserve original dates (offset = 0).
+    // Otherwise align the group so the earliest root starts at pasteStartDate.
+    const pasteStart = pasteStartDate ? parseDate(pasteStartDate) : (overallEarliestStart || new Date());
     const sharedDayOffset = overallEarliestStart ? daysBetween(overallEarliestStart, pasteStart) : 0;
 
     for (const rootId of (rootIds || [])) {
@@ -3760,11 +3775,22 @@
         entries.filter(x => x.parent_id === id).forEach(c => addSorted(c.id));
       };
       addSorted(rootId);
+      // Also include any entries not reachable via parent_id traversal (e.g. same_row
+      // entries whose parent_id is outside this subtree).
+      for (const e of entries) {
+        if (!sorted.includes(e)) sorted.push(e);
+      }
 
       for (const e of sorted) {
+        if (e.id in idMap) continue; // already created in a prior root's iteration
+        // Determine parent: root entries go to pasteParentId; children of pasted entries
+        // use their new mapped parent; same_row extras whose original parent_id wasn't in
+        // the copied set also fall back to pasteParentId so they land at the paste level.
         const newParentId = e.id === rootId
           ? pasteParentId
-          : (idMap[e.parent_id] !== undefined ? idMap[e.parent_id] : null);
+          : (e.parent_id != null && e.parent_id in idMap
+              ? idMap[e.parent_id]
+              : (e.parent_id == null ? pasteParentId : null));
         const rawStart = parseDate(e.start_date);
         const rawEnd   = parseDate(e.end_date);
         const newStart = rawStart ? toDateStr(addDays(rawStart, sharedDayOffset)) : toDateStr(pasteStart);
