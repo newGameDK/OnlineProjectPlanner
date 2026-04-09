@@ -350,6 +350,24 @@ function setupEventListeners() {
     });
   })();
 
+  // Clean orphaned tasks button
+  (function initCleanupOrphansBtn() {
+    const btn = document.getElementById('cleanupOrphansBtn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (!state.currentProject) return alert('No project selected.');
+      if (!confirm('This will permanently delete all hidden orphaned tasks (tasks whose parent no longer exists) from the current project.\n\nContinue?')) return;
+      try {
+        const res = await api('POST', `/api/gantt/${state.currentProject.id}/cleanup-orphans`);
+        const n = res.deleted || 0;
+        alert(n > 0 ? `Cleaned up ${n} orphaned task(s).` : 'No orphaned tasks found.');
+        if (n > 0) window.ganttModule?.init();
+      } catch (err) {
+        alert('Cleanup failed: ' + err.message);
+      }
+    });
+  })();
+
   // Enable snap checkbox
   (function initSnapEnabledCheckbox() {
     const checkbox = document.getElementById('settingsSnapEnabled');
