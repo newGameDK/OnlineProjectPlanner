@@ -4205,7 +4205,7 @@
     const d = new Date(date); d.setDate(d.getDate() + days); return d;
   }
   function daysBetween(a, b) {
-    return Math.floor((b - a) / 86400000);
+    return Math.round((b - a) / 86400000);
   }
   // Returns the minimum pxPerDay at which the full chart range fits in the
   // visible timeline area – used as the lower bound when zooming out.
