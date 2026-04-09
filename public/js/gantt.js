@@ -3092,7 +3092,7 @@
     const capacity = S().currentTeam ? S().currentTeam.capacity_hours_month : 160;
 
     entries.forEach(entry => {
-      const total = calcTotalHours(entry.id);
+      const total = calcViewTotal(entry.id);
 
       const row = document.createElement('div');
       row.className = 'gantt-hours-row' + (total > 0 ? ' has-hours' : '');
@@ -3260,8 +3260,8 @@
       ctx.fillStyle = 'rgba(' + r + ',' + g + ',0,' + a + ')';
       ctx.fillRect(ps * pxPerDay, 0, daysInPeriod * pxPerDay, H - 4);
       if (hours > 0 && daysInPeriod * pxPerDay > 30) {
-        ctx.fillStyle = ratio > 0.8 ? '#b71c1c' : '#2e7d32';
-        ctx.font      = 'bold 9px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.font      = 'bold 11px sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText(Math.round(ratio * 100) + '%', (ps + daysInPeriod / 2) * pxPerDay, H - 6);
       }
