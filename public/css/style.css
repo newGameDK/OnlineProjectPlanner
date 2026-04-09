@@ -587,7 +587,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
    ===================================================================== */
 /* Diamond marker in the ruler */
 .gantt-milestone-marker {
-  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  position: absolute; bottom: 0; transform: translate(-50%, 50%);
   width: 11px; height: 11px;
   clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
   z-index: 6; pointer-events: none;
