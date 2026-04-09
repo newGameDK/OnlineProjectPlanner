@@ -3106,12 +3106,13 @@
     });
 
     // Update panel header with view total (only root-level visible entries
-    // to avoid double-counting inline-expanded children).
+    // to avoid double-counting inline-expanded children).  Uses calcViewTotal
+    // so that orphaned same-row entries are included in the total.
     const header = document.getElementById('ganttHoursHeader');
     if (header) {
       const t = entries
         .filter(e => (e._depth || 0) === 0)
-        .reduce((sum, e) => sum + calcTreeTotal(e.id), 0);
+        .reduce((sum, e) => sum + calcViewTotal(e.id), 0);
       header.textContent = t > 0 ? fmtH(t) : 'Total h';
       header.title       = t > 0 ? fmtH(t) + ' total hours in this view' : 'Total hours';
     }
@@ -3162,6 +3163,32 @@
     if (children.length === 0) return +(entry.hours_estimate) || 0;
     let childSum = 0;
     children.forEach(child => { childSum += calcTreeTotal(child.id); });
+    return Math.max(+(entry.hours_estimate) || 0, childSum);
+  }
+
+  /**
+   * Like calcTreeTotal but also includes orphaned same-row entries.
+   *
+   * When a subtask is shared onto its parent's row via finishShareRow(),
+   * parent_id is cleared to prevent date-stretching side-effects.  This
+   * breaks the parent_id chain that calcTreeTotal relies on.  calcViewTotal
+   * re-attributes those entries through the same_row link so the header
+   * total correctly reflects all hours in the view.
+   */
+  function calcViewTotal(entryId) {
+    const entry = S().ganttEntries.find(e => e.id === entryId);
+    if (!entry) return 0;
+    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
+    // Include same-row entries whose parent_id was cleared (orphaned) or
+    // still points to the drill-down root (effectively root-level).
+    const sameRowOrphans = S().ganttEntries.filter(e =>
+      e.same_row === entryId && e.parent_id !== entryId &&
+      (!e.parent_id || e.parent_id === currentParentId)
+    );
+    const allChildren = children.concat(sameRowOrphans);
+    if (allChildren.length === 0) return +(entry.hours_estimate) || 0;
+    let childSum = 0;
+    allChildren.forEach(child => { childSum += calcViewTotal(child.id); });
     return Math.max(+(entry.hours_estimate) || 0, childSum);
   }
 

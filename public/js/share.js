@@ -512,7 +512,7 @@ function renderHoursPanel(entries) {
 
   const header = document.getElementById('ganttHoursHeader');
   if (header) {
-    const t = entries.reduce((sum, e) => sum + calcTreeTotal(e.id), 0);
+    const t = entries.reduce((sum, e) => sum + calcViewTotal(e.id), 0);
     header.textContent = t > 0 ? fmtH(t) : 'Total h';
   }
 }
@@ -542,6 +542,27 @@ function calcTreeTotal(entryId) {
   if (children.length === 0) return entry.hours_estimate || 0;
   let childSum = 0;
   children.forEach(c => { childSum += calcTreeTotal(c.id); });
+  return Math.max(entry.hours_estimate || 0, childSum);
+}
+
+/**
+ * Like calcTreeTotal but also includes orphaned same-row entries.
+ * When a subtask is shared onto its parent's row, parent_id is cleared.
+ * This re-attributes those entries through the same_row link so the header
+ * total correctly reflects all hours.
+ */
+function calcViewTotal(entryId) {
+  const entry = S.entries.find(e => e.id === entryId);
+  if (!entry) return 0;
+  const children = S.entries.filter(e => e.parent_id === entryId);
+  const sameRowOrphans = S.entries.filter(e =>
+    e.same_row === entryId && e.parent_id !== entryId &&
+    (!e.parent_id || e.parent_id === currentParentId)
+  );
+  const allChildren = children.concat(sameRowOrphans);
+  if (allChildren.length === 0) return entry.hours_estimate || 0;
+  let childSum = 0;
+  allChildren.forEach(c => { childSum += calcViewTotal(c.id); });
   return Math.max(entry.hours_estimate || 0, childSum);
 }
 
