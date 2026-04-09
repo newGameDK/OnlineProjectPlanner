@@ -3124,29 +3124,11 @@
     return +(entry.hours_estimate) || 0;
   }
 
-  /** Returns the entry's own hours_estimate (no child aggregation). */
-  function calcTreeTotal(entryId) {
-    const entry = S().ganttEntries.find(e => e.id === entryId);
-    if (!entry) return 0;
-    return +(entry.hours_estimate) || 0;
-  }
-
-  /** Returns the entry's own hours_estimate (no child aggregation). */
-  function calcViewTotal(entryId) {
-    const entry = S().ganttEntries.find(e => e.id === entryId);
-    if (!entry) return 0;
-    return +(entry.hours_estimate) || 0;
-  }
-
-  /**
-   * Per-row hours for the TOTAL H panel.
-   * Returns the entry's own hours_estimate; sub-tasks do not affect this value.
-   */
-  function calcRemainingHours(entryId) {
-    const entry = S().ganttEntries.find(e => e.id === entryId);
-    if (!entry) return 0;
-    return +(entry.hours_estimate) || 0;
-  }
+  // calcTreeTotal, calcViewTotal, and calcRemainingHours are kept as aliases so
+  // that call-sites throughout the module continue to work without change.
+  function calcTreeTotal(entryId)     { return calcTotalHours(entryId); }
+  function calcViewTotal(entryId)     { return calcTotalHours(entryId); }
+  function calcRemainingHours(entryId) { return calcTotalHours(entryId); }
 
   function fmtH(h) {
     h = +h || 0;
