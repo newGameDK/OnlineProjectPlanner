@@ -981,6 +981,50 @@ if ($seg1 === 'gantt') {
 }
 
 // =========================================================================
+// GANTT CLEANUP-ORPHANS ROUTE
+// =========================================================================
+
+if ($seg1 === 'gantt' && $seg2 && $seg3 === 'cleanup-orphans' && $method === 'POST') {
+    $userId = require_auth();
+    $projectId = $seg2;
+    if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
+
+    // Iteratively delete entries whose parent_id references a non-existent
+    // entry in the same project, mirroring the client-side sanitizeEntries().
+    // Each pass may expose new orphans (former children of deleted entries),
+    // so we repeat until no orphans remain.
+    $deletedCount = 0;
+    $stmtClearSameRow = $db->prepare('UPDATE gantt_entries SET same_row=NULL WHERE same_row=?');
+    $stmtDelete       = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
+    $stmtFindOrphans  = $db->prepare(
+        'SELECT id FROM gantt_entries
+         WHERE project_id=?
+           AND parent_id IS NOT NULL
+           AND parent_id NOT IN (SELECT id FROM gantt_entries WHERE project_id=?)'
+    );
+    do {
+        $stmtFindOrphans->execute([$projectId, $projectId]);
+        $orphanIds = $stmtFindOrphans->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($orphanIds as $oid) {
+            $stmtClearSameRow->execute([$oid]);
+            $stmtDelete->execute([$oid]);
+            $deletedCount++;
+        }
+    } while (!empty($orphanIds));
+
+    // Fix stale same_row references that point to now-missing entries.
+    $s = $db->prepare(
+        'UPDATE gantt_entries SET same_row=NULL
+         WHERE project_id=?
+           AND same_row IS NOT NULL
+           AND same_row NOT IN (SELECT id FROM gantt_entries WHERE project_id=?)'
+    );
+    $s->execute([$projectId, $projectId]);
+
+    json_out(['deleted' => $deletedCount]);
+}
+
+// =========================================================================
 // GANTT REORDER ROUTE
 // =========================================================================
 

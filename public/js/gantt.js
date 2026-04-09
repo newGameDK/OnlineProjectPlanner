@@ -3092,16 +3092,25 @@
     const capacity = S().currentTeam ? S().currentTeam.capacity_hours_month : 160;
 
     entries.forEach(entry => {
-      const total = calcViewTotal(entry.id);
+      const remaining = calcRemainingHours(entry.id);
+      const children = S().ganttEntries.filter(e => e.parent_id === entry.id);
+      const own = +(entry.hours_estimate) || 0;
 
       const row = document.createElement('div');
-      row.className = 'gantt-hours-row' + (total > 0 ? ' has-hours' : '');
+      row.className = 'gantt-hours-row' + (remaining > 0 ? ' has-hours' : '');
       row.style.height = getEntryRowHeight(entry) + 'px';
-      if (total > capacity) row.classList.add('overloaded');
-      row.textContent = total > 0 ? fmtH(total) : '\u2014';
-      row.title = total > 0
-        ? fmtH(total) + ' total (incl. sub-tasks)'
-        : 'No hours estimated';
+      if (remaining > capacity) row.classList.add('overloaded');
+      row.textContent = remaining > 0 ? fmtH(remaining) : '\u2014';
+      if (remaining > 0) {
+        if (own > 0 && children.length > 0) {
+          const used = own - remaining;
+          row.title = fmtH(remaining) + ' remaining of ' + fmtH(own) + ' budget (' + fmtH(used) + ' used by sub-tasks)';
+        } else {
+          row.title = fmtH(remaining) + ' estimated';
+        }
+      } else {
+        row.title = 'No hours estimated';
+      }
       ganttHoursPanel.appendChild(row);
     });
 
@@ -3198,6 +3207,39 @@
     let childSum = 0;
     allChildren.forEach(child => { childSum += calcViewTotal(child.id); });
     return Math.max(own, childSum);
+  }
+
+  /**
+   * Per-row hours for the TOTAL H panel.
+   * When an entry has its own budget (hours_estimate > 0) this returns the
+   * *remaining* hours (own minus all child allocations), so the column shows
+   * how much of the parent's budget is still unallocated.
+   * Entries without a budget show the sum of their children's remaining hours.
+   * Same-row orphans (parent_id cleared by finishShareRow) are included via
+   * the same_row link, matching the behaviour of calcViewTotal.
+   */
+  function calcRemainingHours(entryId) {
+    const entry = S().ganttEntries.find(e => e.id === entryId);
+    if (!entry) return 0;
+    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
+    const sameRowOrphans = S().ganttEntries.filter(e =>
+      e.same_row === entryId && e.parent_id !== entryId &&
+      (!e.parent_id || e.parent_id === currentParentId)
+    );
+    const allChildren = children.concat(sameRowOrphans);
+    if (allChildren.length === 0) {
+      return +(entry.hours_estimate) || 0;
+    }
+    const own = +(entry.hours_estimate) || 0;
+    if (own > 0) {
+      let childTotal = 0;
+      allChildren.forEach(child => { childTotal += calcTreeTotal(child.id); });
+      return Math.max(0, own - childTotal);
+    }
+    if (+entry.hours_set) return 0;
+    let childSum = 0;
+    allChildren.forEach(child => { childSum += calcRemainingHours(child.id); });
+    return childSum;
   }
 
   function fmtH(h) {
