@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS gantt_entries (
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
   hours_estimate REAL NOT NULL DEFAULT 0,
+  hours_set INTEGER NOT NULL DEFAULT 0,
   color_variation INTEGER NOT NULL DEFAULT 0,
   user_id TEXT NOT NULL,
   position INTEGER NOT NULL DEFAULT 0,
@@ -169,6 +170,12 @@ try {
 // Migration: add row-only flag (category rows without visible bars)
 try {
     $db->exec("ALTER TABLE gantt_entries ADD COLUMN row_only INTEGER NOT NULL DEFAULT 0");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
+// Migration: track whether hours_estimate was explicitly set (1) or left blank (0).
+// Distinguishes an intentional 0-hour budget from "no budget entered".
+try {
+    $db->exec("ALTER TABLE gantt_entries ADD COLUMN hours_set INTEGER NOT NULL DEFAULT 0");
 } catch (Exception $e) { /* column already exists – ignore */ }
 
 // App settings table (admin user IDs etc.)

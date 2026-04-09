@@ -3144,6 +3144,8 @@
       children.forEach(child => { childTotal += calcTreeTotal(child.id); });
       return Math.max(0, own - childTotal);
     }
+    // hours_set=1 with own=0 means explicitly zero budget – return 0.
+    if (+entry.hours_set) return 0;
     // No budget on parent: show sum of children's displayed hours
     let childSum = 0;
     children.forEach(child => { childSum += calcTotalHours(child.id); });
@@ -3159,11 +3161,14 @@
   function calcTreeTotal(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
+    const own = +(entry.hours_estimate) || 0;
     const children = S().ganttEntries.filter(e => e.parent_id === entryId);
-    if (children.length === 0) return +(entry.hours_estimate) || 0;
+    if (children.length === 0) return own;
+    // Explicitly set budget (including 0): claim exactly own hours from parent.
+    if (+entry.hours_set) return own;
     let childSum = 0;
     children.forEach(child => { childSum += calcTreeTotal(child.id); });
-    return Math.max(+(entry.hours_estimate) || 0, childSum);
+    return Math.max(own, childSum);
   }
 
   /**
@@ -3178,6 +3183,7 @@
   function calcViewTotal(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
+    const own = +(entry.hours_estimate) || 0;
     const children = S().ganttEntries.filter(e => e.parent_id === entryId);
     // Include same-row entries whose parent_id was cleared (orphaned) or
     // still points to the drill-down root (effectively root-level).
@@ -3186,10 +3192,12 @@
       (!e.parent_id || e.parent_id === currentParentId)
     );
     const allChildren = children.concat(sameRowOrphans);
-    if (allChildren.length === 0) return +(entry.hours_estimate) || 0;
+    if (allChildren.length === 0) return own;
+    // Explicitly set budget (including 0): return own only (don't aggregate children).
+    if (+entry.hours_set) return own;
     let childSum = 0;
     allChildren.forEach(child => { childSum += calcViewTotal(child.id); });
-    return Math.max(+(entry.hours_estimate) || 0, childSum);
+    return Math.max(own, childSum);
   }
 
   function fmtH(h) {
@@ -3675,7 +3683,7 @@
           '<input type="date" id="feEnd" value="' + (entry.end_date || '') + '"></div>' +
       '</div>' +
       '<div class="form-group"><label>Hours Estimate</label>' +
-        '<input type="number" id="feHours" value="' + (entry.hours_estimate || '') + '" min="0" step="0.5" placeholder="0">' +
+        '<input type="number" id="feHours" value="' + (entry.hours_set ? (entry.hours_estimate || 0) : '') + '" min="0" step="0.5" placeholder="0">' +
         childHoursHtml +
       '</div>' +
       colorPickerHtml +
@@ -3723,6 +3731,7 @@
       start_date:      (document.getElementById('feStart') && document.getElementById('feStart').value) || '',
       end_date:        (document.getElementById('feEnd')   && document.getElementById('feEnd').value)   || '',
       hours_estimate:  parseFloat((document.getElementById('feHours') && document.getElementById('feHours').value)) || 0,
+      hours_set:       (document.getElementById('feHours') && document.getElementById('feHours').value !== '') ? 1 : 0,
       color_variation: parseInt((document.getElementById('feColorVar') && document.getElementById('feColorVar').value)) || 0,
       notes:           (document.getElementById('feNotes') && document.getElementById('feNotes').value) || '',
       folder_url:      folderUrl,
