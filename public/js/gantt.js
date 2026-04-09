@@ -3092,31 +3092,18 @@
     const capacity = S().currentTeam ? S().currentTeam.capacity_hours_month : 160;
 
     entries.forEach(entry => {
-      const remaining = calcRemainingHours(entry.id);
-      const children = S().ganttEntries.filter(e => e.parent_id === entry.id);
-      const own = +(entry.hours_estimate) || 0;
+      const h = calcRemainingHours(entry.id);
 
       const row = document.createElement('div');
-      row.className = 'gantt-hours-row' + (remaining > 0 ? ' has-hours' : '');
+      row.className = 'gantt-hours-row' + (h > 0 ? ' has-hours' : '');
       row.style.height = getEntryRowHeight(entry) + 'px';
-      if (remaining > capacity) row.classList.add('overloaded');
-      row.textContent = remaining > 0 ? fmtH(remaining) : '\u2014';
-      if (remaining > 0) {
-        if (own > 0 && children.length > 0) {
-          const used = own - remaining;
-          row.title = fmtH(remaining) + ' remaining of ' + fmtH(own) + ' budget (' + fmtH(used) + ' used by sub-tasks)';
-        } else {
-          row.title = fmtH(remaining) + ' estimated';
-        }
-      } else {
-        row.title = 'No hours estimated';
-      }
+      if (h > capacity) row.classList.add('overloaded');
+      row.textContent = h > 0 ? fmtH(h) : '\u2014';
+      row.title = h > 0 ? fmtH(h) + ' estimated' : 'No hours estimated';
       ganttHoursPanel.appendChild(row);
     });
 
-    // Update panel header with view total (only root-level visible entries
-    // to avoid double-counting inline-expanded children).  Uses calcViewTotal
-    // so that orphaned same-row entries are included in the total.
+    // Update panel header with view total (sum of root-level visible entries' own hours).
     const header = document.getElementById('ganttHoursHeader');
     if (header) {
       const t = entries
@@ -3128,118 +3115,37 @@
   }
 
   /**
-   * Recursively sum hours for an entry and all its descendants
-   * (regardless of what sub-chart level is currently visible).
-   *
-   * Returns the *remaining* budget for entries that have their own
-   * hours_estimate set: remaining = own - sum_of_children_allocations.
-   * "Child allocation" is calcTreeTotal (the full budget claimed by a
-   * child subtree), NOT calcTotalHours of the child, to prevent
-   * double-subtracting nested budgets.
+   * Hours for an entry: always returns the entry's own hours_estimate.
+   * Sub-tasks do not affect the parent's hours.
    */
   function calcTotalHours(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
-    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
-    if (children.length === 0) {
-      // Leaf task: count own hours only
-      return +(entry.hours_estimate) || 0;
-    }
-    const own = +(entry.hours_estimate) || 0;
-    if (own > 0) {
-      // Parent has an hour budget: subtract each child's total allocation
-      // (use calcTreeTotal so nested sub-budgets aren't double-counted).
-      let childTotal = 0;
-      children.forEach(child => { childTotal += calcTreeTotal(child.id); });
-      return Math.max(0, own - childTotal);
-    }
-    // hours_set=1 with own=0 means explicitly zero budget – return 0.
-    if (+entry.hours_set) return 0;
-    // No budget on parent: show sum of children's displayed hours
-    let childSum = 0;
-    children.forEach(child => { childSum += calcTotalHours(child.id); });
-    return childSum;
+    return +(entry.hours_estimate) || 0;
   }
 
-  /**
-   * Total hours for an entire tree (parent budget or child sum, whichever is
-   * larger). Used for the header "Total h" so the number reflects the full
-   * project scope instead of only the remaining budget.  When a parent has
-   * no budget (hours_estimate is 0 or null) the child sum is returned.
-   */
+  /** Returns the entry's own hours_estimate (no child aggregation). */
   function calcTreeTotal(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
-    const own = +(entry.hours_estimate) || 0;
-    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
-    if (children.length === 0) return own;
-    // Explicitly set budget (including 0): claim exactly own hours from parent.
-    if (+entry.hours_set) return own;
-    let childSum = 0;
-    children.forEach(child => { childSum += calcTreeTotal(child.id); });
-    return Math.max(own, childSum);
+    return +(entry.hours_estimate) || 0;
   }
 
-  /**
-   * Like calcTreeTotal but also includes orphaned same-row entries.
-   *
-   * When a subtask is shared onto its parent's row via finishShareRow(),
-   * parent_id is cleared to prevent date-stretching side-effects.  This
-   * breaks the parent_id chain that calcTreeTotal relies on.  calcViewTotal
-   * re-attributes those entries through the same_row link so the header
-   * total correctly reflects all hours in the view.
-   */
+  /** Returns the entry's own hours_estimate (no child aggregation). */
   function calcViewTotal(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
-    const own = +(entry.hours_estimate) || 0;
-    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
-    // Include same-row entries whose parent_id was cleared (orphaned) or
-    // still points to the drill-down root (effectively root-level).
-    const sameRowOrphans = S().ganttEntries.filter(e =>
-      e.same_row === entryId && e.parent_id !== entryId &&
-      (!e.parent_id || e.parent_id === currentParentId)
-    );
-    const allChildren = children.concat(sameRowOrphans);
-    if (allChildren.length === 0) return own;
-    // Explicitly set budget (including 0): return own only (don't aggregate children).
-    if (+entry.hours_set) return own;
-    let childSum = 0;
-    allChildren.forEach(child => { childSum += calcViewTotal(child.id); });
-    return Math.max(own, childSum);
+    return +(entry.hours_estimate) || 0;
   }
 
   /**
    * Per-row hours for the TOTAL H panel.
-   * When an entry has its own budget (hours_estimate > 0) this returns the
-   * *remaining* hours (own minus all child allocations), so the column shows
-   * how much of the parent's budget is still unallocated.
-   * Entries without a budget show the sum of their children's remaining hours.
-   * Same-row orphans (parent_id cleared by finishShareRow) are included via
-   * the same_row link, matching the behaviour of calcViewTotal.
+   * Returns the entry's own hours_estimate; sub-tasks do not affect this value.
    */
   function calcRemainingHours(entryId) {
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
-    const children = S().ganttEntries.filter(e => e.parent_id === entryId);
-    const sameRowOrphans = S().ganttEntries.filter(e =>
-      e.same_row === entryId && e.parent_id !== entryId &&
-      (!e.parent_id || e.parent_id === currentParentId)
-    );
-    const allChildren = children.concat(sameRowOrphans);
-    if (allChildren.length === 0) {
-      return +(entry.hours_estimate) || 0;
-    }
-    const own = +(entry.hours_estimate) || 0;
-    if (own > 0) {
-      let childTotal = 0;
-      allChildren.forEach(child => { childTotal += calcTreeTotal(child.id); });
-      return Math.max(0, own - childTotal);
-    }
-    if (+entry.hours_set) return 0;
-    let childSum = 0;
-    allChildren.forEach(child => { childSum += calcRemainingHours(child.id); });
-    return childSum;
+    return +(entry.hours_estimate) || 0;
   }
 
   function fmtH(h) {
@@ -3262,10 +3168,6 @@
     ctx.clearRect(0, 0, timelineW, H);
 
     const hoursPerDay = new Float64Array(totalDays + 1);
-    // Build a set of entry IDs that have children so we can handle
-    // parent budget remaining vs leaf hours correctly.
-    const parentIdsSet = new Set();
-    S().ganttEntries.forEach(e => { if (e.parent_id) parentIdsSet.add(e.parent_id); });
     // Build a set of all valid entry IDs to detect orphaned same_row references.
     const validEntryIds = new Set(S().ganttEntries.map(e => e.id));
 
@@ -3274,15 +3176,8 @@
       // Skip entries whose same_row target was deleted but not cleaned up yet
       // (they are invisible in the task list but would inflate the intensity bar).
       if (entry.same_row && !validEntryIds.has(entry.same_row)) return;
-      const isParent = parentIdsSet.has(entry.id);
-      let h;
-      if (isParent) {
-        // Parent with budget: only spread the remaining (budget − children) hours
-        h = calcTotalHours(entry.id);          // already clamped to ≥ 0
-        if (h <= 0) return;                    // children consumed the whole budget
-      } else {
-        h = +(entry.hours_estimate);
-      }
+      const h = +(entry.hours_estimate);
+      if (h <= 0) return;
       const s  = parseDate(entry.start_date);
       const en = parseDate(entry.end_date);
       if (!s || !en) return;
@@ -3686,26 +3581,8 @@
           '<input type="hidden" id="feColorVar" value="' + (entry.color_variation || 0) + '">' +
         '</div>';
 
-    // For parent entries: compute child hours and show a hint below the hours input
-    const childEntries = entry.id ? S().ganttEntries.filter(e => e.parent_id === entry.id) : [];
-    let childHoursHtml = '';
-    if (childEntries.length > 0) {
-      let childSum = 0;
-      childEntries.forEach(c => { childSum += calcTotalHours(c.id); });
-      if (childSum > 0) {
-        const own = +(entry.hours_estimate) || 0;
-        if (own > 0) {
-          const remaining = Math.max(0, own - childSum);
-          childHoursHtml = '<small style="color:var(--text-muted);font-size:11px;margin-top:3px;display:block">' +
-            'Sub-tasks use ' + fmtH(childSum) + ' \u2014 ' + fmtH(remaining) + ' remaining of your ' + fmtH(own) + ' budget' +
-            '</small>';
-        } else {
-          childHoursHtml = '<small style="color:var(--text-muted);font-size:11px;margin-top:3px;display:block">' +
-            'Sub-tasks total: ' + fmtH(childSum) +
-            '</small>';
-        }
-      }
-    }
+    // No subtask-hours hint: each task's hours are independent.
+    const childHoursHtml = '';
 
     return '<div class="form-group">' +
       '<label>Title</label>' +
