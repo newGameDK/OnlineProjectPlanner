@@ -683,6 +683,10 @@ async function deleteSelectedGanttEntries() {
     }
   }
   state.ganttEntries = state.ganttEntries.filter(e => !deletedIds.has(e.id));
+  // Clear stale same_row references pointing to any deleted entry.
+  state.ganttEntries.forEach(e => {
+    if (e.same_row && deletedIds.has(e.same_row)) e.same_row = null;
+  });
   state.selectedGanttIds.clear();
   updateDeleteBtn();
   window.ganttModule?.render();

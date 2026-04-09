@@ -3130,9 +3130,14 @@
     // parent budget remaining vs leaf hours correctly.
     const parentIdsSet = new Set();
     S().ganttEntries.forEach(e => { if (e.parent_id) parentIdsSet.add(e.parent_id); });
+    // Build a set of all valid entry IDs to detect orphaned same_row references.
+    const validEntryIds = new Set(S().ganttEntries.map(e => e.id));
 
     S().ganttEntries.forEach(entry => {
       if (!entry.hours_estimate) return;
+      // Skip entries whose same_row target was deleted but not cleaned up yet
+      // (they are invisible in the task list but would inflate the intensity bar).
+      if (entry.same_row && !validEntryIds.has(entry.same_row)) return;
       const isParent = parentIdsSet.has(entry.id);
       let h;
       if (isParent) {
@@ -4127,6 +4132,11 @@
     S().dependencies  = S().dependencies.filter(
       d => !deletedIds.has(d.source_id) && !deletedIds.has(d.target_id)
     );
+    // Clear stale same_row references pointing to any deleted entry so they
+    // don't become invisible orphans that still inflate the intensity bar.
+    S().ganttEntries.forEach(e => {
+      if (e.same_row && deletedIds.has(e.same_row)) e.same_row = null;
+    });
     deletedIds.forEach(id => S().selectedGanttIds.delete(id));
     U().updateDeleteBtn();
     U().updateUndoRedoBtns?.();

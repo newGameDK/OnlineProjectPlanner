@@ -775,6 +775,11 @@ app.delete('/api/gantt/:id', requireAuth, (req, res) => {
     JSON.stringify({ entry: existing, descendants: subtreeEntries.filter(e => e.id !== existing.id) }));
 
   // Delete all (deepest first to keep things tidy, though no FK enforces order)
+  // First, clear same_row references pointing to any deleted entry so those
+  // entries become independent visible rows instead of invisible orphans.
+  subtreeIds.forEach(id => {
+    db.prepare(`UPDATE gantt_entries SET same_row=NULL WHERE same_row=?`).run(id);
+  });
   for (let i = subtreeIds.length - 1; i >= 0; i--) {
     stmts.deleteGantt.run(subtreeIds[i]);
   }
@@ -1113,6 +1118,10 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
       // Save undo action so user can undo this redo
       stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_gantt',
         JSON.stringify({ entry: currentEntry, descendants: redoSubtreeEntries.filter(x => x.id !== e.id) }));
+      // Clear same_row references before deleting
+      redoSubtreeIds.forEach(id => {
+        db.prepare(`UPDATE gantt_entries SET same_row=NULL WHERE same_row=?`).run(id);
+      });
       for (let i = redoSubtreeIds.length - 1; i >= 0; i--) {
         stmts.deleteGantt.run(redoSubtreeIds[i]);
       }
@@ -1121,7 +1130,7 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
         broadcastToTeam(teamId, { type: 'gantt_deleted', entry_id: id, project_id: req.params.projectId });
       });
     }
-    result = { redone: 'delete_gantt', entry_id: e.id };
+    result = { redone: 'delete_gantt', deleted_ids: redoSubtreeIds ?? [e.id], entry_id: e.id };
   } else if (redoAction.action_type === 'reorder_gantt') {
     // Redo reorder = re-apply the stored positions; save current positions to undo
     const { positions: redoPositions } = data;
