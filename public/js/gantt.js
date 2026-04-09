@@ -56,6 +56,55 @@
   // rowYMap: entryId -> Y-center position in px (accounts for variable row heights)
   let rowYMap = {};
   let timelineContextRowId = null;
+  let _sanitizeIntervalId = null; // periodic recalculation timer
+
+  // ─── Sanitize entries ────────────────────────────────────────────────────
+  // Remove orphaned entries whose parent no longer exists (cascade), and
+  // clear stale same_row references.  This ensures hours always reflect
+  // exactly what the user can see.
+  function sanitizeEntries() {
+    const state = S();
+    if (!state || !state.ganttEntries) return false;
+
+    let changed = false;
+
+    // 1. Detect orphaned entries (parent_id points to a non-existent entry).
+    //    These are remnants of subtree deletions that didn't fully propagate.
+    //    Remove them recursively (their children are orphans too).
+    let removedThisPass;
+    do {
+      removedThisPass = false;
+      const currentIds = new Set(state.ganttEntries.map(e => e.id));
+      const toRemove = new Set();
+      state.ganttEntries.forEach(e => {
+        if (e.parent_id && !currentIds.has(e.parent_id)) {
+          // parent_id doesn't reference currentParentId (drill-down root) either
+          if (e.parent_id !== currentParentId) {
+            toRemove.add(e.id);
+          }
+        }
+      });
+      if (toRemove.size > 0) {
+        state.ganttEntries = state.ganttEntries.filter(e => !toRemove.has(e.id));
+        state.dependencies = state.dependencies.filter(
+          d => !toRemove.has(d.source_id) && !toRemove.has(d.target_id)
+        );
+        removedThisPass = true;
+        changed = true;
+      }
+    } while (removedThisPass);
+
+    // 2. Clear stale same_row references
+    const finalIds = new Set(state.ganttEntries.map(e => e.id));
+    state.ganttEntries.forEach(e => {
+      if (e.same_row && !finalIds.has(e.same_row)) {
+        e.same_row = null;
+        changed = true;
+      }
+    });
+
+    return changed;
+  }
 
   function getEntryRowLabel(entry) {
     return (entry.row_label && entry.row_label.trim()) || entry.title || '';
@@ -635,6 +684,14 @@
       timelineSel.overlayEl = overlay;
     });
 
+    // Periodic recalculation: sanitize stale entries and re-render every
+    // 60 seconds so deleted-task hours never linger in the totals.
+    if (_sanitizeIntervalId) clearInterval(_sanitizeIntervalId);
+    _sanitizeIntervalId = setInterval(() => {
+      if (!S().currentProject) return;
+      render();
+    }, 60000);
+
     render();
   }
 
@@ -784,6 +841,10 @@
   // =========================================================================
   function render() {
     if (!S().currentProject) return;
+
+    // Sanitize stale data (orphaned entries, broken same_row refs)
+    // so that hours always match what the user can see.
+    sanitizeEntries();
 
     const entries   = visibleEntries();
     const wasFreshRange = !chartStart;
@@ -3029,11 +3090,9 @@
     ganttHoursPanel.innerHTML = '';
 
     const capacity = S().currentTeam ? S().currentTeam.capacity_hours_month : 160;
-    let viewTotal = 0;
 
     entries.forEach(entry => {
       const total = calcTotalHours(entry.id);
-      viewTotal += +(entry.hours_estimate) || 0; // project total = own hours only at top level
 
       const row = document.createElement('div');
       row.className = 'gantt-hours-row' + (total > 0 ? ' has-hours' : '');
@@ -3516,6 +3575,11 @@
       S().dependencies = S().dependencies.filter(
         d => !deletedIds.has(d.source_id) && !deletedIds.has(d.target_id)
       );
+      // Clear stale same_row references pointing to any deleted entry so they
+      // don't become invisible orphans that still inflate the intensity bar.
+      S().ganttEntries.forEach(e => {
+        if (e.same_row && deletedIds.has(e.same_row)) e.same_row = null;
+      });
       deletedIds.forEach(id => S().selectedGanttIds.delete(id));
       U().updateDeleteBtn();
       U().updateUndoRedoBtns?.();
