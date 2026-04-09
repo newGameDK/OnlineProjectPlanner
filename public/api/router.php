@@ -122,6 +122,26 @@ function json_out($data, $status = 200) {
     exit;
 }
 
+/**
+ * Recursively collect all descendant gantt entry IDs for the given entry ID.
+ * Returns a flat array of IDs (not including $entryId itself).
+ */
+function collect_gantt_descendants($db, $entryId) {
+    $ids = [];
+    $queue = [$entryId];
+    while (!empty($queue)) {
+        $id = array_shift($queue);
+        $s = $db->prepare('SELECT id FROM gantt_entries WHERE parent_id=?');
+        $s->execute([$id]);
+        $children = $s->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($children as $childId) {
+            $ids[] = $childId;
+            $queue[] = $childId;
+        }
+    }
+    return $ids;
+}
+
 function require_auth() {
     if (empty($_SESSION['userId'])) {
         json_out(['error' => 'Not authenticated'], 401);
@@ -920,15 +940,41 @@ if ($seg1 === 'gantt') {
             if (!$existing) json_out(['error' => 'Not found'], 404);
             if (!can_access_project($db, $existing['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
 
+            // Collect all descendant entry IDs so they can be cascade-deleted and
+            // returned to the client (prevents orphaned entries keeping stale hours).
+            $descendantIds = collect_gantt_descendants($db, $ganttId);
+            $allDeletedIds = array_merge([$ganttId], $descendantIds);
+
+            // Fetch all entries being deleted for undo storage
+            $allDeletedEntries = [];
+            foreach ($allDeletedIds as $did) {
+                $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+                $s->execute([$did]);
+                $e = $s->fetch();
+                if ($e) $allDeletedEntries[] = $e;
+            }
+
             // Save undo; clear stale redo history
             $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
             $s->execute([$existing['project_id'], $userId]);
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-            $s->execute([uuid_v4(), $existing['project_id'], $userId, 'delete_gantt', json_encode(['entry' => $existing])]);
+            $s->execute([uuid_v4(), $existing['project_id'], $userId, 'delete_gantt',
+                json_encode(['entry' => $existing, 'cascade' => $allDeletedEntries])]);
 
-            $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
-            $s->execute([$ganttId]);
-            json_out(['ok' => true]);
+            // Clear same_row references pointing to any of the deleted entries so
+            // those entries become independent visible rows instead of invisible orphans.
+            foreach ($allDeletedIds as $did) {
+                $s = $db->prepare('UPDATE gantt_entries SET same_row=NULL WHERE same_row=?');
+                $s->execute([$did]);
+            }
+
+            // Delete the entry and all its descendants
+            foreach ($allDeletedIds as $did) {
+                $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
+                $s->execute([$did]);
+            }
+
+            json_out(['ok' => true, 'deleted_ids' => $allDeletedIds]);
         }
     }
 }
@@ -1319,16 +1365,22 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
     } elseif ($action['action_type'] === 'delete_gantt') {
         // Undo deletion = recreate; save to redo so it can be deleted again
         $e = $data['entry'];
+        // Support cascade-deleted entries stored under 'cascade' key
+        $cascadeEntries = $data['cascade'] ?? [$e];
         $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-        $s->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $e])]);
-        try {
-            $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,subtract_hours,same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
-            $s->execute([$e['id'], $e['project_id'], $e['parent_id'], $e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['color_variation'], $e['user_id'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null]);
-        } catch (Exception $ex) { /* entry already exists – ignore duplicate */ }
-
-        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
-        $s->execute([$e['id']]);
-        $result = ['undone' => 'delete_gantt', 'entry' => $s->fetch()];
+        $s->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $e, 'cascade' => $cascadeEntries])]);
+        $restoredEntries = [];
+        foreach ($cascadeEntries as $ce) {
+            try {
+                $s = $db->prepare('INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,subtract_hours,same_row) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+                $s->execute([$ce['id'], $ce['project_id'], $ce['parent_id'], $ce['title'], $ce['row_label'] ?? $ce['title'], $ce['row_height'] ?? 40, $ce['row_only'] ?? 0, $ce['start_date'], $ce['end_date'], $ce['hours_estimate'], $ce['color_variation'], $ce['user_id'], $ce['position'], $ce['notes'], $ce['folder_url'] ?? '', $ce['subtract_hours'] ?? 0, $ce['same_row'] ?? null]);
+                $s2 = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+                $s2->execute([$ce['id']]);
+                $restored = $s2->fetch();
+                if ($restored) $restoredEntries[] = $restored;
+            } catch (Exception $ex) { /* entry already exists – ignore duplicate */ }
+        }
+        $result = ['undone' => 'delete_gantt', 'entries' => $restoredEntries, 'entry' => $restoredEntries[0] ?? null];
     } elseif ($action['action_type'] === 'reorder_gantt') {
         // Undo reorder = restore old positions; save current positions to redo
         $oldPositions = $data['positions'];
@@ -1452,19 +1504,28 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
             $result = ['redone' => 'update_gantt', 'entry' => null];
         }
     } elseif ($redoAction['action_type'] === 'delete_gantt') {
-        // Redo: delete the entry again
+        // Redo: delete the entry (and descendants) again
         $e = $data['entry'];
-        $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
-        $s->execute([$e['id']]);
-        $currentEntry = $s->fetch();
-        if ($currentEntry) {
-            // Save undo action so user can undo this redo
-            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-            $s->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $currentEntry])]);
-            $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
-            $s->execute([$e['id']]);
+        $cascadeEntries = $data['cascade'] ?? [$e];
+        $allRedoDeleteIds = array_column($cascadeEntries, 'id');
+        $existingEntries = [];
+        foreach ($allRedoDeleteIds as $did) {
+            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $s->execute([$did]);
+            $ce = $s->fetch();
+            if ($ce) $existingEntries[] = $ce;
         }
-        $result = ['redone' => 'delete_gantt', 'entry_id' => $e['id']];
+        if (!empty($existingEntries)) {
+            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $projectId, $userId, 'delete_gantt', json_encode(['entry' => $existingEntries[0], 'cascade' => $existingEntries])]);
+            foreach ($allRedoDeleteIds as $did) {
+                $s = $db->prepare('UPDATE gantt_entries SET same_row=NULL WHERE same_row=?');
+                $s->execute([$did]);
+                $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
+                $s->execute([$did]);
+            }
+        }
+        $result = ['redone' => 'delete_gantt', 'deleted_ids' => $allRedoDeleteIds, 'entry_id' => $e['id']];
     } elseif ($redoAction['action_type'] === 'reorder_gantt') {
         // Redo reorder = re-apply the stored positions; save current positions to undo
         $redoPositions = $data['positions'];

@@ -95,6 +95,10 @@ function handleWSMessage(msg) {
     case 'gantt_deleted':
       if (msg.project_id === state.currentProject?.id) {
         state.ganttEntries = state.ganttEntries.filter(e => e.id !== msg.entry_id);
+        // Clear stale same_row references pointing to the deleted entry.
+        state.ganttEntries.forEach(e => {
+          if (e.same_row === msg.entry_id) e.same_row = null;
+        });
         window.ganttModule?.render();
       }
       break;
