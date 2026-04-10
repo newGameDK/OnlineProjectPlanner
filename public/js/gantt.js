@@ -456,7 +456,41 @@
   // =========================================================================
   // Public API
   // =========================================================================
-  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx };
+
+  // Returns the flat list of entries that are currently visible in the Gantt
+  // (respects drill-down level and collapsed/expanded state).  Unlike the
+  // internal visibleEntries(), same_row entries ARE included here so that
+  // exports can treat them as their own rows.  Each entry has _depth set.
+  function getExportableEntries() {
+    const all = S().ganttEntries;
+
+    const childrenOf = {};
+    all.forEach(e => {
+      const pid = e.parent_id;
+      if (!childrenOf[pid]) childrenOf[pid] = [];
+      childrenOf[pid].push(e);
+    });
+    Object.values(childrenOf).forEach(group =>
+      group.sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1))
+    );
+
+    const roots  = childrenOf[currentParentId] || [];
+    const result = [];
+
+    function addWithChildren(entry, depth) {
+      entry._depth = depth;
+      result.push(entry);
+      if (expandedIds.has(entry.id)) {
+        const kids = childrenOf[entry.id] || [];
+        kids.forEach(child => addWithChildren(child, depth + 1));
+      }
+    }
+
+    roots.forEach(r => addWithChildren(r, 0));
+    return result;
+  }
+
+  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx, getExportableEntries };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
