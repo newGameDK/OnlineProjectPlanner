@@ -634,6 +634,14 @@ function setupEventListeners() {
       window.todoModule?.setFilter(btn.dataset.status);
     });
   });
+
+  // Todo sort
+  const todoSortSelect = document.getElementById('todoSortSelect');
+  if (todoSortSelect) {
+    todoSortSelect.addEventListener('change', () => {
+      window.todoModule?.setSort(todoSortSelect.value);
+    });
+  }
 }
 
 async function performUndo() {

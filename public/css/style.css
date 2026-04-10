@@ -61,6 +61,10 @@ html.dark-mode .color-var-swatch.selected { border-color: #fff; }
 html.dark-mode .connecting-banner { background: #1a2e1a; color: #81c784; }
 html.dark-mode .todo-card-dep-in { background: #1a3a5c; color: #64b5f6; }
 html.dark-mode .todo-card-dep-out { background: #2a1a3e; color: #ce93d8; }
+html.dark-mode .prio-high   { background: #3e1a1a; color: #ef9a9a; }
+html.dark-mode .prio-medium { background: #3e2a10; color: #ffcc80; }
+html.dark-mode .prio-low    { background: #1a2e3e; color: #90caf9; }
+html.dark-mode .todo-sort-select { background: var(--surface2); color: var(--text); border-color: var(--border2); }
 html.dark-mode .help-mode [data-help]::after { background: #e0e0e0; color: #1a1a2e; }
 html.dark-mode .form-group input,
 html.dark-mode .form-group select,
@@ -679,6 +683,70 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
   font-size: 36px; line-height: 1; flex-shrink: 0;
 }
 .todo-card.done { background: #f0faf0; border-color: #a5d6a7; }
+
+/* =====================================================================
+   Todo – Sort select (Mechanism 2)
+   ===================================================================== */
+.todo-sort-select {
+  padding: 3px 8px; border: 1px solid var(--border2); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); font-size: 12px; cursor: pointer;
+}
+
+/* =====================================================================
+   Todo – Label filter chips (Mechanism 3)
+   ===================================================================== */
+.todo-label-filters { display: flex; gap: 4px; flex-wrap: wrap; }
+.todo-label-chip {
+  padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--label-color, var(--border2));
+  background: transparent; color: var(--label-color, var(--text-muted));
+  transition: all .12s;
+}
+.todo-label-chip.active,
+.todo-label-chip:hover {
+  background: var(--label-color, var(--primary)); color: #fff;
+}
+
+/* =====================================================================
+   Todo – Sub-task cards (Mechanism 1)
+   ===================================================================== */
+.todo-card-subtask {
+  border-left: 3px solid var(--primary);
+  padding-left: 10px;
+}
+.todo-card.sub-task-target {
+  outline: 2px dashed var(--primary); outline-offset: -2px;
+  background: var(--primary-light);
+}
+.todo-card-header-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; margin-bottom: 4px;
+}
+.todo-card-header-row .todo-card-title { margin-bottom: 0; flex: 1; }
+.todo-card-collapse {
+  flex-shrink: 0; border: none; background: none; cursor: pointer;
+  font-size: 10px; color: var(--text-muted); padding: 1px 4px;
+  border-radius: 4px; line-height: 1.4;
+}
+.todo-card-collapse:hover { background: var(--border); color: var(--text); }
+
+/* =====================================================================
+   Todo – Priority badges (Mechanism 2)
+   ===================================================================== */
+.todo-card-priority {
+  font-size: 10px; font-weight: 700; padding: 2px 6px;
+  border-radius: 10px; white-space: nowrap;
+}
+.prio-high   { background: #fde8e8; color: #c62828; }
+.prio-medium { background: #fff3e0; color: #e65100; }
+.prio-low    { background: #e3f2fd; color: #1565c0; }
+
+/* =====================================================================
+   Todo – Label badges on cards (Mechanism 3)
+   ===================================================================== */
+.todo-card-label {
+  font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
+  color: #fff; white-space: nowrap; letter-spacing: .3px;
+}
 
 /* =====================================================================
    Modal
