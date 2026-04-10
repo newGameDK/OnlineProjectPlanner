@@ -178,6 +178,21 @@ try {
     $db->exec("ALTER TABLE gantt_entries ADD COLUMN hours_set INTEGER NOT NULL DEFAULT 0");
 } catch (Exception $e) { /* column already exists – ignore */ }
 
+// Migration: add parent_id to todo_items (sub-task nesting)
+try {
+    $db->exec("ALTER TABLE todo_items ADD COLUMN parent_id TEXT DEFAULT NULL");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
+// Migration: add priority to todo_items (high / medium / low)
+try {
+    $db->exec("ALTER TABLE todo_items ADD COLUMN priority TEXT DEFAULT NULL");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
+// Migration: add label to todo_items (free-text category)
+try {
+    $db->exec("ALTER TABLE todo_items ADD COLUMN label TEXT DEFAULT NULL");
+} catch (Exception $e) { /* column already exists – ignore */ }
+
 // App settings table (admin user IDs etc.)
 $db->exec("
 CREATE TABLE IF NOT EXISTS app_settings (
