@@ -317,6 +317,7 @@ function setupEventListeners() {
 
   // Update app
   document.getElementById('updateBtn').addEventListener('click', () => openUpdateModal());
+  refreshUpdateBtnLabel();
 
   // Snap aggressiveness slider (admin-only)
   (function initSnapSlider() {
