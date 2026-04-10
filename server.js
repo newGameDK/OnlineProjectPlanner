@@ -107,6 +107,9 @@ CREATE TABLE IF NOT EXISTS todo_items (
   assignee_id TEXT,
   due_date TEXT,
   position INTEGER NOT NULL DEFAULT 0,
+  parent_id TEXT,
+  priority TEXT NOT NULL DEFAULT '',
+  label TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -165,6 +168,17 @@ try {
 } catch (_) { /* column already exists – ignore */ }
 try {
   db.exec(`ALTER TABLE gantt_entries ADD COLUMN row_only INTEGER NOT NULL DEFAULT 0`);
+} catch (_) { /* column already exists – ignore */ }
+
+// Migration: add parent_id, priority, label to todo_items
+try {
+  db.exec(`ALTER TABLE todo_items ADD COLUMN parent_id TEXT`);
+} catch (_) { /* column already exists – ignore */ }
+try {
+  db.exec(`ALTER TABLE todo_items ADD COLUMN priority TEXT NOT NULL DEFAULT ''`);
+} catch (_) { /* column already exists – ignore */ }
+try {
+  db.exec(`ALTER TABLE todo_items ADD COLUMN label TEXT NOT NULL DEFAULT ''`);
 } catch (_) { /* column already exists – ignore */ }
 
 // Milestone / deadline table
@@ -275,10 +289,10 @@ const stmts = {
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
   // Todo
-  createTodo: db.prepare(`INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position) VALUES (?,?,?,?,?,?,?,?,?)`),
+  createTodo: db.prepare(`INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position,parent_id,priority,label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`),
   getTodo: db.prepare(`SELECT * FROM todo_items WHERE id=?`),
   getProjectTodos: db.prepare(`SELECT * FROM todo_items WHERE project_id=? ORDER BY position ASC, created_at ASC`),
-  updateTodo: db.prepare(`UPDATE todo_items SET title=?,description=?,status=?,assignee_id=?,due_date=?,position=?,updated_at=? WHERE id=?`),
+  updateTodo: db.prepare(`UPDATE todo_items SET title=?,description=?,status=?,assignee_id=?,due_date=?,position=?,parent_id=?,priority=?,label=?,updated_at=? WHERE id=?`),
   deleteTodo: db.prepare(`DELETE FROM todo_items WHERE id=?`),
   getTodoUpdatedAfter: db.prepare(`SELECT * FROM todo_items WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
@@ -932,13 +946,14 @@ app.get('/api/todos/:projectId', requireAuth, (req, res) => {
 });
 
 app.post('/api/todos', requireAuth, (req, res) => {
-  const { project_id, gantt_entry_id, title, description, status, assignee_id, due_date, position } = req.body;
+  const { project_id, gantt_entry_id, title, description, status, assignee_id, due_date, position, parent_id, priority, label } = req.body;
   if (!project_id || !title) return res.status(400).json({ error: 'Missing required fields' });
   if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
   const id = uuidv4();
   stmts.createTodo.run(id, project_id, gantt_entry_id || null, title, description || '',
-    status || 'todo', assignee_id || null, due_date || null, position || 0);
+    status || 'todo', assignee_id || null, due_date || null, position || 0,
+    parent_id || null, priority || '', label || '');
   const todo = stmts.getTodo.get(id);
   const teamId = projectTeamId(project_id);
   broadcastToTeam(teamId, { type: 'todo_created', todo });
@@ -950,7 +965,7 @@ app.put('/api/todos/:id', requireAuth, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
   if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
-  const { title, description, status, assignee_id, due_date, position } = req.body;
+  const { title, description, status, assignee_id, due_date, position, parent_id, priority, label } = req.body;
   stmts.updateTodo.run(
     title ?? existing.title,
     description ?? existing.description,
@@ -958,6 +973,9 @@ app.put('/api/todos/:id', requireAuth, (req, res) => {
     assignee_id ?? existing.assignee_id,
     due_date ?? existing.due_date,
     position ?? existing.position,
+    'parent_id' in req.body ? (parent_id || null) : existing.parent_id,
+    priority !== undefined ? (priority || '') : existing.priority,
+    label !== undefined ? (label || '') : existing.label,
     now(),
     existing.id
   );
@@ -1184,7 +1202,8 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
     for (const t of (data.todos || [])) {
       try {
         stmts.createTodo.run(t.id, t.project_id, t.gantt_entry_id || null, t.title,
-          t.description || '', t.status || 'todo', t.assignee_id || null, t.due_date || null, t.position || 0);
+          t.description || '', t.status || 'todo', t.assignee_id || null, t.due_date || null, t.position || 0,
+          t.parent_id || null, t.priority || '', t.label || '');
       } catch (_) { /* already exists */ }
     }
     // Restore dependencies
@@ -1222,7 +1241,8 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
       for (const td of (pd.todos || [])) {
         try {
           stmts.createTodo.run(td.id, td.project_id, td.gantt_entry_id || null, td.title,
-            td.description || '', td.status || 'todo', td.assignee_id || null, td.due_date || null, td.position || 0);
+            td.description || '', td.status || 'todo', td.assignee_id || null, td.due_date || null, td.position || 0,
+            td.parent_id || null, td.priority || '', td.label || '');
         } catch (_) {}
       }
       for (const d of (pd.dependencies || [])) {
@@ -1334,7 +1354,8 @@ app.post('/api/backup/import', requireAuth, (req, res) => {
             stmts.createTodo.run(
               t.id, proj.id, t.gantt_entry_id || null, t.title,
               t.description || '', t.status || 'todo',
-              t.assignee_id || null, t.due_date || null, t.position || 0
+              t.assignee_id || null, t.due_date || null, t.position || 0,
+              t.parent_id || null, t.priority || '', t.label || ''
             );
             todosImported++;
           } catch (_) { /* already exists */ }

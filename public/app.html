@@ -239,12 +239,19 @@
           <div class="todo-toolbar">
             <button id="addTodoBtn" class="btn btn-primary btn-sm">+ Todo</button>
             <button id="todoDepsBtn" class="btn btn-secondary btn-sm" title="Show/hide dependency links on cards" data-help="Toggle dependency indicators on todo cards">🔗 Deps</button>
+            <select id="todoSortSelect" class="todo-sort-select" title="Sort tasks">
+              <option value="default">Sort: Default</option>
+              <option value="priority">Sort: Priority</option>
+              <option value="due_date">Sort: Due Date</option>
+              <option value="title">Sort: A–Z</option>
+            </select>
             <div class="todo-filters">
               <button class="todo-filter active" data-status="all">All</button>
               <button class="todo-filter" data-status="todo">To Do</button>
               <button class="todo-filter" data-status="in_progress">In Progress</button>
               <button class="todo-filter" data-status="done">Done</button>
             </div>
+            <div id="todoLabelFilters" class="todo-label-filters"></div>
           </div>
           <div id="todoColumns" class="todo-columns">
             <div class="todo-column" data-status="todo">
@@ -291,7 +298,7 @@
   <script src="js/config.js?v=1.1.45"></script>
   <script src="js/color-utils.js?v=1.1.45"></script>
   <script src="js/ui-utils.js?v=1.1.45"></script>
-  <script src="js/app.js?v=1.1.45"></script>
+  <script src="js/app.js?v=1.1.46"></script>
   <script src="js/backup.js?v=1.1.45"></script>
   <script src="js/update.js?v=1.1.45"></script>
   <script src="js/export.js?v=1.1.45"></script>
@@ -299,6 +306,6 @@
   <script src="js/share-modal.js?v=1.1.45"></script>
   <script src="js/sounds.js?v=1.1.45"></script>
   <script src="js/gantt.js?v=1.1.45"></script>
-  <script src="js/todo.js?v=1.1.45"></script>
+  <script src="js/todo.js?v=1.1.46"></script>
 </body>
 </html>
