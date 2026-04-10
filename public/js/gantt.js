@@ -132,6 +132,69 @@
     return Number.isFinite(h) ? Math.max(28, Math.min(500, h)) : ROW_H;
   }
 
+  // Returns the number of visual lanes needed for entry's row by simulating
+  // the greedy overlap algorithm on all bars (owner + same_row guests) without
+  // touching the DOM.  Requires chartStart / chartEnd / pxPerDay to be set.
+  // Results are memoized in _laneCountCache for the duration of one render.
+  function computeLaneCount(entry) {
+    if (!chartStart || !chartEnd || !pxPerDay) return 1;
+    if (_laneCountCache && _laneCountCache.has(entry.id)) {
+      return _laneCountCache.get(entry.id);
+    }
+
+    function barInterval(e) {
+      if (+e.row_only) return null;
+      const start = parseDate(e.start_date);
+      const end   = parseDate(e.end_date);
+      if (!start || !end || start > chartEnd || end < chartStart) return null;
+      const clippedStart = start < chartStart ? chartStart : start;
+      const leftDays  = daysBetween(chartStart, clippedStart);
+      const widthDays = Math.max(MIN_DAYS, daysBetween(clippedStart, end));
+      const left  = leftDays * pxPerDay;
+      return { left, right: left + widthDays * pxPerDay };
+    }
+
+    const intervals = [];
+    const ownerIv = barInterval(entry);
+    if (ownerIv) intervals.push(ownerIv);
+    S().ganttEntries.forEach(g => {
+      if (g.same_row !== entry.id) return;
+      const iv = barInterval(g);
+      if (iv) intervals.push(iv);
+    });
+
+    if (intervals.length <= 1) {
+      if (_laneCountCache) _laneCountCache.set(entry.id, 1);
+      return 1;
+    }
+
+    intervals.sort((a, b) => a.left - b.left);
+    const lanes = [];
+    intervals.forEach(iv => {
+      let placed = false;
+      for (let i = 0; i < lanes.length; i++) {
+        const last = lanes[i][lanes[i].length - 1];
+        // 0.5 px tolerance absorbs sub-pixel rounding without misclassifying
+        // genuinely adjacent (touching) bars as overlapping.
+        if (last.right <= iv.left + 0.5) { lanes[i].push(iv); placed = true; break; }
+      }
+      if (!placed) lanes.push([iv]);
+    });
+    const result = lanes.length;
+    if (_laneCountCache) _laneCountCache.set(entry.id, result);
+    return result;
+  }
+
+  // Returns the row height to use for rendering, expanded to accommodate
+  // same-row lane splitting so that every lane keeps full-height bars.
+  // Formula: max(storedHeight, laneCount × ROW_H) which guarantees each
+  // lane has (ROW_H - barPad*2) ≈ 32 px of bar space.
+  function getEffectiveEntryRowHeight(entry) {
+    const stored = getEntryRowHeight(entry);
+    const lanes  = computeLaneCount(entry);
+    return lanes > 1 ? Math.max(stored, lanes * ROW_H) : stored;
+  }
+
   function getSnapDaysForCurrentScale() {
     if (scale === 'month') return 7; // month view snaps to weeks
     return 1; // week/day view snaps to days
@@ -209,6 +272,12 @@
     dropIndicatorEl: null,        // horizontal line shown in task list
     dropIndicatorTimelineEl: null, // matching horizontal line shown in timeline rows
   };
+
+  // ── lane-count memoization cache (reset at the start of each render) ─────
+  // computeLaneCount() may be called multiple times per entry per render cycle
+  // (once each from renderTaskList, renderRowsAndBars, renderHoursPanel, and
+  // rowYMap).  Caching by entry.id avoids re-iterating ganttEntries each time.
+  let _laneCountCache = null; // Map<entryId, number> | null
 
   const rowHeightDrag = {
     active: false,
@@ -881,6 +950,9 @@
   function render() {
     if (!S().currentProject) return;
 
+    // Reset per-render memoization caches.
+    _laneCountCache = new Map();
+
     // Sanitize stale data (orphaned entries, broken same_row refs)
     // so that hours always match what the user can see.
     sanitizeEntries();
@@ -910,11 +982,12 @@
       }
     });
 
-    // Build cumulative Y-center map (accounts for variable row heights)
+    // Build cumulative Y-center map (accounts for variable row heights,
+    // including auto-expansion for same-row lane splitting).
     rowYMap = {};
     let cumulativeY = 0;
     entries.forEach(e => {
-      const h = getEntryRowHeight(e);
+      const h = getEffectiveEntryRowHeight(e);
       rowYMap[e.id] = cumulativeY + h / 2;
       cumulativeY += h;
     });
@@ -944,7 +1017,7 @@
       const color = getEntryColor(entry);
       const linkedTodo = S().todos.find(t => t.gantt_entry_id === entry.id);
       const isCompleted = linkedTodo && linkedTodo.status === 'done';
-      const rowIsExpanded = getEntryRowHeight(entry) > ROW_H;
+      const rowIsExpanded = getEffectiveEntryRowHeight(entry) > ROW_H;
 
       const row = document.createElement('div');
       row.className = 'gantt-task-row'
@@ -952,7 +1025,7 @@
         + (isCompleted ? ' gantt-completed' : '')
         + (rowIsExpanded ? ' row-expanded' : '');
       row.dataset.id = entry.id;
-      row.style.minHeight = getEntryRowHeight(entry) + 'px';
+      row.style.minHeight = getEffectiveEntryRowHeight(entry) + 'px';
 
       // Drag handle for reparenting / reordering
       const grip = document.createElement('span');
@@ -1713,7 +1786,6 @@
     entries.forEach(entry => {
       const rowBg = document.createElement('div');
       rowBg.className     = 'gantt-row-bg';
-      rowBg.style.height  = getEntryRowHeight(entry) + 'px';
       rowBg.dataset.id    = entry.id;
       rowBg.addEventListener('dblclick', () => drillDown(entry));
 
@@ -1748,8 +1820,10 @@
       const bar = (+entry.row_only) ? null : buildBar(entry);
       if (bar) rowBg.appendChild(bar);
 
-      // Also render bars for entries that share this row (same_row === entry.id)
-      const entryRowHeight = getEntryRowHeight(entry);
+      // Also render bars for entries that share this row (same_row === entry.id).
+      // Use the effective row height so bars are sized for the expanded row.
+      const entryRowHeight = getEffectiveEntryRowHeight(entry);
+      rowBg.style.height   = entryRowHeight + 'px';
       const sameRowEntries = S().ganttEntries.filter(e => e.same_row === entry.id);
       sameRowEntries.forEach(srEntry => {
         const srBar = buildBar(srEntry, entryRowHeight);
@@ -3189,7 +3263,7 @@
 
       const row = document.createElement('div');
       row.className = 'gantt-hours-row' + (h > 0 ? ' has-hours' : '');
-      row.style.height = getEntryRowHeight(entry) + 'px';
+      row.style.height = getEffectiveEntryRowHeight(entry) + 'px';
       if (h > capacity) row.classList.add('overloaded');
       row.textContent = h > 0 ? fmtH(h) : '\u2014';
       row.title = h > 0 ? fmtH(h) + ' estimated' : 'No hours estimated';
