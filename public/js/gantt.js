@@ -135,8 +135,12 @@
   // Returns the number of visual lanes needed for entry's row by simulating
   // the greedy overlap algorithm on all bars (owner + same_row guests) without
   // touching the DOM.  Requires chartStart / chartEnd / pxPerDay to be set.
+  // Results are memoized in _laneCountCache for the duration of one render.
   function computeLaneCount(entry) {
     if (!chartStart || !chartEnd || !pxPerDay) return 1;
+    if (_laneCountCache && _laneCountCache.has(entry.id)) {
+      return _laneCountCache.get(entry.id);
+    }
 
     function barInterval(e) {
       if (+e.row_only) return null;
@@ -159,7 +163,10 @@
       if (iv) intervals.push(iv);
     });
 
-    if (intervals.length <= 1) return 1;
+    if (intervals.length <= 1) {
+      if (_laneCountCache) _laneCountCache.set(entry.id, 1);
+      return 1;
+    }
 
     intervals.sort((a, b) => a.left - b.left);
     const lanes = [];
@@ -167,11 +174,15 @@
       let placed = false;
       for (let i = 0; i < lanes.length; i++) {
         const last = lanes[i][lanes[i].length - 1];
+        // 0.5 px tolerance absorbs sub-pixel rounding without misclassifying
+        // genuinely adjacent (touching) bars as overlapping.
         if (last.right <= iv.left + 0.5) { lanes[i].push(iv); placed = true; break; }
       }
       if (!placed) lanes.push([iv]);
     });
-    return lanes.length;
+    const result = lanes.length;
+    if (_laneCountCache) _laneCountCache.set(entry.id, result);
+    return result;
   }
 
   // Returns the row height to use for rendering, expanded to accommodate
@@ -261,6 +272,12 @@
     dropIndicatorEl: null,        // horizontal line shown in task list
     dropIndicatorTimelineEl: null, // matching horizontal line shown in timeline rows
   };
+
+  // ── lane-count memoization cache (reset at the start of each render) ─────
+  // computeLaneCount() may be called multiple times per entry per render cycle
+  // (once each from renderTaskList, renderRowsAndBars, renderHoursPanel, and
+  // rowYMap).  Caching by entry.id avoids re-iterating ganttEntries each time.
+  let _laneCountCache = null; // Map<entryId, number> | null
 
   const rowHeightDrag = {
     active: false,
@@ -932,6 +949,9 @@
   // =========================================================================
   function render() {
     if (!S().currentProject) return;
+
+    // Reset per-render memoization caches.
+    _laneCountCache = new Map();
 
     // Sanitize stale data (orphaned entries, broken same_row refs)
     // so that hours always match what the user can see.
