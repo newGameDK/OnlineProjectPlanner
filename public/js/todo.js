@@ -108,23 +108,21 @@
         const pa = PRIORITY_ORDER[a.priority || ''] ?? 3;
         const pb = PRIORITY_ORDER[b.priority || ''] ?? 3;
         if (pa !== pb) return pa - pb;
-        // Secondary: due date ascending (null last)
-        if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
-        if (a.due_date) return -1;
-        if (b.due_date) return 1;
-        return 0;
+        return cmpDueDate(a, b); // secondary: due date
       });
     } else if (currentSort === 'due_date') {
-      sorted.sort((a, b) => {
-        if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
-        if (a.due_date) return -1;
-        if (b.due_date) return 1;
-        return 0;
-      });
+      sorted.sort(cmpDueDate);
     } else if (currentSort === 'title') {
       sorted.sort((a, b) => a.title.localeCompare(b.title));
     }
     return sorted;
+  }
+
+  function cmpDueDate(a, b) {
+    if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
+    if (a.due_date) return -1;
+    if (b.due_date) return 1;
+    return 0;
   }
 
   /**
@@ -390,7 +388,7 @@
 
     // Sub-task drop target (Mechanism 1)
     card.addEventListener('dragenter', (e) => {
-      const dragId = e.dataTransfer.getData('text/plain') || _activeDragId;
+      const dragId = _activeDragId;
       if (!dragId || dragId === String(todo.id)) return;
       if (isDescendant(dragId, todo.id)) return; // prevent cycles
       e.preventDefault();
