@@ -163,8 +163,8 @@ function restore_project_contents($db, $data) {
     }
     foreach (($data['todos'] ?? []) as $t) {
         try {
-            $s = $db->prepare('INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position) VALUES (?,?,?,?,?,?,?,?,?)');
-            $s->execute([$t['id'], $t['project_id'], $t['gantt_entry_id'] ?? null, $t['title'], $t['description'] ?? '', $t['status'] ?? 'todo', $t['assignee_id'] ?? null, $t['due_date'] ?? null, $t['position'] ?? 0]);
+            $s = $db->prepare('INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position,parent_id,priority,label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+            $s->execute([$t['id'], $t['project_id'], $t['gantt_entry_id'] ?? null, $t['title'], $t['description'] ?? '', $t['status'] ?? 'todo', $t['assignee_id'] ?? null, $t['due_date'] ?? null, $t['position'] ?? 0, $t['parent_id'] ?? null, $t['priority'] ?? null, $t['label'] ?? null]);
         } catch (Exception $ex) {}
     }
     foreach (($data['dependencies'] ?? []) as $d) {
@@ -1289,12 +1289,13 @@ if ($seg1 === 'todos') {
         if (!can_access_project($db, $project_id, $userId)) json_out(['error' => 'Forbidden'], 403);
 
         $id = uuid_v4();
-        $s = $db->prepare('INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position) VALUES (?,?,?,?,?,?,?,?,?)');
+        $s = $db->prepare('INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position,parent_id,priority,label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
         $s->execute([
             $id, $project_id, $body['gantt_entry_id'] ?? null, $title,
             $body['description'] ?? '', $body['status'] ?? 'todo',
             $body['assignee_id'] ?? null, $body['due_date'] ?? null,
-            $body['position'] ?? 0
+            $body['position'] ?? 0,
+            $body['parent_id'] ?? null, $body['priority'] ?? null, $body['label'] ?? null
         ]);
 
         $s = $db->prepare('SELECT * FROM todo_items WHERE id=?');
@@ -1325,14 +1326,33 @@ if ($seg1 === 'todos') {
             if (!$existing) json_out(['error' => 'Not found'], 404);
             if (!can_access_project($db, $existing['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
 
-            $s = $db->prepare('UPDATE todo_items SET title=?,description=?,status=?,assignee_id=?,due_date=?,position=?,updated_at=? WHERE id=?');
+            // Resolve parent_id: array_key_exists handles explicit null (unparent)
+            $newParentId = array_key_exists('parent_id', $body) ? ($body['parent_id'] ?: null) : $existing['parent_id'];
+
+            // Cycle detection for todo parent_id
+            if ($newParentId !== null) {
+                $cursor = $newParentId;
+                while ($cursor !== null) {
+                    if ($cursor === $todoId) json_out(['error' => 'Circular parent reference'], 400);
+                    $anc = $db->prepare('SELECT parent_id FROM todo_items WHERE id=?');
+                    $anc->execute([$cursor]);
+                    $ancRow = $anc->fetch();
+                    $cursor = $ancRow ? $ancRow['parent_id'] : null;
+                }
+            }
+
+            $s = $db->prepare('UPDATE todo_items SET title=?,description=?,status=?,assignee_id=?,due_date=?,position=?,gantt_entry_id=?,parent_id=?,priority=?,label=?,updated_at=? WHERE id=?');
             $s->execute([
                 $body['title'] ?? $existing['title'],
                 $body['description'] ?? $existing['description'],
                 $body['status'] ?? $existing['status'],
-                $body['assignee_id'] ?? $existing['assignee_id'],
-                $body['due_date'] ?? $existing['due_date'],
+                array_key_exists('assignee_id', $body) ? ($body['assignee_id'] ?: null) : $existing['assignee_id'],
+                array_key_exists('due_date', $body) ? ($body['due_date'] ?: null) : $existing['due_date'],
                 $body['position'] ?? $existing['position'],
+                array_key_exists('gantt_entry_id', $body) ? ($body['gantt_entry_id'] ?: null) : $existing['gantt_entry_id'],
+                $newParentId,
+                array_key_exists('priority', $body) ? ($body['priority'] ?: null) : $existing['priority'],
+                array_key_exists('label', $body) ? ($body['label'] ?: null) : $existing['label'],
                 now_ms(),
                 $todoId
             ]);
@@ -1812,11 +1832,12 @@ if ($seg1 === 'backup' && $seg2 === 'import' && $method === 'POST') {
 
                 foreach (($proj['todos'] ?? []) as $t) {
                     try {
-                        $s = $db->prepare('INSERT INTO todo_items (id, project_id, gantt_entry_id, title, description, status, assignee_id, due_date, position) VALUES (?,?,?,?,?,?,?,?,?)');
+                        $s = $db->prepare('INSERT INTO todo_items (id, project_id, gantt_entry_id, title, description, status, assignee_id, due_date, position, parent_id, priority, label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
                         $s->execute([
                             $t['id'], $proj['id'], $t['gantt_entry_id'] ?? null, $t['title'],
                             $t['description'] ?? '', $t['status'] ?? 'todo',
-                            $t['assignee_id'] ?? null, $t['due_date'] ?? null, $t['position'] ?? 0
+                            $t['assignee_id'] ?? null, $t['due_date'] ?? null, $t['position'] ?? 0,
+                            $t['parent_id'] ?? null, $t['priority'] ?? null, $t['label'] ?? null
                         ]);
                         $todosImported++;
                     } catch (Exception $ex) { /* already exists */ }
