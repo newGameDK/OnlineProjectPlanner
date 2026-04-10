@@ -4047,7 +4047,7 @@
           ? pasteParentId
           : (e.parent_id != null && e.parent_id in idMap
               ? idMap[e.parent_id]
-              : (e.parent_id == null ? pasteParentId : null));
+              : pasteParentId);
         const rawStart = parseDate(e.start_date);
         const rawEnd   = parseDate(e.end_date);
         const newStart = rawStart ? toDateStr(addDays(rawStart, sharedDayOffset)) : toDateStr(pasteStart);
