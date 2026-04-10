@@ -57,7 +57,7 @@ async function openUpdateModal() {
         <div id="ghReleasesLoading" style="font-size:12px;color:var(--text-muted)">Loading releases…</div>
         <select id="ghReleaseSelect" class="form-control" style="display:none;font-size:13px"></select>
       </div>
-      <button type="button" id="ghInstallBtn" class="btn btn-primary btn-full" style="display:none;margin-bottom:12px">⬇ Install selected version</button>
+      <button type="button" id="ghInstallBtn" class="btn btn-primary btn-full" style="display:none;margin-bottom:12px">⬇ Install Selected Version</button>
     </div>
     <details style="margin-bottom:12px">
       <summary style="font-size:12px;cursor:pointer;color:var(--text-muted)">Or upload a ZIP file manually</summary>
@@ -147,6 +147,22 @@ async function openUpdateModal() {
       loadingEl.style.display = 'none';
       selectEl.style.display = '';
       installBtn.style.display = '';
+
+      // Update button label based on the selected version's group
+      const updateInstallBtnLabel = () => {
+        const opt = selectEl.options[selectEl.selectedIndex];
+        const group = opt && opt.parentElement && opt.parentElement.tagName === 'OPTGROUP'
+          ? opt.parentElement.label : '';
+        if (group.includes('Older') || group.includes('rollback')) {
+          installBtn.textContent = '⏪ Roll Back to This Version';
+        } else if (group.includes('Newer') || group.includes('update')) {
+          installBtn.textContent = '⬆ Update App';
+        } else {
+          installBtn.textContent = '⬇ Install Selected Version';
+        }
+      };
+      updateInstallBtnLabel();
+      selectEl.addEventListener('change', updateInstallBtnLabel);
     } catch {
       loadingEl.textContent = 'Could not load releases from GitHub';
     }
