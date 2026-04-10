@@ -24,81 +24,143 @@ async function exportCSV() {
   const titleById = {};
   S().ganttEntries.forEach(e => { titleById[e.id] = e.title; });
 
-  // Build a flat list with hierarchy: parents first, then children indented below
-  const flatRows = [];
-  function collectEntries(parentId, depth) {
-    const children = S().ganttEntries.filter(e => (e.parent_id || null) === parentId);
-    children.forEach(e => {
-      flatRows.push({ entry: e, depth });
-      collectEntries(e.id, depth + 1);
-    });
-  }
-  collectEntries(null, 0);
-
-  if (!flatRows.length) return alert('No entries to export.');
+  // Use only currently visible (expanded) entries so collapsed / drilled-past
+  // tasks are not exported as "dead" rows.
+  const visEntries = window.ganttModule.getExportableEntries();
+  if (!visEntries.length) return alert('No entries to export.');
+  const flatRows = visEntries.map(e => ({ entry: e, depth: e._depth || 0 }));
 
   // Determine chart date range
   let earliest = null, latest = null;
   flatRows.forEach(({ entry }) => {
     const s = new Date(entry.start_date + 'T00:00:00');
-    const e = new Date(entry.end_date + 'T00:00:00');
+    const e = new Date(entry.end_date   + 'T00:00:00');
     if (!earliest || s < earliest) earliest = s;
-    if (!latest || e > latest) latest = e;
+    if (!latest   || e > latest)   latest   = e;
   });
-  // Add padding
+  // Add one-day padding on each side
   earliest.setDate(earliest.getDate() - 1);
   latest.setDate(latest.getDate() + 1);
 
-  // Generate date columns
-  const dateCols = [];
-  const cur = new Date(earliest);
-  while (cur <= latest) {
-    dateCols.push(new Date(cur));
-    cur.setDate(cur.getDate() + 1);
+  const totalDays = Math.round((latest - earliest) / 86400000);
+
+  // Choose time-column granularity based on total span so bars are wide enough
+  // to show their title text: day (<= 90 d), week (<= 365 d), month (> 365 d).
+  const granularity = totalDays > 365 ? 'month' : (totalDays > 90 ? 'week' : 'day');
+
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Build time-column descriptors  { date: Date (period start), label: string }
+  const timeCols = [];
+  if (granularity === 'day') {
+    const cur = new Date(earliest);
+    while (cur <= latest) {
+      timeCols.push({
+        date:  new Date(cur),
+        label: String(cur.getDate()).padStart(2, '0') + '/' + String(cur.getMonth() + 1).padStart(2, '0'),
+      });
+      cur.setDate(cur.getDate() + 1);
+    }
+  } else if (granularity === 'week') {
+    // Snap back to the Monday on or before earliest
+    const cur = new Date(earliest);
+    const dow = cur.getDay(); // 0=Sun
+    cur.setDate(cur.getDate() - (dow === 0 ? 6 : dow - 1));
+    while (cur <= latest) {
+      timeCols.push({
+        date:  new Date(cur),
+        label: String(cur.getDate()).padStart(2, '0') + ' ' + MONTH_NAMES[cur.getMonth()],
+      });
+      cur.setDate(cur.getDate() + 7);
+    }
+  } else { // month
+    const cur = new Date(earliest.getFullYear(), earliest.getMonth(), 1);
+    while (cur <= latest) {
+      timeCols.push({
+        date:  new Date(cur),
+        label: MONTH_NAMES[cur.getMonth()] + ' \'' + String(cur.getFullYear()).slice(2),
+      });
+      cur.setMonth(cur.getMonth() + 1);
+    }
   }
 
-  const DATA_COLS = 6; // Title, Parent, Start, End, Hours, Assignee
+  // Build dependency index: targetId → [sourceTitle, ...]
+  const deps = S().dependencies || [];
+  const depsOfEntry = {};
+  deps.forEach(d => {
+    if (!depsOfEntry[d.target_id]) depsOfEntry[d.target_id] = [];
+    depsOfEntry[d.target_id].push(d.source_id);
+  });
+
+  // Find which time-column index contains a given date
+  function timeColOf(dateObj) {
+    if (granularity === 'day') {
+      for (let i = 0; i < timeCols.length; i++) {
+        if (timeCols[i].date.toDateString() === dateObj.toDateString()) return i;
+      }
+    } else if (granularity === 'week') {
+      for (let i = 0; i < timeCols.length; i++) {
+        const wEnd = new Date(timeCols[i].date);
+        wEnd.setDate(wEnd.getDate() + 6);
+        if (dateObj >= timeCols[i].date && dateObj <= wEnd) return i;
+      }
+    } else { // month
+      for (let i = 0; i < timeCols.length; i++) {
+        if (timeCols[i].date.getFullYear() === dateObj.getFullYear() &&
+            timeCols[i].date.getMonth()    === dateObj.getMonth()) return i;
+      }
+    }
+    return -1;
+  }
+
+  const DATA_COLS       = 7; // Title, Parent, Start, End, Hours, Assignee, Depends On
   const CHART_START_COL = DATA_COLS + 1; // 1-indexed
+  // Bar-column widths by granularity – narrow enough to show many columns but
+  // wide enough that merged bar cells can display title text.
+  const DAY_COL_WIDTH   = 3.5;
+  const WEEK_COL_WIDTH  = 8;
+  const MONTH_COL_WIDTH = 13;
 
   const workbook = new ExcelJS.Workbook();
   const ws = workbook.addWorksheet('Gantt Chart');
 
-  // --- Header Row ---
-  const headerRow = ['Title', 'Parent', 'Start Date', 'End Date', 'Hours', 'Assignee'];
-  dateCols.forEach(d => {
-    const dayStr = String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0');
-    headerRow.push(dayStr);
-  });
+  // ── Header row ─────────────────────────────────────────────────────────────
+  const headerRow = ['Title', 'Parent', 'Start Date', 'End Date', 'Hours', 'Assignee', 'Depends On'];
+  timeCols.forEach(tc => headerRow.push(tc.label));
   ws.addRow(headerRow);
 
-  // Style header
   const hRow = ws.getRow(1);
-  hRow.font = { bold: true, size: 10 };
-  hRow.alignment = { horizontal: 'center', vertical: 'middle' };
-  hRow.height = 22;
+  hRow.font      = { bold: true, size: 10 };
+  hRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  hRow.height    = 28;
   for (let c = 1; c <= headerRow.length; c++) {
     const cell = hRow.getCell(c);
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
-    cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } };
+    cell.font   = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
     cell.border = { bottom: { style: 'thin', color: { argb: 'FF000000' } } };
   }
 
-  // Set column widths
+  // ── Column widths ───────────────────────────────────────────────────────────
   ws.getColumn(1).width = 30; // Title
   ws.getColumn(2).width = 18; // Parent
   ws.getColumn(3).width = 12; // Start
   ws.getColumn(4).width = 12; // End
-  ws.getColumn(5).width = 8;  // Hours
+  ws.getColumn(5).width =  8; // Hours
   ws.getColumn(6).width = 14; // Assignee
-  for (let i = 0; i < dateCols.length; i++) {
-    ws.getColumn(CHART_START_COL + i).width = 3.5;
+  ws.getColumn(7).width = 22; // Depends On
+  const barColWidth = granularity === 'day' ? DAY_COL_WIDTH : (granularity === 'week' ? WEEK_COL_WIDTH : MONTH_COL_WIDTH);
+  for (let i = 0; i < timeCols.length; i++) {
+    ws.getColumn(CHART_START_COL + i).width = barColWidth;
   }
 
-  // --- Data Rows with Gantt bars ---
+  // ── Data rows ───────────────────────────────────────────────────────────────
   flatRows.forEach(({ entry, depth }) => {
-    const member = members.find(m => m.id === entry.user_id);
+    const member      = members.find(m => m.id === entry.user_id);
     const parentTitle = entry.parent_id ? (titleById[entry.parent_id] || '') : '';
-    const indent = depth > 0 ? '  '.repeat(depth) : '';
+    const indent      = depth > 0 ? '  '.repeat(depth) : '';
+    const dependsOn   = (depsOfEntry[entry.id] || [])
+                          .map(sid => titleById[sid] || sid)
+                          .join(', ');
 
     const rowData = [
       indent + entry.title,
@@ -107,76 +169,82 @@ async function exportCSV() {
       entry.end_date,
       entry.hours_estimate || 0,
       member ? member.username : '',
+      dependsOn,
     ];
-
-    // Fill date columns with empty strings
-    dateCols.forEach(() => rowData.push(''));
+    timeCols.forEach(() => rowData.push(''));
 
     ws.addRow(rowData);
-    const excelRow = ws.getRow(ws.rowCount);
-    excelRow.height = 20;
+    const rowNum  = ws.rowCount;
+    const excelRow = ws.getRow(rowNum);
+    excelRow.height = 22;
 
-    // Get bar color
-    const color = U().getUserColor(entry.user_id, entry.color_variation);
-    const argbColor = 'FF' + color.replace('#', '');
-    const fontColor = isColorDark(color) ? 'FFFFFFFF' : 'FF000000';
+    // Title-cell font
+    excelRow.getCell(1).font = depth === 0
+      ? { bold: true, size: 10 }
+      : { size: 10, italic: depth > 1 };
 
-    // Style depth with indentation and font
-    if (depth > 0) {
-      excelRow.getCell(1).font = { size: 10, italic: depth > 1 };
-    } else {
-      excelRow.getCell(1).font = { bold: true, size: 10 };
+    // Wrap long "Depends On" text so multiple dependency names are fully visible
+    excelRow.getCell(7).alignment = { wrapText: true, vertical: 'middle' };
+
+    // ── Gantt bar ─────────────────────────────────────────────────────────────
+    const startDate   = new Date(entry.start_date + 'T00:00:00');
+    const endDate     = new Date(entry.end_date   + 'T00:00:00');
+    const startColIdx = timeColOf(startDate);
+    const endColIdx   = timeColOf(endDate);
+
+    if (startColIdx >= 0 && endColIdx >= 0) {
+      const color     = U().getUserColor(entry.user_id, entry.color_variation);
+      const argbColor = 'FF' + color.replace('#', '');
+      const fontColor = isColorDark(color) ? 'FFFFFFFF' : 'FF000000';
+
+      const colA = CHART_START_COL + startColIdx;
+      const colB = CHART_START_COL + endColIdx;
+
+      // Merge the bar cells so the title can span the full bar width
+      if (colB > colA) {
+        ws.mergeCells(rowNum, colA, rowNum, colB);
+      }
+
+      const barCell = ws.getRow(rowNum).getCell(colA);
+      barCell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: argbColor } };
+      barCell.value     = entry.title;
+      barCell.font      = { size: 9, bold: depth === 0, color: { argb: fontColor } };
+      barCell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: false };
     }
 
-    // Color the Gantt bar cells
-    const startDate = new Date(entry.start_date + 'T00:00:00');
-    const endDate = new Date(entry.end_date + 'T00:00:00');
-
-    dateCols.forEach((d, i) => {
-      const colIdx = CHART_START_COL + i;
-      const cell = excelRow.getCell(colIdx);
-
-      if (d >= startDate && d <= endDate) {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argbColor } };
-        // Show title on the first day of the bar
-        if (d.getTime() === startDate.getTime()) {
-          cell.value = entry.title;
-          cell.font = { size: 8, color: { argb: fontColor } };
-        }
-      }
-    });
-
-    // Add notes as comment on title cell if present
+    // Notes as Excel cell comment
     if (entry.notes) {
       excelRow.getCell(1).note = entry.notes;
     }
 
-    // Light alternating row background for data columns
-    if (ws.rowCount % 2 === 0) {
+    // Alternating row background for the data columns
+    if (rowNum % 2 === 0) {
       for (let c = 1; c <= DATA_COLS; c++) {
         const cell = excelRow.getCell(c);
-        if (!cell.fill || !cell.fill.fgColor) {
+        if (!cell.fill || cell.fill.pattern === 'none') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
         }
       }
     }
   });
 
-  // Add borders to data section
+  // ── Borders on data columns ─────────────────────────────────────────────────
   for (let r = 1; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
     for (let c = 1; c <= DATA_COLS; c++) {
       row.getCell(c).border = {
-        right: c === DATA_COLS ? { style: 'medium', color: { argb: 'FF000000' } } : { style: 'thin', color: { argb: 'FFE0E0E0' } },
+        right:  c === DATA_COLS
+          ? { style: 'medium', color: { argb: 'FF000000' } }
+          : { style: 'thin',   color: { argb: 'FFE0E0E0' } },
         bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } },
       };
     }
   }
 
-  // Freeze panes: freeze header row and data columns
+  // Freeze panes: header row + data columns
   ws.views = [{ state: 'frozen', xSplit: DATA_COLS, ySplit: 1 }];
 
-  // --- Generate and download ---
+  // ── Generate and download ──────────────────────────────────────────────────
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url  = URL.createObjectURL(blob);
