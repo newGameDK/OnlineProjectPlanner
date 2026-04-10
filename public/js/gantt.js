@@ -3195,6 +3195,10 @@
       path.setAttribute('stroke-width', '1.8');
       path.setAttribute('fill', 'none');
       path.classList.add('dep-arrow');
+      path.dataset.sourceId = dep.source_id;
+      path.dataset.targetId = dep.target_id;
+      path.dataset.x1 = x1;
+      path.dataset.x2 = x2;
 
       // Wide invisible hit-area for easier clicking
       const hitArea = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -3203,6 +3207,10 @@
       hitArea.setAttribute('stroke-width', '14');
       hitArea.setAttribute('fill', 'none');
       hitArea.classList.add('dep-arrow-hit');
+      hitArea.dataset.sourceId = dep.source_id;
+      hitArea.dataset.targetId = dep.target_id;
+      hitArea.dataset.x1 = x1;
+      hitArea.dataset.x2 = x2;
       hitArea.style.pointerEvents = 'stroke';
       hitArea.style.cursor        = 'pointer';
       hitArea.title = srcEntry.title + ' \u2192 ' + tgtEntry.title;

@@ -368,6 +368,63 @@ function injectPrintAnnotations(timelineEl, taskListEl, hoursPanelEl) {
   };
 }
 
+/**
+ * After injectPrintAnnotations has expanded row heights, the y-coordinates
+ * stored in dep-arrow SVG paths are stale. This function recomputes them from
+ * the current .gantt-row-bg heights in timelineEl and updates the path `d`
+ * attributes.  Returns a cleanup function that restores the original values
+ * (needed when working on the live DOM; ignored for clones).
+ */
+function fixClonedDepArrows(timelineEl) {
+  const MIN_BEZIER_CP = 20;
+  const DEFAULT_H     = 40;
+
+  const svg = timelineEl.querySelector('#depArrowsSvg');
+  if (!svg) return function () {};
+
+  // Build new Y-center map from current (possibly expanded) row heights
+  const newRowYMap = {};
+  let cumY = 0;
+  Array.from(timelineEl.querySelectorAll('.gantt-row-bg')).forEach(rowBg => {
+    const id = rowBg.dataset.id;
+    const h  = parseFloat(rowBg.style.height) || DEFAULT_H;
+    if (id) newRowYMap[id] = cumY + h / 2;
+    cumY += h;
+  });
+
+  // Same-row entries share their owner's Y center
+  (S().ganttEntries || []).forEach(e => {
+    const ownerId = String(e.same_row);
+    if (e.same_row && newRowYMap[ownerId] !== undefined) {
+      newRowYMap[String(e.id)] = newRowYMap[ownerId];
+    }
+  });
+
+  // Update every dep-arrow / dep-arrow-hit path; save originals for restore
+  const saved = [];
+  Array.from(svg.querySelectorAll('.dep-arrow, .dep-arrow-hit')).forEach(path => {
+    const srcId = path.dataset.sourceId;
+    const tgtId = path.dataset.targetId;
+    const x1    = parseFloat(path.dataset.x1);
+    const x2    = parseFloat(path.dataset.x2);
+    const y1    = newRowYMap[srcId];
+    const y2    = newRowYMap[tgtId];
+    if (y1 === undefined || y2 === undefined || isNaN(x1) || isNaN(x2)) return;
+
+    saved.push({ el: path, d: path.getAttribute('d') });
+
+    const dx  = Math.abs(x2 - x1);
+    const cpx = Math.max(dx * 0.25, MIN_BEZIER_CP);
+    path.setAttribute('d',
+      'M ' + x1 + ' ' + y1 +
+      ' C ' + (x1 + cpx) + ' ' + y1 + ',' +
+      (x2 - cpx) + ' ' + y2 + ',' +
+      x2 + ' ' + y2);
+  });
+
+  return function () { saved.forEach(({ el, d }) => el.setAttribute('d', d)); };
+}
+
 function exportPDF() {
   if (!S().currentProject) return alert('Open a project first.');
 
@@ -430,8 +487,10 @@ function exportPDF() {
   if (numPages <= 1) {
     // Single page – inject print annotations then print
     const restoreAnnotations = injectPrintAnnotations(ganttTimeline, ganttTaskList, ganttHoursPanel);
+    const restoreArrows = fixClonedDepArrows(ganttTimeline);
     const afterPrint = () => {
       restoreAnnotations();
+      restoreArrows();
       cleanup();
       window.removeEventListener('afterprint', afterPrint);
     };
@@ -511,6 +570,7 @@ function exportPDF() {
     // Inject print annotations (expands rows, adds callouts) on the clones.
     // No cleanup needed – clones are discarded after printing.
     injectPrintAnnotations(tlC, taskC, hpC);
+    fixClonedDepArrows(tlC);
 
     row.appendChild(taskC);
 
