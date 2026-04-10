@@ -281,7 +281,10 @@ function setupEventListeners() {
   // User panel toggle
   document.getElementById('userAvatarBtn').addEventListener('click', (e) => {
     e.stopPropagation();
-    document.getElementById('userPanel').classList.toggle('hidden');
+    const panel = document.getElementById('userPanel');
+    const wasHidden = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden');
+    if (wasHidden) refreshUpdateBtnLabel();
   });
   document.addEventListener('click', () => {
     document.getElementById('userPanel').classList.add('hidden');
