@@ -1768,6 +1768,53 @@
     }
   }
 
+  // Recalculate bar heights in a rowBg based on current overlap state.
+  // Called both from renderRowsAndBars (via the inline logic) and live from
+  // onMouseMove so bars pop to full height as soon as they stop overlapping
+  // during a drag — without waiting for a full re-render.
+  function _recalcRowLanes(rowBg) {
+    const rh = parseFloat(rowBg.style.height);
+    if (!rh) return;
+    const barPad = Math.max(4, Math.round(rh * 0.1));
+    const allC = rowBg.querySelectorAll('.gantt-bar-container');
+    if (allC.length < 2) {
+      if (allC.length === 1) {
+        allC[0].style.top    = barPad + 'px';
+        allC[0].style.height = Math.max(16, rh - barPad * 2) + 'px';
+      }
+      return;
+    }
+    const ivs = [];
+    allC.forEach(c => {
+      const l = parseFloat(c.style.left);
+      const w = parseFloat(c.style.width);
+      ivs.push({ el: c, left: l, right: l + w });
+    });
+    ivs.sort((a, b) => a.left - b.left);
+    const lanes = [];
+    ivs.forEach(iv => {
+      let placed = false;
+      for (let i = 0; i < lanes.length; i++) {
+        if (lanes[i][lanes[i].length - 1].right <= iv.left + 0.5) {
+          lanes[i].push(iv); iv.lane = i; placed = true; break;
+        }
+      }
+      if (!placed) { iv.lane = lanes.length; lanes.push([iv]); }
+    });
+    if (lanes.length > 1) {
+      const laneH = (rh - barPad * 2) / lanes.length;
+      ivs.forEach(iv => {
+        iv.el.style.top    = (barPad + iv.lane * laneH) + 'px';
+        iv.el.style.height = Math.max(16, laneH) + 'px';
+      });
+    } else {
+      ivs.forEach(iv => {
+        iv.el.style.top    = barPad + 'px';
+        iv.el.style.height = Math.max(16, rh - barPad * 2) + 'px';
+      });
+    }
+  }
+
   // =========================================================================
   // Milestones / Deadlines
   // =========================================================================
@@ -2510,6 +2557,13 @@
             hideSnapLine();
           }
         }
+      }
+
+      // Live lane-height recalculation: as the bar moves, update heights so
+      // bars pop to full height as soon as they stop overlapping (and shrink
+      // back into lanes if they start overlapping again).
+      if (drag.containerEl && drag.containerEl.parentElement) {
+        _recalcRowLanes(drag.containerEl.parentElement);
       }
 
       // Update tooltip with day-snapped dates
