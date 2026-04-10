@@ -4042,12 +4042,16 @@
         if (e.id in idMap) continue; // already created in a prior root's iteration
         // Determine parent: root entries go to pasteParentId; children of pasted entries
         // use their new mapped parent; same_row extras whose original parent_id wasn't in
-        // the copied set also fall back to pasteParentId so they land at the paste level.
+        // the copied set become children of their row owner (idMap[e.same_row]) so they
+        // remain descendants of the pasted root and are cascade-deleted with it.
+        // Only fall back to pasteParentId when the row owner was also not pasted.
         const newParentId = e.id === rootId
           ? pasteParentId
           : (e.parent_id != null && e.parent_id in idMap
               ? idMap[e.parent_id]
-              : pasteParentId);
+              : (e.same_row != null && e.same_row in idMap
+                  ? idMap[e.same_row]
+                  : pasteParentId));
         const rawStart = parseDate(e.start_date);
         const rawEnd   = parseDate(e.end_date);
         const newStart = rawStart ? toDateStr(addDays(rawStart, sharedDayOffset)) : toDateStr(pasteStart);
