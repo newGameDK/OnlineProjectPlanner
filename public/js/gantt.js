@@ -2545,9 +2545,33 @@
           const rowsRect = ganttRows.getBoundingClientRect();
           const relY = e.clientY - rowsRect.top;
           const vis = visibleEntries();
-          const curRowIdx = Math.floor(relY / ROW_H);
-          const posInRow = relY - curRowIdx * ROW_H;
-          const threshold = ROW_H * 0.3;
+
+          // Build cumulative row tops accounting for variable row heights
+          const rowTops = [];
+          const rowHeights = [];
+          let cumRowY = 0;
+          vis.forEach(en => {
+            rowTops.push(cumRowY);
+            const rh = getEffectiveEntryRowHeight(en);
+            rowHeights.push(rh);
+            cumRowY += rh;
+          });
+
+          // Find which row contains relY
+          let curRowIdx = vis.length; // default: below all rows
+          let rowTopY = cumRowY;
+          let curRowH = ROW_H;
+          for (let i = 0; i < vis.length; i++) {
+            if (relY < rowTops[i] + rowHeights[i]) {
+              curRowIdx = i;
+              rowTopY = rowTops[i];
+              curRowH = rowHeights[i];
+              break;
+            }
+          }
+
+          const posInRow = relY - rowTopY;
+          const threshold = curRowH * 0.3;
 
           if (curRowIdx >= 0 && curRowIdx < vis.length && curRowIdx !== drag.origRowIndex) {
             const targetId = vis[curRowIdx].id;
@@ -2556,7 +2580,7 @@
             let dropMode;
             if (posInRow < threshold) {
               dropMode = 'between-before';
-            } else if (posInRow > ROW_H - threshold) {
+            } else if (posInRow > curRowH - threshold) {
               dropMode = 'between-after';
             } else {
               dropMode = 'onto';
@@ -2580,7 +2604,7 @@
             if (dropMode === 'between-before') {
               const ind = document.createElement('div');
               ind.className = 'bar-row-drop-line';
-              ind.style.top = (curRowIdx * ROW_H) + 'px';
+              ind.style.top = rowTopY + 'px';
               ganttRows.appendChild(ind);
               drag.rowDropIndicatorEl = ind;
               const taskInd = document.createElement('div');
@@ -2595,7 +2619,7 @@
             } else if (dropMode === 'between-after') {
               const ind = document.createElement('div');
               ind.className = 'bar-row-drop-line';
-              ind.style.top = ((curRowIdx + 1) * ROW_H) + 'px';
+              ind.style.top = (rowTopY + curRowH) + 'px';
               ganttRows.appendChild(ind);
               drag.rowDropIndicatorEl = ind;
               const taskInd = document.createElement('div');
@@ -2611,8 +2635,8 @@
               // Onto: box around this row → share row
               const ind = document.createElement('div');
               ind.className = 'bar-row-drop-box';
-              ind.style.top = (curRowIdx * ROW_H) + 'px';
-              ind.style.height = ROW_H + 'px';
+              ind.style.top = rowTopY + 'px';
+              ind.style.height = curRowH + 'px';
               ganttRows.appendChild(ind);
               drag.rowDropIndicatorEl = ind;
               const taskRow = ganttTaskList.querySelector('.gantt-task-row[data-id="' + targetId + '"]');
@@ -2626,7 +2650,7 @@
               drag.rowDropTargetId = vis[lastIdx].id;
               const ind = document.createElement('div');
               ind.className = 'bar-row-drop-line';
-              ind.style.top = (vis.length * ROW_H) + 'px';
+              ind.style.top = cumRowY + 'px';
               ganttRows.appendChild(ind);
               drag.rowDropIndicatorEl = ind;
             }
