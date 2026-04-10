@@ -56,7 +56,8 @@
   // rowYMap: entryId -> Y-center position in px (accounts for variable row heights)
   let rowYMap = {};
   let timelineContextRowId = null;
-  let _sanitizeIntervalId = null; // periodic recalculation timer
+  let _sanitizeIntervalId = null;    // periodic recalculation timer
+  const _pendingRowHeightFix = new Set(); // entry IDs whose row_height needs DB reset
 
   // ─── Sanitize entries ────────────────────────────────────────────────────
   // Remove orphaned entries whose parent no longer exists (cascade), and
@@ -99,6 +100,22 @@
     state.ganttEntries.forEach(e => {
       if (e.same_row && !finalIds.has(e.same_row)) {
         e.same_row = null;
+        changed = true;
+      }
+    });
+
+    // 3. Reset row_height values that are below the enforced UI minimum (28 px).
+    //    Values below this threshold can only have been written by an older buggy
+    //    code path (e.g. accidentally saving a lane height instead of the full
+    //    row height).  getEntryRowHeight() already clamps for rendering, but
+    //    clearing the stored value entirely restores the default ROW_H so bars
+    //    appear at their correct full height again.  IDs are queued for DB
+    //    persistence so the fix survives page reloads.
+    state.ganttEntries.forEach(e => {
+      const h = parseInt(e.row_height, 10);
+      if (Number.isFinite(h) && h < 28) {
+        e.row_height = null;
+        _pendingRowHeightFix.add(e.id);
         changed = true;
       }
     });
@@ -686,10 +703,32 @@
 
     // Periodic recalculation: sanitize stale entries and re-render every
     // 60 seconds so deleted-task hours never linger in the totals.
+    // Also persists any row_height corrections queued by sanitizeEntries()
+    // so they survive across page reloads.
     if (_sanitizeIntervalId) clearInterval(_sanitizeIntervalId);
-    _sanitizeIntervalId = setInterval(() => {
-      if (!S().currentProject) return;
-      render();
+    let _sanitizeBusy = false;
+    _sanitizeIntervalId = setInterval(async () => {
+      if (!S().currentProject || _sanitizeBusy) return;
+      _sanitizeBusy = true;
+      try {
+        // Drain the set of IDs whose corrupted row_height (< 28 px) was already
+        // cleared in JS state by sanitizeEntries().  Persist null to the DB in
+        // parallel so the fix is not lost on the next page load.  Re-queue any
+        // IDs whose API call failed so they are retried on the next tick.
+        if (_pendingRowHeightFix.size > 0) {
+          const ids = [..._pendingRowHeightFix];
+          _pendingRowHeightFix.clear();
+          const results = await Promise.allSettled(
+            ids.map(id => API('PUT', '/api/gantt/' + id, { row_height: null }))
+          );
+          results.forEach((result, i) => {
+            if (result.status === 'rejected') _pendingRowHeightFix.add(ids[i]);
+          });
+        }
+        render();
+      } finally {
+        _sanitizeBusy = false;
+      }
     }, 60000);
 
     render();
