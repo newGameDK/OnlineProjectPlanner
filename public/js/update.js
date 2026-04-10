@@ -14,6 +14,54 @@ const MAX_ROLLBACK_VERSIONS = 5;
 const _updAPI = (m, u, b) => window.appAPI(m, u, b);
 
 /**
+ * Refresh the label of the #updateBtn in the user panel based on what
+ * action would be taken (update, rollback, or generic install).
+ * Called once on page load so the button reflects release state before
+ * the modal is opened.
+ */
+async function refreshUpdateBtnLabel() {
+  const btn = document.getElementById('updateBtn');
+  if (!btn) return;
+  try {
+    let currentVersion = '';
+    try {
+      const vRes = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
+      if (vRes.ok) { const vData = await vRes.json(); currentVersion = vData.version || ''; }
+    } catch { /* ignore */ }
+
+    const res = await fetch(apiUrl('/api/github-releases'), { credentials: 'include' });
+    if (!res.ok) return;
+    const releases = await res.json();
+    if (!Array.isArray(releases) || !releases.length) return;
+
+    const stripV = tag => tag.replace(/^v/, '');
+    const currentIdx = releases.findIndex(r => stripV(r.tag) === currentVersion);
+
+    let hasNewer = false;
+    let hasOlder = false;
+    for (let i = 0; i < releases.length; i++) {
+      const r = releases[i];
+      if (currentVersion && stripV(r.tag) === currentVersion) continue;
+      if (!r.assets || !r.assets.find(a => a.name.endsWith('.zip'))) continue;
+      if (currentIdx >= 0 && i > currentIdx) {
+        hasOlder = true;
+      } else {
+        hasNewer = true;
+      }
+    }
+
+    if (hasNewer) {
+      btn.textContent = '⬆ Update App';
+    } else if (hasOlder) {
+      btn.textContent = '⏪ Roll Back to This Version';
+    } else if (!currentVersion) {
+      btn.textContent = '⬇ Install Selected Version';
+    }
+    // else: already on latest or no assets – leave original label unchanged
+  } catch { /* silently ignore – button keeps its default label */ }
+}
+
+/**
  * Open the Update Application modal.
  *
  * Checks admin status first, then lists available GitHub releases and allows
