@@ -3103,7 +3103,7 @@
       ganttHoursPanel.appendChild(row);
     });
 
-    // Update panel header with view total (sum of root-level visible entries' own hours).
+    // Update panel header with view total (recursive sum of all root-level entries' subtrees).
     const header = document.getElementById('ganttHoursHeader');
     if (header) {
       const t = entries
@@ -3115,19 +3115,36 @@
   }
 
   /**
-   * Hours for an entry: always returns the entry's own hours_estimate.
-   * Sub-tasks do not affect the parent's hours.
+   * Hours for an entry: returns the entry's own hours_estimate plus the hours
+   * of all same-row partners and all descendant entries (recursive).
    */
-  function calcTotalHours(entryId) {
+  function calcTotalHours(entryId, _visited) {
+    if (!_visited) _visited = new Set();
+    if (_visited.has(entryId)) return 0;
+    _visited.add(entryId);
+
     const entry = S().ganttEntries.find(e => e.id === entryId);
     if (!entry) return 0;
-    return +(entry.hours_estimate) || 0;
+
+    let total = +(entry.hours_estimate) || 0;
+
+    // Add hours from entries sharing this row
+    S().ganttEntries
+      .filter(e => e.same_row === entryId)
+      .forEach(e => { total += calcTotalHours(e.id, _visited); });
+
+    // Add hours from child entries (subtasks)
+    S().ganttEntries
+      .filter(e => e.parent_id === entryId)
+      .forEach(e => { total += calcTotalHours(e.id, _visited); });
+
+    return total;
   }
 
   // calcTreeTotal, calcViewTotal, and calcRemainingHours are kept as aliases so
   // that call-sites throughout the module continue to work without change.
-  function calcTreeTotal(entryId)     { return calcTotalHours(entryId); }
-  function calcViewTotal(entryId)     { return calcTotalHours(entryId); }
+  function calcTreeTotal(entryId)      { return calcTotalHours(entryId); }
+  function calcViewTotal(entryId)      { return calcTotalHours(entryId); }
   function calcRemainingHours(entryId) { return calcTotalHours(entryId); }
 
   function fmtH(h) {
