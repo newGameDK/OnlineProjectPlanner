@@ -193,6 +193,181 @@ async function exportCSV() {
 // Export: PDF via browser print (A4, multi-page)
 // ==========================================================================
 
+/**
+ * Expand row heights and add callout annotations for narrow bars to improve
+ * print readability. Wide bars (>= CALLOUT_W px) get text-wrapping enabled;
+ * narrow bars get a labelled callout with a dashed connecting line.
+ * Expanded heights are synced to taskListEl and hoursPanelEl if provided.
+ *
+ * Returns a cleanup function (call it after print when working on the live DOM).
+ * When working on clones the return value can be ignored.
+ *
+ * @param {Element}      timelineEl  – .gantt-timeline element
+ * @param {Element|null} taskListEl  – .gantt-tasks element (optional)
+ * @param {Element|null} hoursPanelEl – .gantt-hours-panel element (optional)
+ */
+function injectPrintAnnotations(timelineEl, taskListEl, hoursPanelEl) {
+  const DEFAULT_H   = 40;          // default row height (ROW_H in gantt.js)
+  const MAX_H       = DEFAULT_H * 3; // cap at 3× default for readability
+  const CALLOUT_W   = 50;          // bars narrower than this get a callout
+  const CHAR_W      = 7;           // approx px per character at 11 px font
+  const LINE_H      = 14;          // approx line-height inside a bar
+  const BAR_PAD_V   = 8;           // top + bottom padding inside the bar
+  const CALLOUT_H   = 18;          // height of each callout label row
+  const CALLOUT_GAP = 4;           // gap between bar bottom and first callout
+
+  // Saved state for live-DOM cleanup
+  const savedRowH  = []; // { el, v }
+  const savedTaskH = []; // { el, mh, h }
+  const savedHrH   = []; // { el, h }
+  const savedBarH  = []; // { el, h }
+  const addedTalls = []; // .gantt-bar elements that got gantt-bar-tall for print
+
+  const rowBgs   = Array.from(timelineEl.querySelectorAll('.gantt-row-bg'));
+  const taskRows = taskListEl  ? Array.from(taskListEl.querySelectorAll('.gantt-task-row'))   : [];
+  const hrRows   = hoursPanelEl ? Array.from(hoursPanelEl.querySelectorAll('.gantt-hours-row')) : [];
+
+  rowBgs.forEach((rowBg, rowIdx) => {
+    const bars = Array.from(rowBg.querySelectorAll('.gantt-bar-container'));
+    if (!bars.length) return;
+
+    const origRowH = parseFloat(rowBg.style.height) || DEFAULT_H;
+    let newRowH = origRowH;
+
+    // ── Wide bars: expand bar to show wrapped text ─────────────────────────
+    bars.forEach(bc => {
+      const bw = parseFloat(bc.style.width) || 0;
+      if (bw < CALLOUT_W) return;
+
+      const bar = bc.querySelector('.gantt-bar');
+      const lbl = bc.querySelector('.gantt-bar-label');
+      if (!bar || !lbl) return;
+
+      const title = lbl.textContent.trim();
+      if (!title) return;
+
+      const charsPerLine = Math.max(1, Math.floor((bw - 12) / CHAR_W));
+      const linesNeeded  = Math.ceil(title.length / charsPerLine);
+      const neededBarH   = Math.max(20, linesNeeded * LINE_H + BAR_PAD_V);
+      const barTopPx     = parseFloat(bc.style.top) || 4;
+      const neededRowH   = Math.min(MAX_H, neededBarH + barTopPx * 2);
+
+      if (neededRowH > newRowH) newRowH = neededRowH;
+
+      const origBarH = parseFloat(bc.style.height) || (origRowH - barTopPx * 2);
+      if (neededBarH > origBarH) {
+        savedBarH.push({ el: bc, h: bc.style.height });
+        bc.style.height = neededBarH + 'px';
+
+        if (!bar.classList.contains('gantt-bar-tall')) {
+          bar.classList.add('gantt-bar-tall');
+          bar.dataset.printTall = '1';
+          addedTalls.push(bar);
+        }
+        bar.classList.remove('gantt-bar-hide-label');
+        lbl.style.whiteSpace   = 'normal';
+        lbl.style.wordBreak    = 'break-word';
+        lbl.style.overflow     = 'visible';
+        lbl.style.textOverflow = 'clip';
+      }
+    });
+
+    // ── Narrow bars: callout labels with dashed connecting lines ───────────
+    const narrowBars = bars.filter(bc => (parseFloat(bc.style.width) || 0) < CALLOUT_W);
+    if (narrowBars.length) {
+      const calloutStart = origRowH + CALLOUT_GAP;
+      const extraNeeded  = narrowBars.length * (CALLOUT_H + 2);
+      newRowH = Math.min(MAX_H, Math.max(newRowH, calloutStart + extraNeeded));
+
+      // SVG overlay for the connecting lines
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'print-callout-svg');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.style.cssText =
+        'position:absolute;left:0;top:0;width:100%;pointer-events:none;z-index:8;overflow:visible;';
+      svg.style.height = newRowH + 'px';
+      rowBg.appendChild(svg);
+
+      let cy = calloutStart;
+      narrowBars.forEach(bc => {
+        if (cy + CALLOUT_H > newRowH) return; // no room left
+
+        const barLeft = parseFloat(bc.style.left) || 0;
+        const barW    = parseFloat(bc.style.width) || 4;
+        const barTopV = parseFloat(bc.style.top)   || 4;
+        const barH    = parseFloat(bc.style.height) || (origRowH - 8);
+        const barMidX = barLeft + barW / 2;
+        const barBotY = barTopV + barH;
+
+        const lbl   = bc.querySelector('.gantt-bar-label');
+        const title = lbl ? lbl.textContent.trim() : '';
+        if (!title) { cy += CALLOUT_H + 2; return; }
+
+        // Callout label
+        const callout = document.createElement('div');
+        callout.className = 'print-bar-callout';
+        callout.textContent = title;
+        callout.style.cssText =
+          `position:absolute;left:${barMidX}px;top:${cy}px;height:${CALLOUT_H}px;`;
+        rowBg.appendChild(callout);
+
+        // Dashed connecting line from bar bottom to callout
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', barMidX);
+        line.setAttribute('y1', barBotY);
+        line.setAttribute('x2', barMidX);
+        line.setAttribute('y2', cy);
+        line.setAttribute('stroke', '#666');
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('stroke-dasharray', '3,2');
+        svg.appendChild(line);
+
+        cy += CALLOUT_H + 2;
+      });
+    }
+
+    // Apply expanded row height and sync sibling panels
+    if (newRowH !== origRowH) {
+      savedRowH.push({ el: rowBg, v: rowBg.style.height });
+      rowBg.style.height = newRowH + 'px';
+
+      const taskRow = taskRows[rowIdx];
+      if (taskRow) {
+        savedTaskH.push({ el: taskRow, mh: taskRow.style.minHeight, h: taskRow.style.height });
+        taskRow.style.minHeight = newRowH + 'px';
+        taskRow.style.height    = newRowH + 'px';
+      }
+
+      const hrRow = hrRows[rowIdx];
+      if (hrRow) {
+        savedHrH.push({ el: hrRow, h: hrRow.style.height });
+        hrRow.style.height = newRowH + 'px';
+      }
+    }
+  });
+
+  // Return cleanup function (used when working on the live DOM)
+  return function cleanupPrintAnnotations() {
+    timelineEl.querySelectorAll('.print-bar-callout, .print-callout-svg')
+      .forEach(el => el.remove());
+    savedBarH.forEach(({ el, h })       => { el.style.height = h; });
+    savedRowH.forEach(({ el, v })       => { el.style.height = v; });
+    savedTaskH.forEach(({ el, mh, h }) => { el.style.minHeight = mh; el.style.height = h; });
+    savedHrH.forEach(({ el, h })        => { el.style.height = h; });
+    addedTalls.forEach(bar => {
+      bar.classList.remove('gantt-bar-tall');
+      delete bar.dataset.printTall;
+      const lbl = bar.querySelector('.gantt-bar-label');
+      if (lbl) {
+        lbl.style.whiteSpace   = '';
+        lbl.style.wordBreak    = '';
+        lbl.style.overflow     = '';
+        lbl.style.textOverflow = '';
+      }
+    });
+  };
+}
+
 function exportPDF() {
   if (!S().currentProject) return alert('Open a project first.');
 
@@ -253,8 +428,13 @@ function exportPDF() {
   };
 
   if (numPages <= 1) {
-    // Single page – just print as before
-    const afterPrint = () => { cleanup(); window.removeEventListener('afterprint', afterPrint); };
+    // Single page – inject print annotations then print
+    const restoreAnnotations = injectPrintAnnotations(ganttTimeline, ganttTaskList, ganttHoursPanel);
+    const afterPrint = () => {
+      restoreAnnotations();
+      cleanup();
+      window.removeEventListener('afterprint', afterPrint);
+    };
     window.addEventListener('afterprint', afterPrint);
     window.print();
     return;
@@ -312,9 +492,26 @@ function exportPDF() {
     row.style.display = 'flex';
     row.style.overflow = 'hidden';
 
-    // Task list
+    // Create all three panel clones before injecting annotations so heights
+    // can be synchronised across panels in one pass.
     const taskC = ganttTaskList.cloneNode(true);
     taskC.removeAttribute('id');
+
+    const tlC = ganttTimeline.cloneNode(true);
+    tlC.removeAttribute('id');
+    tlC.style.overflow = 'visible';
+    tlC.style.marginLeft = (-offset) + 'px';
+
+    let hpC = null;
+    if (ganttHoursPanel) {
+      hpC = ganttHoursPanel.cloneNode(true);
+      hpC.removeAttribute('id');
+    }
+
+    // Inject print annotations (expands rows, adds callouts) on the clones.
+    // No cleanup needed – clones are discarded after printing.
+    injectPrintAnnotations(tlC, taskC, hpC);
+
     row.appendChild(taskC);
 
     // Timeline viewport (clips to one page-width)
@@ -324,10 +521,6 @@ function exportPDF() {
     vp.style.flexShrink = '0';
     vp.style.position = 'relative';
 
-    const tlC = ganttTimeline.cloneNode(true);
-    tlC.removeAttribute('id');
-    tlC.style.overflow = 'visible';
-    tlC.style.marginLeft = (-offset) + 'px';
     vp.appendChild(tlC);
 
     // Overlap alignment marks (dashed lines)
@@ -354,9 +547,7 @@ function exportPDF() {
     row.appendChild(vp);
 
     // Hours panel
-    if (ganttHoursPanel) {
-      const hpC = ganttHoursPanel.cloneNode(true);
-      hpC.removeAttribute('id');
+    if (hpC) {
       row.appendChild(hpC);
     }
 

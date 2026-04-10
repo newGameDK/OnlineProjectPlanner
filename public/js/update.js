@@ -51,9 +51,9 @@ async function refreshUpdateBtnLabel() {
     }
 
     if (hasNewer) {
-      btn.textContent = '⬆ Update App';
+      btn.textContent = '⬆ Update';
     } else if (hasOlder) {
-      btn.textContent = '⏪ Roll Back to This Version';
+      btn.textContent = '⏪ Rollback Version';
     } else if (!currentVersion) {
       btn.textContent = '⬇ Install Selected Version';
     }

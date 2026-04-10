@@ -1044,6 +1044,20 @@ html.is-mobile .sidebar-backdrop.visible { display: block; }
 
   body.print-gantt .gantt-row-bg { page-break-inside: avoid; }
 
+  /* Print callout annotations for narrow bars */
+  .print-bar-callout {
+    font-size: 9px; font-weight: 600; white-space: nowrap;
+    color: #222; background: rgba(255,255,255,0.93);
+    padding: 1px 4px; border-radius: 2px; line-height: 16px;
+    max-width: 180px; overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 0 1px 3px rgba(0,0,0,.18);
+    pointer-events: none;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .print-callout-svg line {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+
   /* Multi-page horizontal tiling */
   body.print-gantt .print-multi-wrapper { display: block; }
   body.print-gantt .print-page-section { overflow: hidden; }
