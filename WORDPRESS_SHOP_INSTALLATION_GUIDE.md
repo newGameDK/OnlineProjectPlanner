@@ -41,7 +41,7 @@ This creates an install ZIP with the correct structure for shared hosting and in
 2. Mark it as **Virtual** and **Downloadable**.
 3. Upload `onlineprojectplanner-install.zip` as the downloadable file.
 4. Add short install notes in product description:
-   - “Upload extracted files to your hosting directory (for example `public_html/planner/`).”
+   - “Create a folder like `public_html/planner/` (or use root), then upload extracted files there.”
    - “Requires PHP + PDO SQLite.”
    - “Not a WordPress plugin; runs as a standalone web app.”
 
@@ -49,16 +49,16 @@ This creates an install ZIP with the correct structure for shared hosting and in
 
 1. Download ZIP from your WordPress shop account.
 2. Extract ZIP locally.
-3. Upload extracted files to their own hosting folder, for example:
-   - `public_html/planner/`
-4. Verify backend health:
+3. In hosting (cPanel/FTP), create a target folder if needed, for example `public_html/planner/`.
+4. Upload extracted files into that folder so `index.html` is directly inside `planner/` (not inside an extra nested folder).
+5. Verify backend health:
    - `https://their-domain.com/planner/api/router.php?_route=health`
    - Should return: `{"ok":true}`
-5. If needed, run diagnostics:
+6. If needed, run diagnostics:
    - `https://their-domain.com/planner/api/router.php?_route=diag`
-6. Open:
+7. Open:
    - `https://their-domain.com/planner/index.html`
-7. Register first user account. Database is auto-created at first API use (`api/data/planner.db`).
+8. Register first user account. Database is auto-created at first API use (`api/data/planner.db`).
 
 ## 6) Optional WordPress integration (still non-plugin)
 
@@ -76,5 +76,5 @@ For each new release:
 
 1. Build a new ZIP from updated `public/` contents.
 2. Replace the downloadable file in the WordPress product.
-3. Tell customers to overwrite existing app files but keep `api/data/` (contains their database).
-
+3. Tell customers to make a backup copy of `api/data/planner.db` before updating.
+4. Tell customers to overwrite existing app files but keep `api/data/` (contains their database).
