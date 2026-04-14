@@ -485,7 +485,7 @@ function realignDependencyArrowsForPrint(timelineEl) {
     return bar || null;
   };
 
-  let depPathIdx = 0;
+  let depPathIndex = 0;
   deps.forEach(dep => {
     const srcBar = getBar(dep.source_id);
     const tgtBar = getBar(dep.target_id);
@@ -516,9 +516,9 @@ function realignDependencyArrowsForPrint(timelineEl) {
               (x2 - cpx) + ' ' + y2 + ',' +
               x2 + ' ' + y2;
 
-    const depPath = depPaths[depPathIdx];
-    const hitPath = hitPaths[depPathIdx];
-    const delBtn  = delBtns[depPathIdx];
+    const depPath = depPaths[depPathIndex];
+    const hitPath = hitPaths[depPathIndex];
+    const delBtn  = delBtns[depPathIndex];
 
     if (depPath) {
       saveAttr(depPath, 'd');
@@ -534,7 +534,7 @@ function realignDependencyArrowsForPrint(timelineEl) {
       saveAttr(delBtn, 'transform');
       delBtn.setAttribute('transform', 'translate(' + mx + ',' + my + ')');
     }
-    depPathIdx++;
+    depPathIndex++;
   });
 
   return function cleanupDepPrintRealign() {
@@ -562,7 +562,7 @@ function exportPDF() {
   const intensityBar    = document.getElementById('intensityBarContainer');
   const depsWereHidden  = ganttTimeline ? ganttTimeline.classList.contains('deps-hidden') : false;
 
-  const stripId = (root) => {
+  const removeIdAttribute = (root) => {
     if (!root) return;
     if (root.removeAttribute) root.removeAttribute('id');
   };
@@ -661,7 +661,7 @@ function exportPDF() {
     // --- Intensity bar clone ---
     if (intensityBar) {
       const iClone = intensityBar.cloneNode(true);
-      stripId(iClone);
+      removeIdAttribute(iClone);
       iClone.style.width = PAGE_W + 'px';
       // Replace cloned canvas with image snapshot
       if (canvasDataUrl) {
@@ -700,7 +700,7 @@ function exportPDF() {
     // --- Ruler row clone ---
     if (ganttRulerRow) {
       const rulerC = ganttRulerRow.cloneNode(true);
-      stripId(rulerC);
+      removeIdAttribute(rulerC);
       rulerC.style.width = PAGE_W + 'px';
 
       const taskSpacer = rulerC.querySelector('.gantt-ruler-task-spacer');
@@ -744,14 +744,14 @@ function exportPDF() {
     // Create all three panel clones before injecting annotations so heights
     // can be synchronised across panels in one pass.
     const taskC = ganttTaskList.cloneNode(true);
-    stripId(taskC);
+    removeIdAttribute(taskC);
     taskC.style.width = taskListW + 'px';
     taskC.style.minWidth = taskListW + 'px';
     taskC.style.flex = 'none';
     taskC.style.overflow = 'visible';
 
     const tlC = ganttTimeline.cloneNode(true);
-    stripId(tlC);
+    removeIdAttribute(tlC);
     tlC.style.overflow = 'visible';
     tlC.style.width = timelineTotalW + 'px';
     tlC.style.minWidth = timelineTotalW + 'px';
@@ -762,7 +762,7 @@ function exportPDF() {
     let hpC = null;
     if (ganttHoursPanel) {
       hpC = ganttHoursPanel.cloneNode(true);
-      stripId(hpC);
+      removeIdAttribute(hpC);
       hpC.style.width = hoursW + 'px';
       hpC.style.minWidth = hoursW + 'px';
       hpC.style.flex = 'none';
