@@ -564,6 +564,8 @@ function exportPDF() {
   const intensityBar    = document.getElementById('intensityBarContainer');
   const depsWereHidden  = ganttTimeline ? ganttTimeline.classList.contains('deps-hidden') : false;
 
+  // Remove id attributes from cloned DOM fragments to avoid duplicate IDs in
+  // the live document during print export; preserveIds keeps specific IDs.
   const removeIdAttributes = (root, preserveIds) => {
     if (!root) return;
     const keep = new Set(preserveIds || []);
