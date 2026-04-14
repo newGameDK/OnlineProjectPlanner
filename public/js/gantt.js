@@ -1905,6 +1905,75 @@
     return d;
   }
 
+  function _layoutRowIntervalsByOverlapGroups(intervals, rowHeight, barPad, rowTopForYMap) {
+    if (!intervals || !intervals.length) return;
+
+    intervals.sort((a, b) => a.left - b.left);
+
+    // Split into independent overlap groups so bars that do not overlap any
+    // neighbour can remain full height.
+    const groups = [];
+    let current = [];
+    let currentMaxRight = -Infinity;
+    intervals.forEach(iv => {
+      if (!current.length) {
+        current = [iv];
+        currentMaxRight = iv.right;
+        return;
+      }
+      if (iv.left < currentMaxRight - 0.5) {
+        current.push(iv);
+        if (iv.right > currentMaxRight) currentMaxRight = iv.right;
+      } else {
+        groups.push(current);
+        current = [iv];
+        currentMaxRight = iv.right;
+      }
+    });
+    if (current.length) groups.push(current);
+
+    groups.forEach(group => {
+      const lanes = [];
+      group.forEach(iv => {
+        let placed = false;
+        for (let i = 0; i < lanes.length; i++) {
+          const last = lanes[i][lanes[i].length - 1];
+          if (last.right <= iv.left + 0.5) {
+            lanes[i].push(iv);
+            iv.lane = i;
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          iv.lane = lanes.length;
+          lanes.push([iv]);
+        }
+      });
+
+      if (lanes.length > 1) {
+        const laneH = (rowHeight - barPad * 2) / lanes.length;
+        group.forEach(iv => {
+          iv.el.style.top = (barPad + iv.lane * laneH) + 'px';
+          iv.el.style.height = Math.max(16, laneH) + 'px';
+          if (Number.isFinite(rowTopForYMap)) {
+            const barId = iv.el.dataset.id;
+            if (barId) rowYMap[barId] = rowTopForYMap + barPad + iv.lane * laneH + laneH / 2;
+          }
+        });
+      } else {
+        group.forEach(iv => {
+          iv.el.style.top = barPad + 'px';
+          iv.el.style.height = Math.max(16, rowHeight - barPad * 2) + 'px';
+          if (Number.isFinite(rowTopForYMap)) {
+            const barId = iv.el.dataset.id;
+            if (barId) rowYMap[barId] = rowTopForYMap + rowHeight / 2;
+          }
+        });
+      }
+    });
+  }
+
   // ─── rows & bars ──────────────────────────────────────────────────────────
   function renderRowsAndBars(entries, timelineW) {
     ganttRows.style.width = timelineW + 'px';
@@ -1962,43 +2031,15 @@
 
       // ── Overlap detection: split overlapping bars into lanes ───────────
       const allContainers = rowBg.querySelectorAll('.gantt-bar-container');
-      if (allContainers.length > 1) {
+      if (allContainers.length) {
         const intervals = [];
         allContainers.forEach(c => {
           const l = parseFloat(c.style.left);
           const w = parseFloat(c.style.width);
           intervals.push({ el: c, left: l, right: l + w });
         });
-        intervals.sort((a, b) => a.left - b.left);
-        // Greedy lane assignment (calendar-style)
-        const lanes = [];
-        intervals.forEach(iv => {
-          let placed = false;
-          for (let i = 0; i < lanes.length; i++) {
-            const last = lanes[i][lanes[i].length - 1];
-            if (last.right <= iv.left + 0.5) {
-              lanes[i].push(iv);
-              iv.lane = i;
-              placed = true;
-              break;
-            }
-          }
-          if (!placed) { iv.lane = lanes.length; lanes.push([iv]); }
-        });
-        if (lanes.length > 1) {
-          const barPad = Math.max(4, Math.round(entryRowHeight * 0.1));
-          const avail  = entryRowHeight - barPad * 2;
-          const laneH  = avail / lanes.length;
-          intervals.forEach(iv => {
-            iv.el.style.top    = (barPad + iv.lane * laneH) + 'px';
-            iv.el.style.height = Math.max(16, laneH) + 'px';
-            // Update rowYMap so dependency arrows point to the lane center
-            const barId = iv.el.dataset.id;
-            if (barId) {
-              rowYMap[barId] = cumulativeRowY + barPad + iv.lane * laneH + laneH / 2;
-            }
-          });
-        }
+        const barPad = Math.max(4, Math.round(entryRowHeight * 0.1));
+        _layoutRowIntervalsByOverlapGroups(intervals, entryRowHeight, barPad, cumulativeRowY);
       }
 
       cumulativeRowY += entryRowHeight;
@@ -2023,42 +2064,14 @@
     if (!rh) return;
     const barPad = Math.max(4, Math.round(rh * 0.1));
     const allC = rowBg.querySelectorAll('.gantt-bar-container');
-    if (allC.length < 2) {
-      if (allC.length === 1) {
-        allC[0].style.top    = barPad + 'px';
-        allC[0].style.height = Math.max(16, rh - barPad * 2) + 'px';
-      }
-      return;
-    }
+    if (!allC.length) return;
     const ivs = [];
     allC.forEach(c => {
       const l = parseFloat(c.style.left);
       const w = parseFloat(c.style.width);
       ivs.push({ el: c, left: l, right: l + w });
     });
-    ivs.sort((a, b) => a.left - b.left);
-    const lanes = [];
-    ivs.forEach(iv => {
-      let placed = false;
-      for (let i = 0; i < lanes.length; i++) {
-        if (lanes[i][lanes[i].length - 1].right <= iv.left + 0.5) {
-          lanes[i].push(iv); iv.lane = i; placed = true; break;
-        }
-      }
-      if (!placed) { iv.lane = lanes.length; lanes.push([iv]); }
-    });
-    if (lanes.length > 1) {
-      const laneH = (rh - barPad * 2) / lanes.length;
-      ivs.forEach(iv => {
-        iv.el.style.top    = (barPad + iv.lane * laneH) + 'px';
-        iv.el.style.height = Math.max(16, laneH) + 'px';
-      });
-    } else {
-      ivs.forEach(iv => {
-        iv.el.style.top    = barPad + 'px';
-        iv.el.style.height = Math.max(16, rh - barPad * 2) + 'px';
-      });
-    }
+    _layoutRowIntervalsByOverlapGroups(ivs, rh, barPad);
   }
 
   // =========================================================================
