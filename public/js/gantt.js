@@ -852,11 +852,11 @@
     rows.forEach((row, i) => {
       const top = row.offsetTop;
       const offsetH = row.offsetHeight;
-      const styleH = parseFloat(row.style.height);
-      let h = ROW_H;
-      if (offsetH > 0) h = offsetH;
-      else if (Number.isFinite(styleH) && styleH > 0) h = styleH;
-      timelineRowBounds.push({ index: i, top, bottom: top + h });
+      const styleHeight = parseFloat(row.style.height);
+      let height = ROW_H;
+      if (offsetH > 0) height = offsetH;
+      else if (Number.isFinite(styleHeight) && styleHeight > 0) height = styleHeight;
+      timelineRowBounds.push({ index: i, top, bottom: top + height });
     });
   }
 
@@ -878,17 +878,17 @@
     const last = timelineRowBounds[timelineRowBounds.length - 1];
     if (yPx >= last.bottom) return last;
 
-    let lo = 0;
-    let hi = timelineRowBounds.length - 1;
-    while (lo <= hi) {
-      const mid = Math.floor((lo + hi) / 2);
+    let low = 0;
+    let high = timelineRowBounds.length - 1;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
       const row = timelineRowBounds[mid];
-      if (yPx < row.top) hi = mid - 1;
-      else if (yPx >= row.bottom) lo = mid + 1;
+      if (yPx < row.top) high = mid - 1;
+      else if (yPx >= row.bottom) low = mid + 1;
       else return row;
     }
 
-    return timelineRowBounds[Math.max(0, Math.min(timelineRowBounds.length - 1, hi))];
+    return timelineRowBounds[Math.max(0, Math.min(timelineRowBounds.length - 1, high))];
   }
 
   // Select all gantt entries whose bar visually overlaps the current marquee.
