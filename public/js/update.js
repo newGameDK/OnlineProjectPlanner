@@ -16,7 +16,7 @@ const _updAPI = (m, u, b) => window.appAPI(m, u, b);
 function toBriefReleaseNote(text, maxWords = 30) {
   const plain = String(text || '')
     .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-    .replace(/[`*_>#-]/g, ' ')
+    .replace(/[`*_>#\-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!plain) return 'No release notes provided for this version.';

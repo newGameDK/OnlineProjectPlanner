@@ -33,6 +33,9 @@
   const DEFAULT_TASK_COL_WIDTH = 260; // px default task column width
   const MIN_TASK_COL_WIDTH = 120;     // px minimum task column width when resizing
   const MAX_TASK_COL_WIDTH = 600;     // px maximum task column width when resizing
+  const MIN_ROW_HEIGHT = 28;          // px minimum per-row height
+  const MAX_ROW_HEIGHT = 500;         // px maximum per-row height
+  const Y_AXIS_SCALE_FACTOR = 1.04;   // wheel step for Y-axis compression/expansion
 
   // ─── state refs (injected from app.js) ───────────────────────────────────
   const S   = () => window.appState;
@@ -565,7 +568,7 @@
       if (!deltaY) return;
       const visible = visibleEntries();
       if (!visible.length) return;
-      const factor = deltaY > 0 ? (1 / 1.04) : 1.04;
+      const factor = deltaY > 0 ? (1 / Y_AXIS_SCALE_FACTOR) : Y_AXIS_SCALE_FACTOR;
       const rect = ganttTimeline.getBoundingClientRect();
       const cursorY = Math.max(0, Math.min(rect.height, (clientY ?? (rect.top + rect.height / 2)) - rect.top));
       const oldScrollHeight = Math.max(1, ganttTimeline.scrollHeight);
@@ -574,7 +577,7 @@
       for (const entry of S().ganttEntries) {
         if (rowIndexMap[entry.id] === undefined) continue;
         const currentHeight = getEntryRowHeight(entry);
-        const nextHeight = Math.max(28, Math.min(500, Math.round(currentHeight * factor)));
+        const nextHeight = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, Math.round(currentHeight * factor)));
         if (nextHeight !== currentHeight) {
           entry.row_height = nextHeight;
           changed = true;
