@@ -13,6 +13,18 @@ const MAX_ROLLBACK_VERSIONS = 5;
 
 const _updAPI = (m, u, b) => window.appAPI(m, u, b);
 
+function toBriefReleaseNote(text, maxWords = 30) {
+  const plain = String(text || '')
+    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+    .replace(/[`*_>#-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!plain) return 'No release notes provided for this version.';
+  const words = plain.split(' ');
+  if (words.length <= maxWords) return plain;
+  return words.slice(0, maxWords).join(' ') + '…';
+}
+
 /**
  * Refresh the label of the #updateBtn in the user panel based on what
  * action would be taken (update, rollback, or generic install).
@@ -104,6 +116,7 @@ async function openUpdateModal() {
         <label>Available versions from GitHub</label>
         <div id="ghReleasesLoading" style="font-size:12px;color:var(--text-muted)">Loading releases…</div>
         <select id="ghReleaseSelect" class="form-control" style="display:none;font-size:13px"></select>
+        <div id="ghReleaseNote" style="display:none;margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.4"></div>
       </div>
       <button type="button" id="ghInstallBtn" class="btn btn-primary btn-full" style="display:none;margin-bottom:12px">⬇ Install Selected Version</button>
     </div>
@@ -128,6 +141,7 @@ async function openUpdateModal() {
   (async () => {
     const loadingEl  = document.getElementById('ghReleasesLoading');
     const selectEl   = document.getElementById('ghReleaseSelect');
+    const noteEl     = document.getElementById('ghReleaseNote');
     const installBtn = document.getElementById('ghInstallBtn');
     try {
       // Read the currently installed version so we can exclude it from the list
@@ -184,6 +198,7 @@ async function openUpdateModal() {
         opt.value = asset.download_url;
         const size = asset.size ? ' (' + (asset.size / 1024 / 1024).toFixed(1) + ' MB)' : '';
         opt.textContent = r.name + size;
+        opt.dataset.note = toBriefReleaseNote(r.body, 30);
         (isOlder ? olderGroup : (newerGroup || selectEl)).appendChild(opt);
       }
       if (!selectEl.options.length) {
@@ -195,6 +210,7 @@ async function openUpdateModal() {
       loadingEl.style.display = 'none';
       selectEl.style.display = '';
       installBtn.style.display = '';
+      if (noteEl) noteEl.style.display = '';
 
       // Update button label based on the selected version's group
       const updateInstallBtnLabel = () => {
@@ -209,8 +225,17 @@ async function openUpdateModal() {
           installBtn.textContent = '⬇ Install Selected Version';
         }
       };
+      const updateReleaseNote = () => {
+        if (!noteEl) return;
+        const opt = selectEl.options[selectEl.selectedIndex];
+        noteEl.textContent = opt?.dataset?.note || '';
+      };
       updateInstallBtnLabel();
-      selectEl.addEventListener('change', updateInstallBtnLabel);
+      updateReleaseNote();
+      selectEl.addEventListener('change', () => {
+        updateInstallBtnLabel();
+        updateReleaseNote();
+      });
     } catch {
       loadingEl.textContent = 'Could not load releases from GitHub';
     }
