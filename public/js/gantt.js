@@ -55,6 +55,8 @@
   let rowIndexMap = {};
   // rowYMap: entryId -> Y-center position in px (accounts for variable row heights)
   let rowYMap = {};
+  // timelineRowBounds: visible row bounds in timeline coordinates [{ index, top, bottom }, ...]
+  let timelineRowBounds = [];
   let timelineContextRowId = null;
   let _sanitizeIntervalId = null;    // periodic recalculation timer
   const _pendingRowHeightFix = new Set(); // entry IDs whose row_height needs DB reset
@@ -778,12 +780,10 @@
       const x    = e.clientX - rect.left + ganttTimeline.scrollLeft;
       const y    = e.clientY - rect.top  + ganttTimeline.scrollTop;
       const day  = Math.floor(x / pxPerDay);
-      // Clamp row index to [0, numVisibleRows-1] so clicks below the last row
-      // are handled gracefully.
-      const numRows  = ganttRows.querySelectorAll('.gantt-row-bg').length;
-      const maxRow   = Math.max(0, numRows - 1);
-      const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
-      const rowTop   = rowIndex * ROW_H;
+      const rowInfo  = getTimelineRowInfoAtY(y);
+      const rowIndex = rowInfo.index;
+      const rowTop   = rowInfo.top;
+      const rowHeight = Math.max(1, rowInfo.bottom - rowInfo.top);
 
       timelineSel.active         = true;
       timelineSel.startDay       = day;
@@ -799,7 +799,7 @@
       const overlay = document.createElement('div');
       overlay.className = 'gantt-time-selection';
       overlay.style.cssText = 'left:' + (day * pxPerDay) + 'px;width:' + pxPerDay + 'px;' +
-                               'top:' + rowTop + 'px;height:' + ROW_H + 'px;';
+                               'top:' + rowTop + 'px;height:' + rowHeight + 'px;';
       ganttRows.appendChild(overlay);
       timelineSel.overlayEl = overlay;
     });
@@ -843,6 +843,30 @@
     }
     timelineSel.active    = false;
     timelineSel.overlayEl = null;
+  }
+
+  // Map a timeline-space Y coordinate to the corresponding visible row bounds.
+  // Uses rendered row heights, so marquee visuals stay aligned when rows are
+  // taller than the default ROW_H (e.g. same-row lane expansion).
+  function getTimelineRowInfoAtY(yPx) {
+    if (!timelineRowBounds.length) return { index: 0, top: 0, bottom: ROW_H };
+    if (!Number.isFinite(yPx)) return timelineRowBounds[0];
+
+    if (yPx <= timelineRowBounds[0].top) return timelineRowBounds[0];
+    const last = timelineRowBounds[timelineRowBounds.length - 1];
+    if (yPx >= last.bottom) return last;
+
+    let lo = 0;
+    let hi = timelineRowBounds.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const row = timelineRowBounds[mid];
+      if (yPx < row.top) hi = mid - 1;
+      else if (yPx >= row.bottom) lo = mid + 1;
+      else return row;
+    }
+
+    return timelineRowBounds[Math.max(0, Math.min(timelineRowBounds.length - 1, lo))];
   }
 
   // Select all gantt entries whose bar visually overlaps the current marquee.
@@ -1020,10 +1044,18 @@
     // including auto-expansion for same-row lane splitting).
     rowYMap = {};
     let cumulativeY = 0;
+    timelineRowBounds = [];
+    let cumulativeTop = 0;
     entries.forEach(e => {
       const h = getEffectiveEntryRowHeight(e);
       rowYMap[e.id] = cumulativeY + h / 2;
       cumulativeY += h;
+      timelineRowBounds.push({
+        index: timelineRowBounds.length,
+        top: cumulativeTop,
+        bottom: cumulativeTop + h,
+      });
+      cumulativeTop += h;
     });
     // Same-row entries share the owner's Y center
     S().ganttEntries.forEach(e => {
@@ -2753,9 +2785,8 @@
       const x        = e.clientX - rect.left + ganttTimeline.scrollLeft;
       const y        = e.clientY - rect.top  + ganttTimeline.scrollTop;
       const day      = Math.floor(x / pxPerDay);
-      const numRows  = ganttRows.querySelectorAll('.gantt-row-bg').length;
-      const maxRow   = Math.max(0, numRows - 1);
-      const rowIndex = Math.min(maxRow, Math.max(0, Math.floor(y / ROW_H)));
+      const rowInfo  = getTimelineRowInfoAtY(y);
+      const rowIndex = rowInfo.index;
 
       timelineSel.endDay      = day;
       timelineSel.endRowIndex = rowIndex;
@@ -2764,11 +2795,13 @@
       const endDay   = Math.max(timelineSel.startDay, day);
       const startRow = Math.min(timelineSel.startRowIndex, rowIndex);
       const endRow   = Math.max(timelineSel.startRowIndex, rowIndex);
+      const startTop = timelineRowBounds[startRow] ? timelineRowBounds[startRow].top : (startRow * ROW_H);
+      const endBottom = timelineRowBounds[endRow] ? timelineRowBounds[endRow].bottom : ((endRow + 1) * ROW_H);
 
       timelineSel.overlayEl.style.left   = (startDay * pxPerDay) + 'px';
       timelineSel.overlayEl.style.width  = ((endDay - startDay + 1) * pxPerDay) + 'px';
-      timelineSel.overlayEl.style.top    = (startRow * ROW_H) + 'px';
-      timelineSel.overlayEl.style.height = ((endRow - startRow + 1) * ROW_H) + 'px';
+      timelineSel.overlayEl.style.top    = startTop + 'px';
+      timelineSel.overlayEl.style.height = Math.max(1, endBottom - startTop) + 'px';
     }
 
     // ── rubber-band connecting line ────────────────────────────────────────
