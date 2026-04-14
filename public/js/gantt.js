@@ -845,6 +845,17 @@
     timelineSel.overlayEl = null;
   }
 
+  function rebuildTimelineRowBoundsFromDOM() {
+    timelineRowBounds = [];
+    if (!ganttRows) return;
+    const rows = ganttRows.querySelectorAll('.gantt-row-bg');
+    rows.forEach((row, i) => {
+      const top = row.offsetTop;
+      const h = row.offsetHeight || parseFloat(row.style.height) || ROW_H;
+      timelineRowBounds.push({ index: i, top, bottom: top + h });
+    });
+  }
+
   // Map a timeline-space Y coordinate to the corresponding visible row bounds.
   // Uses rendered row heights, so marquee visuals stay aligned when rows are
   // taller than the default ROW_H (e.g. same-row lane expansion).
@@ -1044,18 +1055,10 @@
     // including auto-expansion for same-row lane splitting).
     rowYMap = {};
     let cumulativeY = 0;
-    timelineRowBounds = [];
-    let cumulativeTop = 0;
     entries.forEach(e => {
       const h = getEffectiveEntryRowHeight(e);
       rowYMap[e.id] = cumulativeY + h / 2;
       cumulativeY += h;
-      timelineRowBounds.push({
-        index: timelineRowBounds.length,
-        top: cumulativeTop,
-        bottom: cumulativeTop + h,
-      });
-      cumulativeTop += h;
     });
     // Same-row entries share the owner's Y center
     S().ganttEntries.forEach(e => {
@@ -1945,6 +1948,9 @@
     if (timelineSel.overlayEl) {
       ganttRows.appendChild(timelineSel.overlayEl);
     }
+
+    // Keep marquee hit-testing/overlay aligned with actual rendered row boxes.
+    rebuildTimelineRowBoundsFromDOM();
   }
 
   // Recalculate bar heights in a rowBg based on current overlap state.
