@@ -209,10 +209,27 @@ CREATE TABLE IF NOT EXISTS gantt_milestones (
   date TEXT NOT NULL,
   label TEXT NOT NULL DEFAULT '',
   color TEXT NOT NULL DEFAULT '#e53935',
+  scope_parent_ids TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 ");
+
+// Migration: add scoped parent targets for milestones
+try {
+    $s = $db->query("PRAGMA table_info(gantt_milestones)");
+    $cols = $s ? $s->fetchAll(PDO::FETCH_ASSOC) : [];
+    $hasScopeParentIds = false;
+    foreach ($cols as $col) {
+        if (($col['name'] ?? '') === 'scope_parent_ids') {
+            $hasScopeParentIds = true;
+            break;
+        }
+    }
+    if (!$hasScopeParentIds) {
+        $db->exec("ALTER TABLE gantt_milestones ADD COLUMN scope_parent_ids TEXT NOT NULL DEFAULT '[]'");
+    }
+} catch (Exception $e) { /* ignore */ }
 
 // Global undo history (not project-scoped; survives team/project deletion)
 $db->exec("

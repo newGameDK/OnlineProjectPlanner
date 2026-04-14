@@ -2021,6 +2021,110 @@
     return /^#[0-9a-fA-F]{6}$/.test(c) ? c : (fallback || '#e53935');
   }
 
+  function _parseMilestoneScopeIds(scopeParentIds) {
+    if (Array.isArray(scopeParentIds)) return scopeParentIds.filter(id => typeof id === 'string' && id);
+    if (typeof scopeParentIds !== 'string' || !scopeParentIds.trim()) return [];
+    try {
+      const parsed = JSON.parse(scopeParentIds);
+      return Array.isArray(parsed) ? parsed.filter(id => typeof id === 'string' && id) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function _getMilestoneScopeOptionsHtml(selectedIds) {
+    const all = S().ganttEntries || [];
+    if (!all.length) {
+      return '<div style="color:var(--text-muted);font-size:12px">No tasks available yet.</div>';
+    }
+
+    const selected = new Set((selectedIds || []).filter(Boolean));
+    const childrenOf = {};
+    all.forEach(e => {
+      const pid = e.parent_id || '__root__';
+      if (!childrenOf[pid]) childrenOf[pid] = [];
+      childrenOf[pid].push(e);
+    });
+    Object.values(childrenOf).forEach(group =>
+      group.sort((a, b) => (a.position - b.position) || (a.created_at > b.created_at ? 1 : -1))
+    );
+
+    const rows = [];
+    const seen = new Set();
+    const pushEntry = (entry, depth) => {
+      if (!entry || seen.has(entry.id)) return;
+      seen.add(entry.id);
+      const checked = selected.has(entry.id) ? ' checked' : '';
+      const label = getEntryRowLabel(entry) || entry.title || 'Untitled';
+      rows.push(
+        '<label style="display:block;margin:4px 0;font-size:13px;line-height:1.3">' +
+          '<input class="msScope" type="checkbox" value="' + _esc(entry.id) + '"' + checked + '> ' +
+          '<span style="padding-left:' + (depth * 12) + 'px">' + _esc(label) + '</span>' +
+        '</label>'
+      );
+      (childrenOf[entry.id] || []).forEach(child => pushEntry(child, depth + 1));
+    };
+
+    (childrenOf.__root__ || []).forEach(root => pushEntry(root, 0));
+    all.forEach(entry => pushEntry(entry, 0));
+    return rows.join('');
+  }
+
+  function _getSelectedMilestoneScopeIds() {
+    return [...document.querySelectorAll('#msScopeList .msScope:checked')].map(el => el.value);
+  }
+
+  function _getMilestoneScopedRanges(scopeParentIds) {
+    const scopeIds = _parseMilestoneScopeIds(scopeParentIds);
+    if (!scopeIds.length) return null;
+
+    const scopeSet = new Set(scopeIds);
+    const byId = new Map((S().ganttEntries || []).map(e => [e.id, e]));
+    const rowIndexes = new Set();
+
+    (S().ganttEntries || []).forEach(entry => {
+      const rowIdx = rowIndexMap[entry.id];
+      if (rowIdx === undefined) return;
+
+      let cursor = entry;
+      const seen = new Set();
+      while (cursor) {
+        if (scopeSet.has(cursor.id)) {
+          rowIndexes.add(rowIdx);
+          return;
+        }
+        const pid = cursor.parent_id;
+        if (!pid || seen.has(pid)) return;
+        seen.add(pid);
+        cursor = byId.get(pid);
+      }
+    });
+
+    if (!rowIndexes.size) return [];
+
+    const sorted = [...rowIndexes].sort((a, b) => a - b);
+    const ranges = [];
+    let start = sorted[0];
+    let prev = sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      const idx = sorted[i];
+      if (idx === prev + 1) {
+        prev = idx;
+        continue;
+      }
+      ranges.push({ start, end: prev });
+      start = idx;
+      prev = idx;
+    }
+    ranges.push({ start, end: prev });
+
+    return ranges.map(range => {
+      const startBounds = getTimelineRowBoundsByIndex(range.start);
+      const endBounds = getTimelineRowBoundsByIndex(range.end);
+      return { top: startBounds.top, height: Math.max(1, endBounds.bottom - startBounds.top) };
+    });
+  }
+
   function renderMilestones() {
     // Ensure ganttRows is a positioned container for the absolute milestone lines
     ganttRows.style.position = 'relative';
@@ -2033,6 +2137,8 @@
     milestones.forEach(ms => {
       const date = parseDate(ms.date);
       if (!date || date < chartStart || date > chartEnd) return;
+      const scopedRanges = _getMilestoneScopedRanges(ms.scope_parent_ids);
+      if (scopedRanges && !scopedRanges.length) return;
 
       const x     = Math.round(daysBetween(chartStart, date) * pxPerDay);
       const color = _safeColor(ms.color);
@@ -2046,57 +2152,71 @@
       marker.title            = (label ? label + ' — ' : '') + ms.date;
       ganttRuler.appendChild(marker);
 
-      // ── Vertical dashed line spanning all rows ───────────────────────────
-      const line = document.createElement('div');
-      line.className         = 'gantt-milestone-line';
-      line.style.left        = x + 'px';
-      line.style.borderLeftColor = color;
+      // ── Vertical dashed line segments ─────────────────────────────────────
+      const fullHeight = Math.max(1, ganttRows.scrollHeight || ganttRows.offsetHeight || 1);
+      const segments = scopedRanges || [{ top: 0, height: fullHeight }];
+      segments.forEach(seg => {
+        const line = document.createElement('div');
+        line.className         = 'gantt-milestone-line';
+        line.style.left        = x + 'px';
+        line.style.top         = seg.top + 'px';
+        line.style.height      = seg.height + 'px';
+        line.style.bottom      = 'auto';
+        line.style.borderLeftColor = color;
 
-      // Hover: reuse shared bar tooltip
-      line.addEventListener('mouseenter', (e) => {
-        const tip = _getBarTooltip();
-        tip.style.background = color;
-        tip.style.color      = U().isColorDark(color) ? '#fff' : 'rgba(0,0,0,.8)';
-        tip.innerHTML =
-          '<div class="gantt-bar-tooltip-title">' + _esc(label || 'Milestone') + '</div>' +
-          '<div class="gantt-bar-tooltip-meta">' + _esc(ms.date) + '</div>';
-        tip.classList.add('visible');
-        requestAnimationFrame(() => _positionBarTooltip(tip, e.clientX, e.clientY));
+        // Hover: reuse shared bar tooltip
+        line.addEventListener('mouseenter', (e) => {
+          const tip = _getBarTooltip();
+          tip.style.background = color;
+          tip.style.color      = U().isColorDark(color) ? '#fff' : 'rgba(0,0,0,.8)';
+          tip.innerHTML =
+            '<div class="gantt-bar-tooltip-title">' + _esc(label || 'Milestone') + '</div>' +
+            '<div class="gantt-bar-tooltip-meta">' + _esc(ms.date) + '</div>';
+          tip.classList.add('visible');
+          requestAnimationFrame(() => _positionBarTooltip(tip, e.clientX, e.clientY));
+        });
+        line.addEventListener('mousemove', (e) => _positionBarTooltip(_getBarTooltip(), e.clientX, e.clientY));
+        line.addEventListener('mouseleave', () => _hideBarTooltip());
+
+        // Right-click: edit / delete
+        line.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          _hideBarTooltip();
+          U().showContextMenu(e.pageX, e.pageY, [
+            { icon: '\u270F', label: 'Edit milestone',   action: () => showEditMilestoneModal(ms) },
+            { icon: '\uD83D\uDDD1', label: 'Delete milestone', danger: true, action: () => deleteMilestone(ms.id) },
+          ]);
+        });
+
+        ganttRows.appendChild(line);
       });
-      line.addEventListener('mousemove', (e) => _positionBarTooltip(_getBarTooltip(), e.clientX, e.clientY));
-      line.addEventListener('mouseleave', () => _hideBarTooltip());
-
-      // Right-click: edit / delete
-      line.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        _hideBarTooltip();
-        U().showContextMenu(e.pageX, e.pageY, [
-          { icon: '\u270F', label: 'Edit milestone',   action: () => showEditMilestoneModal(ms) },
-          { icon: '\uD83D\uDDD1', label: 'Delete milestone', danger: true, action: () => deleteMilestone(ms.id) },
-        ]);
-      });
-
-      ganttRows.appendChild(line);
     });
   }
 
   function showAddMilestoneModal(dateStr) {
+    const scopeHtml = _getMilestoneScopeOptionsHtml([]);
     const html =
       '<label style="display:block;margin-bottom:10px">Date<br>' +
       '<input id="msDate" type="date" value="' + _esc(dateStr) + '" style="width:100%"></label>' +
       '<label style="display:block;margin-bottom:10px">Label<br>' +
       '<input id="msLabel" type="text" placeholder="e.g. Launch deadline" style="width:100%"></label>' +
-      '<label style="display:block">Color<br>' +
-      '<input id="msColor" type="color" value="#e53935"></label>';
+      '<label style="display:block;margin-bottom:10px">Color<br>' +
+      '<input id="msColor" type="color" value="#e53935"></label>' +
+      '<label style="display:block">Show on parent tasks (and subtasks)<br>' +
+      '<div id="msScopeList" style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface)">' +
+      scopeHtml +
+      '</div>' +
+      '<small style="display:block;margin-top:6px;color:var(--text-muted)">Leave unchecked to show across all rows.</small></label>';
     U().openModal('Add Milestone', html, async () => {
       const date  = document.getElementById('msDate').value;
       const label = document.getElementById('msLabel').value.trim();
       const color = _safeColor(document.getElementById('msColor').value);
+      const scope_parent_ids = _getSelectedMilestoneScopeIds();
       if (!date) return alert('Date is required');
       try {
         const data = await API('POST', '/api/milestones', {
-          project_id: S().currentProject.id, date, label, color,
+          project_id: S().currentProject.id, date, label, color, scope_parent_ids,
         });
         if (!S().milestones) S().milestones = [];
         S().milestones.push(data.milestone);
@@ -2107,20 +2227,27 @@
   }
 
   function showEditMilestoneModal(ms) {
+    const scopeHtml = _getMilestoneScopeOptionsHtml(_parseMilestoneScopeIds(ms.scope_parent_ids));
     const html =
       '<label style="display:block;margin-bottom:10px">Date<br>' +
       '<input id="msDate" type="date" value="' + _esc(ms.date) + '" style="width:100%"></label>' +
       '<label style="display:block;margin-bottom:10px">Label<br>' +
       '<input id="msLabel" type="text" value="' + _esc(ms.label || '') + '" style="width:100%"></label>' +
-      '<label style="display:block">Color<br>' +
-      '<input id="msColor" type="color" value="' + _esc(_safeColor(ms.color)) + '"></label>';
+      '<label style="display:block;margin-bottom:10px">Color<br>' +
+      '<input id="msColor" type="color" value="' + _esc(_safeColor(ms.color)) + '"></label>' +
+      '<label style="display:block">Show on parent tasks (and subtasks)<br>' +
+      '<div id="msScopeList" style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface)">' +
+      scopeHtml +
+      '</div>' +
+      '<small style="display:block;margin-top:6px;color:var(--text-muted)">Leave unchecked to show across all rows.</small></label>';
     U().openModal('Edit Milestone', html, async () => {
       const date  = document.getElementById('msDate').value;
       const label = document.getElementById('msLabel').value.trim();
       const color = _safeColor(document.getElementById('msColor').value);
+      const scope_parent_ids = _getSelectedMilestoneScopeIds();
       if (!date) return alert('Date is required');
       try {
-        const data = await API('PUT', '/api/milestones/' + ms.id, { date, label, color });
+        const data = await API('PUT', '/api/milestones/' + ms.id, { date, label, color, scope_parent_ids });
         const idx = (S().milestones || []).findIndex(m => m.id === ms.id);
         if (idx !== -1) S().milestones[idx] = data.milestone;
         render();
@@ -2971,28 +3098,7 @@
 
       // When moving (not resizing), shift all subtask descendants by the same delta
       if (dragType === 'move') {
-        const descendants = [];
-        const collectDesc = (pid) => {
-          S().ganttEntries.forEach(e => {
-            if (e.parent_id === pid) { descendants.push(e); collectDesc(e.id); }
-          });
-        };
-        collectDesc(entryId);
-        for (const child of descendants) {
-          const cs = parseDate(child.start_date);
-          const ce = parseDate(child.end_date);
-          if (!cs || !ce) continue;
-          const childNewStart = toDateStr(addDays(cs, deltaDays));
-          const childNewEnd   = toDateStr(addDays(ce, deltaDays));
-          expandChartRange({ start_date: childNewStart, end_date: childNewEnd });
-          try {
-            const upd = await API('PUT', '/api/gantt/' + child.id, {
-              start_date: childNewStart, end_date: childNewEnd,
-            });
-            const ci = S().ganttEntries.findIndex(x => x.id === child.id);
-            if (ci !== -1) S().ganttEntries[ci] = upd.entry;
-          } catch (err) { console.error('Save subtask drag failed:', err); }
-        }
+        await shiftDescendantDates(entryId, deltaDays);
       }
     }
 
@@ -3145,6 +3251,38 @@
     const widthDays = Math.max(MIN_DAYS, daysBetween(cs, en));
     containerEl.style.left  = (leftDays  * pxPerDay) + 'px';
     containerEl.style.width = (widthDays * pxPerDay) + 'px';
+  }
+
+  async function shiftDescendantDates(entryId, deltaDays) {
+    if (!deltaDays) return;
+    const descendants = [];
+    const collectDesc = (pid) => {
+      S().ganttEntries.forEach(e => {
+        if (e.parent_id === pid) {
+          descendants.push(e);
+          collectDesc(e.id);
+        }
+      });
+    };
+    collectDesc(entryId);
+
+    for (const child of descendants) {
+      const cs = parseDate(child.start_date);
+      const ce = parseDate(child.end_date);
+      if (!cs || !ce) continue;
+      const childNewStart = toDateStr(addDays(cs, deltaDays));
+      const childNewEnd   = toDateStr(addDays(ce, deltaDays));
+      expandChartRange({ start_date: childNewStart, end_date: childNewEnd });
+      try {
+        const upd = await API('PUT', '/api/gantt/' + child.id, {
+          start_date: childNewStart, end_date: childNewEnd,
+        });
+        const ci = S().ganttEntries.findIndex(x => x.id === child.id);
+        if (ci !== -1) S().ganttEntries[ci] = upd.entry;
+      } catch (err) {
+        console.error('Save subtask date shift failed:', err);
+      }
+    }
   }
 
   // =========================================================================
@@ -3713,12 +3851,27 @@
       if (!vals.row_label) vals.row_label = vals.title;
       if (!vals.title) return alert('Title is required');
       try {
+        const oldStart = entry.start_date;
+        const oldEnd   = entry.end_date;
         const data = await API('PUT', '/api/gantt/' + entry.id, vals);
         const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
         if (idx !== -1) {
           S().ganttEntries[idx] = data.entry;
           await expandParentDates(data.entry);
           expandChartRange(data.entry);
+        }
+        const os = parseDate(oldStart);
+        const oe = parseDate(oldEnd);
+        const ns = parseDate(data.entry.start_date);
+        const ne = parseDate(data.entry.end_date);
+        if (os && oe && ns && ne) {
+          const deltaStart = daysBetween(os, ns);
+          const deltaEnd   = daysBetween(oe, ne);
+          // Move detection: start and end shifted equally means the whole
+          // parent task moved; unequal deltas indicate resize-like edits.
+          if (deltaStart !== 0 && deltaStart === deltaEnd) {
+            await shiftDescendantDates(entry.id, deltaStart);
+          }
         }
         render();
         U().closeModal();

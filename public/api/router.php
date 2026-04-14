@@ -142,6 +142,17 @@ function collect_gantt_descendants($db, $entryId) {
     return $ids;
 }
 
+function sanitize_milestone_scope_parent_ids($ids) {
+    if (!is_array($ids)) return json_encode([]);
+    $uniq = [];
+    foreach ($ids as $id) {
+        if (!is_string($id)) continue;
+        $trimmed = trim($id);
+        if ($trimmed !== '') $uniq[$trimmed] = true;
+    }
+    return json_encode(array_keys($uniq));
+}
+
 function require_auth() {
     if (empty($_SESSION['userId'])) {
         json_out(['error' => 'Not authenticated'], 401);
@@ -1215,8 +1226,9 @@ if ($seg1 === 'milestones') {
         if (!can_access_project($db, $project_id, $userId)) json_out(['error' => 'Forbidden'], 403);
 
         $id = uuid_v4();
-        $s = $db->prepare('INSERT INTO gantt_milestones (id,project_id,date,label,color) VALUES (?,?,?,?,?)');
-        $s->execute([$id, $project_id, $date, $body['label'] ?? '', $body['color'] ?? '#e53935']);
+        $scopeParentIds = sanitize_milestone_scope_parent_ids($body['scope_parent_ids'] ?? []);
+        $s = $db->prepare('INSERT INTO gantt_milestones (id,project_id,date,label,color,scope_parent_ids) VALUES (?,?,?,?,?,?)');
+        $s->execute([$id, $project_id, $date, $body['label'] ?? '', $body['color'] ?? '#e53935', $scopeParentIds]);
 
         $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
         $s->execute([$id]);
@@ -1249,9 +1261,12 @@ if ($seg1 === 'milestones') {
             $newDate  = $body['date']  ?? $existing['date'];
             $newLabel = $body['label'] ?? $existing['label'];
             $newColor = $body['color'] ?? $existing['color'];
+            $newScopeParentIds = array_key_exists('scope_parent_ids', $body)
+                ? sanitize_milestone_scope_parent_ids($body['scope_parent_ids'])
+                : ($existing['scope_parent_ids'] ?? json_encode([]));
 
-            $s = $db->prepare('UPDATE gantt_milestones SET date=?,label=?,color=? WHERE id=?');
-            $s->execute([$newDate, $newLabel, $newColor, $milestoneId]);
+            $s = $db->prepare('UPDATE gantt_milestones SET date=?,label=?,color=?,scope_parent_ids=? WHERE id=?');
+            $s->execute([$newDate, $newLabel, $newColor, $newScopeParentIds, $milestoneId]);
 
             $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
             $s->execute([$milestoneId]);

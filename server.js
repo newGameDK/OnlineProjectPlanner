@@ -189,10 +189,21 @@ CREATE TABLE IF NOT EXISTS gantt_milestones (
   date TEXT NOT NULL,
   label TEXT NOT NULL DEFAULT '',
   color TEXT NOT NULL DEFAULT '#e53935',
+  scope_parent_ids TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 `);
+
+// Migration: add scoped parent targets for milestones
+try {
+  const hasScopeParentIds = db.prepare(
+    `SELECT 1 FROM pragma_table_info('gantt_milestones') WHERE name='scope_parent_ids'`
+  ).get();
+  if (!hasScopeParentIds) {
+    db.exec(`ALTER TABLE gantt_milestones ADD COLUMN scope_parent_ids TEXT NOT NULL DEFAULT '[]'`);
+  }
+} catch (_) { /* ignore */ }
 
 // App settings table (key-value store for admin user IDs etc.)
 db.exec(`
@@ -320,10 +331,10 @@ const stmts = {
   getDepsAfter: db.prepare(`SELECT * FROM gantt_dependencies WHERE project_id=? AND created_at>?`),
 
   // Milestones
-  createMilestone: db.prepare(`INSERT INTO gantt_milestones (id,project_id,date,label,color) VALUES (?,?,?,?,?)`),
+  createMilestone: db.prepare(`INSERT INTO gantt_milestones (id,project_id,date,label,color,scope_parent_ids) VALUES (?,?,?,?,?,?)`),
   getMilestone: db.prepare(`SELECT * FROM gantt_milestones WHERE id=?`),
   getProjectMilestones: db.prepare(`SELECT * FROM gantt_milestones WHERE project_id=? ORDER BY date ASC`),
-  updateMilestone: db.prepare(`UPDATE gantt_milestones SET date=?,label=?,color=? WHERE id=?`),
+  updateMilestone: db.prepare(`UPDATE gantt_milestones SET date=?,label=?,color=?,scope_parent_ids=? WHERE id=?`),
   deleteMilestone: db.prepare(`DELETE FROM gantt_milestones WHERE id=?`),
 };
 
@@ -332,6 +343,18 @@ const stmts = {
 // ---------------------------------------------------------------------------
 
 function now() { return Date.now(); }
+
+function sanitizeMilestoneScopeParentIds(ids) {
+  if (!Array.isArray(ids)) return JSON.stringify([]);
+  const unique = new Set();
+  ids.forEach(id => {
+    if (typeof id === 'string') {
+      const trimmed = id.trim();
+      if (trimmed) unique.add(trimmed);
+    }
+  });
+  return JSON.stringify([...unique]);
+}
 
 function assertMember(teamId, userId) {
   if (!stmts.isMember.get(teamId, userId)) return false;
@@ -903,11 +926,18 @@ app.get('/api/milestones/:projectId', requireAuth, (req, res) => {
 });
 
 app.post('/api/milestones', requireAuth, (req, res) => {
-  const { project_id, date, label, color } = req.body;
+  const { project_id, date, label, color, scope_parent_ids } = req.body;
   if (!project_id || !date) return res.status(400).json({ error: 'Missing required fields' });
   if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
   const id = uuidv4();
-  stmts.createMilestone.run(id, project_id, date, label || '', color || '#e53935');
+  stmts.createMilestone.run(
+    id,
+    project_id,
+    date,
+    label || '',
+    color || '#e53935',
+    sanitizeMilestoneScopeParentIds(scope_parent_ids)
+  );
   const milestone = stmts.getMilestone.get(id);
   res.json({ milestone });
 });
@@ -916,11 +946,14 @@ app.put('/api/milestones/:id', requireAuth, (req, res) => {
   const existing = stmts.getMilestone.get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
   if (!canAccessProject(existing.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
-  const { date, label, color } = req.body;
+  const { date, label, color, scope_parent_ids } = req.body;
   stmts.updateMilestone.run(
     date  ?? existing.date,
     label ?? existing.label,
     color ?? existing.color,
+    scope_parent_ids === undefined
+      ? (existing.scope_parent_ids || '[]')
+      : sanitizeMilestoneScopeParentIds(scope_parent_ids),
     existing.id
   );
   const milestone = stmts.getMilestone.get(existing.id);
