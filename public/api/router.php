@@ -112,6 +112,8 @@ if ($method === 'POST' || $method === 'PUT' || $method === 'PATCH') {
     }
 }
 
+const UNDO_REDO_GROUP_FETCH_LIMIT = 200;
+
 // -------------------------------------------------------------------------
 // Response helpers
 // -------------------------------------------------------------------------
@@ -140,6 +142,42 @@ function collect_gantt_descendants($db, $entryId) {
         }
     }
     return $ids;
+}
+
+/**
+ * Normalize an undo-group identifier from request/action payloads.
+ * Returns a trimmed non-empty string, or null when absent/invalid.
+ */
+function normalize_undo_group($value) {
+    if (!is_string($value)) return null;
+    $trimmed = trim($value);
+    return $trimmed === '' ? null : $trimmed;
+}
+
+/**
+ * Restore a gantt entry row from a previously captured snapshot array.
+ */
+function apply_gantt_entry_snapshot($db, $e) {
+    $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+    $s->execute([
+        $e['parent_id'] ?? null,
+        $e['title'],
+        $e['row_label'] ?? $e['title'],
+        $e['row_height'] ?? 40,
+        $e['row_only'] ?? 0,
+        $e['start_date'],
+        $e['end_date'],
+        $e['hours_estimate'],
+        $e['hours_set'] ?? 0,
+        $e['color_variation'],
+        $e['position'],
+        $e['notes'],
+        $e['folder_url'] ?? '',
+        $e['subtract_hours'] ?? 0,
+        $e['same_row'] ?? null,
+        now_ms(),
+        $e['id']
+    ]);
 }
 
 function sanitize_milestone_scope_parent_ids($ids) {
@@ -911,10 +949,15 @@ if ($seg1 === 'gantt') {
 
             // Save undo; clear stale redo history
             if (!($body['suppress_undo'] ?? 0)) {
+                $undoData = ['entry' => $existing];
+                $undoGroup = normalize_undo_group($body['undo_group'] ?? null);
+                if ($undoGroup !== null) {
+                    $undoData['group'] = $undoGroup;
+                }
                 $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
                 $s->execute([$existing['project_id'], $userId]);
                 $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-                $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode(['entry' => $existing])]);
+                $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode($undoData)]);
             }
 
             $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
@@ -1402,16 +1445,32 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
     $projectId = $seg2;
     if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
 
-    $s = $db->prepare('SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 200');
+    $undoLimit = (int) UNDO_REDO_GROUP_FETCH_LIMIT;
+    $s = $db->prepare("SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT $undoLimit");
     $s->execute([$projectId, $userId]);
     $history = $s->fetchAll();
     if (empty($history)) json_out(['error' => 'Nothing to undo'], 400);
 
     $action = $history[0];
     $data = json_decode($action['action_data'], true);
-
+    $undoGroup = ($action['action_type'] === 'update_gantt' && is_array($data))
+        ? normalize_undo_group($data['group'] ?? null)
+        : null;
+    $undoActions = [$action];
+    if ($undoGroup !== null) {
+        for ($i = 1; $i < count($history); $i++) {
+            $candidate = $history[$i];
+            if ($candidate['action_type'] !== 'update_gantt') break;
+            $candidateData = json_decode($candidate['action_data'], true);
+            $candidateGroup = is_array($candidateData) ? normalize_undo_group($candidateData['group'] ?? null) : null;
+            if ($candidateGroup !== $undoGroup) break;
+            $undoActions[] = $candidate;
+        }
+    }
     $s = $db->prepare('DELETE FROM undo_history WHERE id=?');
-    $s->execute([$action['id']]);
+    foreach ($undoActions as $undoAction) {
+        $s->execute([$undoAction['id']]);
+    }
 
     $result = [];
     if ($action['action_type'] === 'create_gantt') {
@@ -1426,6 +1485,29 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $s = $db->prepare('DELETE FROM gantt_entries WHERE id=?');
         $s->execute([$data['entry']['id']]);
         $result = ['undone' => 'create_gantt', 'entry_id' => $data['entry']['id']];
+    } elseif ($action['action_type'] === 'update_gantt' && $undoGroup !== null) {
+        $restoredEntries = [];
+        foreach ($undoActions as $undoAction) {
+            $actionData = json_decode($undoAction['action_data'], true);
+            if (!is_array($actionData) || empty($actionData['entry']) || !is_array($actionData['entry'])) continue;
+            $e = $actionData['entry'];
+            $entryId = $e['id'] ?? null;
+            if (!$entryId) continue;
+            $currentStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $currentStmt->execute([$entryId]);
+            $currentEntry = $currentStmt->fetch();
+            if ($currentEntry) {
+                $redoData = ['entry' => $currentEntry, 'group' => $undoGroup];
+                $s2 = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+                $s2->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode($redoData)]);
+            }
+            apply_gantt_entry_snapshot($db, $e);
+            $restoredStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $restoredStmt->execute([$entryId]);
+            $restored = $restoredStmt->fetch();
+            if ($restored) $restoredEntries[] = $restored;
+        }
+        $result = ['undone' => 'update_gantt', 'entries' => $restoredEntries, 'entry' => $restoredEntries[0] ?? null];
     } elseif ($action['action_type'] === 'update_gantt') {
         // Undo update = restore previous state; save current state to redo
         $e = $data['entry'];
@@ -1433,11 +1515,13 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         $s->execute([$e['id']]);
         $currentEntry = $s->fetch();
         if ($currentEntry) {
+            $redoData = ['entry' => $currentEntry];
+            $singleGroup = is_array($data) ? normalize_undo_group($data['group'] ?? null) : null;
+            if ($singleGroup !== null) $redoData['group'] = $singleGroup;
             $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-            $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
+            $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode($redoData)]);
         }
-        $s = $db->prepare('UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
-        $s->execute([$e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['hours_set'] ?? 0, $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
+        apply_gantt_entry_snapshot($db, $e);
 
         $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
         $s->execute([$e['id']]);
@@ -1541,14 +1625,32 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
     $projectId = $seg2;
     if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
 
-    $s = $db->prepare('SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1');
+    $redoLimit = (int) UNDO_REDO_GROUP_FETCH_LIMIT;
+    $s = $db->prepare("SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT $redoLimit");
     $s->execute([$projectId, $userId]);
-    $redoAction = $s->fetch();
-    if (!$redoAction) json_out(['error' => 'Nothing to redo'], 400);
+    $redoHistory = $s->fetchAll();
+    if (empty($redoHistory)) json_out(['error' => 'Nothing to redo'], 400);
+    $redoAction = $redoHistory[0];
 
     $data = json_decode($redoAction['action_data'], true);
+    $redoGroup = ($redoAction['action_type'] === 'update_gantt' && is_array($data))
+        ? normalize_undo_group($data['group'] ?? null)
+        : null;
+    $redoActions = [$redoAction];
+    if ($redoGroup !== null) {
+        for ($i = 1; $i < count($redoHistory); $i++) {
+            $candidate = $redoHistory[$i];
+            if ($candidate['action_type'] !== 'update_gantt') break;
+            $candidateData = json_decode($candidate['action_data'], true);
+            $candidateGroup = is_array($candidateData) ? normalize_undo_group($candidateData['group'] ?? null) : null;
+            if ($candidateGroup !== $redoGroup) break;
+            $redoActions[] = $candidate;
+        }
+    }
     $s = $db->prepare('DELETE FROM redo_history WHERE id=?');
-    $s->execute([$redoAction['id']]);
+    foreach ($redoActions as $redoEntry) {
+        $s->execute([$redoEntry['id']]);
+    }
 
     $result = [];
     if ($redoAction['action_type'] === 'create_gantt') {
@@ -1565,6 +1667,29 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
         $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
         $s->execute([uuid_v4(), $projectId, $userId, 'create_gantt', json_encode(['entry' => $entry])]);
         $result = ['redone' => 'create_gantt', 'entry' => $entry];
+    } elseif ($redoAction['action_type'] === 'update_gantt' && $redoGroup !== null) {
+        $updatedEntries = [];
+        foreach ($redoActions as $redoEntry) {
+            $redoData = json_decode($redoEntry['action_data'], true);
+            if (!is_array($redoData) || empty($redoData['entry']) || !is_array($redoData['entry'])) continue;
+            $e = $redoData['entry'];
+            $entryId = $e['id'] ?? null;
+            if (!$entryId) continue;
+            $currentStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $currentStmt->execute([$entryId]);
+            $currentEntry = $currentStmt->fetch();
+            if ($currentEntry) {
+                $undoData = ['entry' => $currentEntry, 'group' => $redoGroup];
+                $s2 = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+                $s2->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode($undoData)]);
+            }
+            apply_gantt_entry_snapshot($db, $e);
+            $updatedStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $updatedStmt->execute([$entryId]);
+            $updated = $updatedStmt->fetch();
+            if ($updated) $updatedEntries[] = $updated;
+        }
+        $result = ['redone' => 'update_gantt', 'entries' => $updatedEntries, 'entry' => $updatedEntries[0] ?? null];
     } elseif ($redoAction['action_type'] === 'update_gantt') {
         // Redo: re-apply the update (restore to the state stored in redo data)
         $e = $data['entry'];
@@ -1573,10 +1698,12 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
         $currentEntry = $s->fetch();
         if ($currentEntry) {
             // Save current state as undo so user can undo this redo
+            $undoData = ['entry' => $currentEntry];
+            $singleGroup = is_array($data) ? normalize_undo_group($data['group'] ?? null) : null;
+            if ($singleGroup !== null) $undoData['group'] = $singleGroup;
             $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
-            $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode(['entry' => $currentEntry])]);
-            $s = $db->prepare('UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
-            $s->execute([$e['title'], $e['row_label'] ?? $e['title'], $e['row_height'] ?? 40, $e['row_only'] ?? 0, $e['start_date'], $e['end_date'], $e['hours_estimate'], $e['hours_set'] ?? 0, $e['color_variation'], $e['position'], $e['notes'], $e['folder_url'] ?? '', $e['subtract_hours'] ?? 0, $e['same_row'] ?? null, now_ms(), $e['id']]);
+            $s->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode($undoData)]);
+            apply_gantt_entry_snapshot($db, $e);
             $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
             $s->execute([$e['id']]);
             $result = ['redone' => 'update_gantt', 'entry' => $s->fetch()];

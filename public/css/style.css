@@ -392,7 +392,7 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-task-expand:hover { background: var(--primary); color: #fff; }
 .gantt-task-expand.expanded { background: var(--primary); color: #fff; }
 .gantt-task-color-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.gantt-task-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.gantt-task-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; transition: opacity .12s; }
 .gantt-task-row.row-expanded .gantt-task-name {
   white-space: normal; overflow: visible; word-break: break-word; overflow-wrap: break-word; line-height: 1.4;
 }

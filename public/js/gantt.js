@@ -53,6 +53,7 @@
   let pxPerDay = 28;
   let chartStart = null;
   let chartEnd   = null;
+  let undoGroupSeq = 0;
 
   // rowIndexMap: entryId -> rowIndex (rebuilt on each render)
   let rowIndexMap = {};
@@ -1140,7 +1141,8 @@
       const color = getEntryColor(entry);
       const linkedTodo = S().todos.find(t => t.gantt_entry_id === entry.id);
       const isCompleted = linkedTodo && linkedTodo.status === 'done';
-      const rowIsExpanded = getEffectiveEntryRowHeight(entry) > ROW_H;
+      const effectiveRowHeight = getEffectiveEntryRowHeight(entry);
+      const rowIsExpanded = effectiveRowHeight > ROW_H;
 
       const row = document.createElement('div');
       row.className = 'gantt-task-row'
@@ -1148,7 +1150,11 @@
         + (isCompleted ? ' gantt-completed' : '')
         + (rowIsExpanded ? ' row-expanded' : '');
       row.dataset.id = entry.id;
-      row.style.minHeight = getEffectiveEntryRowHeight(entry) + 'px';
+      if (rowIsExpanded) {
+        row.style.minHeight = effectiveRowHeight + 'px';
+      } else {
+        row.style.height = effectiveRowHeight + 'px';
+      }
 
       // Drag handle for reparenting / reordering
       const grip = document.createElement('span');
@@ -1210,6 +1216,7 @@
       name.className = 'gantt-task-name';
       name.textContent = getEntryRowLabel(entry);
       name.title = 'Row: ' + getEntryRowLabel(entry) + '\nTask: ' + entry.title + (entry.notes ? '\n\n' + entry.notes : '');
+      name.style.opacity = calculateTaskTitleOpacity(effectiveRowHeight).toFixed(2);
       name.addEventListener('dblclick', async (e) => {
         e.stopPropagation();
         const newLabel = prompt('Edit row name', getEntryRowLabel(entry));
@@ -2187,14 +2194,6 @@
       const color = _safeColor(ms.color);
       const label = ms.label || '';
 
-      // ── Ruler diamond marker ─────────────────────────────────────────────
-      const marker = document.createElement('div');
-      marker.className        = 'gantt-milestone-marker';
-      marker.style.left       = x + 'px';
-      marker.style.backgroundColor = color;
-      marker.title            = (label ? label + ' — ' : '') + ms.date;
-      ganttRuler.appendChild(marker);
-
       // ── Vertical dashed line segments ─────────────────────────────────────
       const fullHeight = Math.max(1, ganttRows.scrollHeight || ganttRows.offsetHeight || 1);
       const segments = scopedRanges || [{ top: 0, height: fullHeight }];
@@ -3120,18 +3119,21 @@
     }
 
     // ── Handle horizontal date change ──────────────────────────────────────
+    const moveUndoGroup = (dragType === 'move' && deltaDays !== 0) ? makeUndoGroupId() : null;
     if (deltaDays !== 0) {
       // Expand chart date range if entry moved/resized outside it
       expandChartRange({ start_date: newStart, end_date: newEnd });
 
       try {
-        const updated = await API('PUT', '/api/gantt/' + entryId, {
+        const updatePayload = {
           start_date: newStart, end_date: newEnd,
-        });
+        };
+        if (moveUndoGroup) updatePayload.undo_group = moveUndoGroup;
+        const updated = await API('PUT', '/api/gantt/' + entryId, updatePayload);
         const idx = S().ganttEntries.findIndex(x => x.id === entryId);
         if (idx !== -1) {
           S().ganttEntries[idx] = updated.entry;
-          await expandParentDates(updated.entry);
+          await expandParentDates(updated.entry, moveUndoGroup ? { undoGroup: moveUndoGroup } : null);
         }
         U().updateUndoRedoBtns?.();
       } catch (err) {
@@ -3141,7 +3143,7 @@
 
       // When moving (not resizing), shift all subtask descendants by the same delta
       if (dragType === 'move') {
-        await shiftDescendantDates(entryId, deltaDays);
+        await shiftDescendantDates(entryId, deltaDays, moveUndoGroup ? { undoGroup: moveUndoGroup } : null);
       }
     }
 
@@ -3296,8 +3298,29 @@
     containerEl.style.width = (widthDays * pxPerDay) + 'px';
   }
 
-  async function shiftDescendantDates(entryId, deltaDays) {
+  // Create a stable ID used to group related updates into one undo/redo action.
+  // Uses crypto.randomUUID when available, otherwise a high-resolution fallback.
+  function makeUndoGroupId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID();
+    }
+    undoGroupSeq += 1;
+    const hiRes = (window.performance && typeof window.performance.now === 'function')
+      ? Math.floor(window.performance.now() * 1000)
+      : 0;
+    return 'undo-' + Date.now().toString(36) + '-' + hiRes.toString(36) + '-' + undoGroupSeq.toString(36);
+  }
+
+  // Map row height to title opacity (0..1) so labels fade out at very small heights.
+  function calculateTaskTitleOpacity(rowHeight) {
+    // Fade title text between MIN_ROW_HEIGHT (fully hidden) and ROW_H (fully visible).
+    const fadeDenominator = Math.max(1, ROW_H - MIN_ROW_HEIGHT);
+    return Math.max(0, Math.min(1, (rowHeight - MIN_ROW_HEIGHT) / fadeDenominator));
+  }
+
+  async function shiftDescendantDates(entryId, deltaDays, options) {
     if (!deltaDays) return;
+    const opts = options || {};
     const descendants = [];
     const collectDesc = (pid) => {
       S().ganttEntries.forEach(e => {
@@ -3317,9 +3340,12 @@
       const childNewEnd   = toDateStr(addDays(ce, deltaDays));
       expandChartRange({ start_date: childNewStart, end_date: childNewEnd });
       try {
-        const upd = await API('PUT', '/api/gantt/' + child.id, {
+        const payload = {
           start_date: childNewStart, end_date: childNewEnd,
-        });
+        };
+        if (opts.undoGroup) payload.undo_group = opts.undoGroup;
+        if (opts.suppressUndo) payload.suppress_undo = 1;
+        const upd = await API('PUT', '/api/gantt/' + child.id, payload);
         const ci = S().ganttEntries.findIndex(x => x.id === child.id);
         if (ci !== -1) S().ganttEntries[ci] = upd.entry;
       } catch (err) {
@@ -3896,15 +3922,23 @@
       try {
         const oldStart = entry.start_date;
         const oldEnd   = entry.end_date;
-        const data = await API('PUT', '/api/gantt/' + entry.id, vals);
+        const os = parseDate(oldStart);
+        const oe = parseDate(oldEnd);
+        const nsCandidate = parseDate(vals.start_date);
+        const neCandidate = parseDate(vals.end_date);
+        const deltaStartCandidate = (os && nsCandidate) ? daysBetween(os, nsCandidate) : 0;
+        const deltaEndCandidate = (oe && neCandidate) ? daysBetween(oe, neCandidate) : 0;
+        const moveUndoGroup = (deltaStartCandidate !== 0 && deltaStartCandidate === deltaEndCandidate)
+          ? makeUndoGroupId()
+          : null;
+        const updateVals = moveUndoGroup ? { ...vals, undo_group: moveUndoGroup } : vals;
+        const data = await API('PUT', '/api/gantt/' + entry.id, updateVals);
         const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
         if (idx !== -1) {
           S().ganttEntries[idx] = data.entry;
-          await expandParentDates(data.entry);
+          await expandParentDates(data.entry, moveUndoGroup ? { undoGroup: moveUndoGroup } : null);
           expandChartRange(data.entry);
         }
-        const os = parseDate(oldStart);
-        const oe = parseDate(oldEnd);
         const ns = parseDate(data.entry.start_date);
         const ne = parseDate(data.entry.end_date);
         if (os && oe && ns && ne) {
@@ -3913,7 +3947,7 @@
           // Move detection: start and end shifted equally means the whole
           // parent task moved; unequal deltas indicate resize-like edits.
           if (deltaStart !== 0 && deltaStart === deltaEnd) {
-            await shiftDescendantDates(entry.id, deltaStart);
+            await shiftDescendantDates(entry.id, deltaStart, moveUndoGroup ? { undoGroup: moveUndoGroup } : null);
           }
         }
         render();
@@ -4641,8 +4675,9 @@
   // =========================================================================
   // Auto-expand parent date range when a child falls outside it
   // =========================================================================
-  async function expandParentDates(entry) {
+  async function expandParentDates(entry, options) {
     if (!entry.parent_id) return;
+    const opts = options || {};
     const parent = S().ganttEntries.find(e => e.id === entry.parent_id);
     if (!parent) return;
     let changed = false;
@@ -4652,11 +4687,14 @@
     if (entry.end_date   > newEnd)   { newEnd   = entry.end_date;   changed = true; }
     if (!changed) return;
     try {
-      const data = await API('PUT', '/api/gantt/' + parent.id, { start_date: newStart, end_date: newEnd });
+      const payload = { start_date: newStart, end_date: newEnd };
+      if (opts.undoGroup) payload.undo_group = opts.undoGroup;
+      if (opts.suppressUndo) payload.suppress_undo = 1;
+      const data = await API('PUT', '/api/gantt/' + parent.id, payload);
       const idx = S().ganttEntries.findIndex(e => e.id === parent.id);
       if (idx !== -1) S().ganttEntries[idx] = data.entry;
       // Recursively expand grandparent if needed
-      await expandParentDates(data.entry);
+      await expandParentDates(data.entry, opts);
     } catch (err) { console.warn('expandParentDates:', err); }
   }
   // =========================================================================
