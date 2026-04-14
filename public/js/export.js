@@ -470,7 +470,9 @@ function realignDependencyArrowsForPrint(timelineEl) {
 
   const rowsEl = timelineEl.querySelector('.gantt-timeline-rows');
   if (rowsEl) {
+    saveStyle(svg, 'width');
     saveStyle(svg, 'height');
+    svg.style.width = rowsEl.scrollWidth + 'px';
     svg.style.height = rowsEl.scrollHeight + 'px';
   }
 
@@ -483,7 +485,8 @@ function realignDependencyArrowsForPrint(timelineEl) {
     return bar || null;
   };
 
-  deps.forEach((dep, i) => {
+  let depPathIdx = 0;
+  deps.forEach(dep => {
     const srcBar = getBar(dep.source_id);
     const tgtBar = getBar(dep.target_id);
     if (!srcBar || !tgtBar) return;
@@ -513,20 +516,25 @@ function realignDependencyArrowsForPrint(timelineEl) {
               (x2 - cpx) + ' ' + y2 + ',' +
               x2 + ' ' + y2;
 
-    if (depPaths[i]) {
-      saveAttr(depPaths[i], 'd');
-      depPaths[i].setAttribute('d', d);
+    const depPath = depPaths[depPathIdx];
+    const hitPath = hitPaths[depPathIdx];
+    const delBtn  = delBtns[depPathIdx];
+
+    if (depPath) {
+      saveAttr(depPath, 'd');
+      depPath.setAttribute('d', d);
     }
-    if (hitPaths[i]) {
-      saveAttr(hitPaths[i], 'd');
-      hitPaths[i].setAttribute('d', d);
+    if (hitPath) {
+      saveAttr(hitPath, 'd');
+      hitPath.setAttribute('d', d);
     }
-    if (delBtns[i]) {
+    if (delBtn) {
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
-      saveAttr(delBtns[i], 'transform');
-      delBtns[i].setAttribute('transform', 'translate(' + mx + ',' + my + ')');
+      saveAttr(delBtn, 'transform');
+      delBtn.setAttribute('transform', 'translate(' + mx + ',' + my + ')');
     }
+    depPathIdx++;
   });
 
   return function cleanupDepPrintRealign() {
@@ -547,10 +555,17 @@ function exportPDF() {
 
   const ganttContainer  = document.getElementById('ganttContainer');
   const ganttTimeline   = document.getElementById('ganttTimeline');
+  const ganttRulerRow   = ganttContainer ? ganttContainer.querySelector('.gantt-ruler-row') : null;
   const ganttTaskList   = document.getElementById('ganttTaskList');
   const ganttHoursPanel = document.getElementById('ganttHoursPanel');
   const ganttBody       = document.getElementById('ganttBody');
   const intensityBar    = document.getElementById('intensityBarContainer');
+  const depsWereHidden  = ganttTimeline ? ganttTimeline.classList.contains('deps-hidden') : false;
+
+  const stripIds = (root) => {
+    if (!root) return;
+    if (root.removeAttribute) root.removeAttribute('id');
+  };
 
   // Temporarily remove overflow restrictions so we can measure full dimensions
   const ids = ['ganttTimeline', 'ganttTaskList', 'ganttHoursPanel'];
@@ -566,13 +581,14 @@ function exportPDF() {
 
   const savedBodyOverflow = ganttBody ? ganttBody.style.overflow : '';
   if (ganttBody) ganttBody.style.overflow = 'visible';
+  if (ganttTimeline && depsWereHidden) ganttTimeline.classList.remove('deps-hidden');
 
   document.body.classList.add('print-gantt');
 
   // --- Measure content dimensions ---
   const timelineTotalW = ganttTimeline.scrollWidth;
-  const taskListW      = ganttTaskList.offsetWidth;
-  const hoursW         = ganttHoursPanel ? ganttHoursPanel.offsetWidth : 0;
+  const taskListW      = Math.round(ganttTaskList.offsetWidth);
+  const hoursW         = ganttHoursPanel ? Math.round(ganttHoursPanel.offsetWidth) : 0;
 
   // A4 landscape usable width: 297mm − 2×8mm margins = 281mm
   // Convert mm → px: mm × 96 (CSS reference DPI) / 25.4 (mm per inch)
@@ -595,6 +611,7 @@ function exportPDF() {
       s.el.style.maxHeight = s.maxHeight;
     });
     if (ganttBody) ganttBody.style.overflow = savedBodyOverflow;
+    if (ganttTimeline && depsWereHidden) ganttTimeline.classList.add('deps-hidden');
     if (wrapper) {
       wrapper.remove();
       ganttContainer.style.display = '';
@@ -632,6 +649,8 @@ function exportPDF() {
 
     const page = document.createElement('div');
     page.className = 'print-page-section';
+    page.style.width = PAGE_W + 'px';
+    page.style.maxWidth = PAGE_W + 'px';
 
     // Page label
     const label = document.createElement('div');
@@ -642,7 +661,8 @@ function exportPDF() {
     // --- Intensity bar clone ---
     if (intensityBar) {
       const iClone = intensityBar.cloneNode(true);
-      iClone.removeAttribute('id');
+      stripIds(iClone);
+      iClone.style.width = PAGE_W + 'px';
       // Replace cloned canvas with image snapshot
       if (canvasDataUrl) {
         const clonedCanvas = iClone.querySelector('canvas');
@@ -650,38 +670,103 @@ function exportPDF() {
           const img = document.createElement('img');
           img.src = canvasDataUrl;
           img.style.display = 'block';
+          img.style.maxWidth = 'none';
           img.style.marginLeft = (-offset) + 'px';
           clonedCanvas.parentNode.replaceChild(img, clonedCanvas);
         }
+      }
+      const taskHeader = iClone.querySelector('.gantt-tasks-header');
+      if (taskHeader) {
+        taskHeader.style.width = taskListW + 'px';
+        taskHeader.style.minWidth = taskListW + 'px';
+        taskHeader.style.flex = 'none';
       }
       const tlHeader = iClone.querySelector('.gantt-timeline-header');
       if (tlHeader) {
         tlHeader.style.overflow = 'hidden';
         tlHeader.style.width = timelinePerPage + 'px';
+        tlHeader.style.minWidth = timelinePerPage + 'px';
         tlHeader.style.flex = 'none';
       }
+      const hoursHeader = iClone.querySelector('#ganttHoursHeader, .gantt-hours-header');
+      if (hoursHeader) {
+        hoursHeader.style.width = hoursW + 'px';
+        hoursHeader.style.minWidth = hoursW + 'px';
+        hoursHeader.style.flex = 'none';
+      }
       page.appendChild(iClone);
+    }
+
+    // --- Ruler row clone ---
+    if (ganttRulerRow) {
+      const rulerC = ganttRulerRow.cloneNode(true);
+      stripIds(rulerC);
+      rulerC.style.width = PAGE_W + 'px';
+
+      const taskSpacer = rulerC.querySelector('.gantt-ruler-task-spacer');
+      if (taskSpacer) {
+        taskSpacer.style.width = taskListW + 'px';
+        taskSpacer.style.minWidth = taskListW + 'px';
+        taskSpacer.style.flex = 'none';
+      }
+
+      const rulerClip = rulerC.querySelector('.gantt-ruler-clip');
+      if (rulerClip) {
+        rulerClip.style.width = timelinePerPage + 'px';
+        rulerClip.style.minWidth = timelinePerPage + 'px';
+        rulerClip.style.flex = 'none';
+        rulerClip.style.overflow = 'hidden';
+      }
+
+      const ruler = rulerC.querySelector('.gantt-timeline-ruler');
+      if (ruler) {
+        ruler.style.width = timelineTotalW + 'px';
+        ruler.style.minWidth = timelineTotalW + 'px';
+        ruler.style.marginLeft = (-offset) + 'px';
+      }
+
+      const hoursSpacer = rulerC.querySelector('.gantt-ruler-hours-spacer');
+      if (hoursSpacer) {
+        hoursSpacer.style.width = hoursW + 'px';
+        hoursSpacer.style.minWidth = hoursW + 'px';
+        hoursSpacer.style.flex = 'none';
+      }
+
+      page.appendChild(rulerC);
     }
 
     // --- Gantt body row ---
     const row = document.createElement('div');
     row.style.display = 'flex';
     row.style.overflow = 'hidden';
+    row.style.width = PAGE_W + 'px';
 
     // Create all three panel clones before injecting annotations so heights
     // can be synchronised across panels in one pass.
     const taskC = ganttTaskList.cloneNode(true);
-    taskC.removeAttribute('id');
+    stripIds(taskC);
+    taskC.style.width = taskListW + 'px';
+    taskC.style.minWidth = taskListW + 'px';
+    taskC.style.flex = 'none';
+    taskC.style.overflow = 'visible';
 
     const tlC = ganttTimeline.cloneNode(true);
-    tlC.removeAttribute('id');
+    stripIds(tlC);
     tlC.style.overflow = 'visible';
+    tlC.style.width = timelineTotalW + 'px';
+    tlC.style.minWidth = timelineTotalW + 'px';
+    tlC.style.flex = 'none';
     tlC.style.marginLeft = (-offset) + 'px';
+    if (depsWereHidden) tlC.classList.remove('deps-hidden');
 
     let hpC = null;
     if (ganttHoursPanel) {
       hpC = ganttHoursPanel.cloneNode(true);
-      hpC.removeAttribute('id');
+      stripIds(hpC);
+      hpC.style.width = hoursW + 'px';
+      hpC.style.minWidth = hoursW + 'px';
+      hpC.style.flex = 'none';
+      hpC.style.overflow = 'visible';
     }
 
     // Inject print annotations (expands rows, adds callouts) on the clones.
