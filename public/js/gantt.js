@@ -851,7 +851,9 @@
     const rows = ganttRows.querySelectorAll('.gantt-row-bg');
     rows.forEach((row, i) => {
       const top = row.offsetTop;
-      const h = row.offsetHeight || parseFloat(row.style.height) || ROW_H;
+      const offsetH = row.offsetHeight;
+      const styleH = parseFloat(row.style.height);
+      const h = offsetH > 0 ? offsetH : ((Number.isFinite(styleH) && styleH > 0) ? styleH : ROW_H);
       timelineRowBounds.push({ index: i, top, bottom: top + h });
     });
   }
@@ -877,7 +879,7 @@
       else return row;
     }
 
-    return timelineRowBounds[Math.max(0, Math.min(timelineRowBounds.length - 1, lo))];
+    return timelineRowBounds[Math.max(0, Math.min(timelineRowBounds.length - 1, hi))];
   }
 
   // Select all gantt entries whose bar visually overlaps the current marquee.
