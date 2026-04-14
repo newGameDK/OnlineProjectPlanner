@@ -562,7 +562,7 @@ function exportPDF() {
   const intensityBar    = document.getElementById('intensityBarContainer');
   const depsWereHidden  = ganttTimeline ? ganttTimeline.classList.contains('deps-hidden') : false;
 
-  const stripIds = (root) => {
+  const stripId = (root) => {
     if (!root) return;
     if (root.removeAttribute) root.removeAttribute('id');
   };
@@ -661,7 +661,7 @@ function exportPDF() {
     // --- Intensity bar clone ---
     if (intensityBar) {
       const iClone = intensityBar.cloneNode(true);
-      stripIds(iClone);
+      stripId(iClone);
       iClone.style.width = PAGE_W + 'px';
       // Replace cloned canvas with image snapshot
       if (canvasDataUrl) {
@@ -700,7 +700,7 @@ function exportPDF() {
     // --- Ruler row clone ---
     if (ganttRulerRow) {
       const rulerC = ganttRulerRow.cloneNode(true);
-      stripIds(rulerC);
+      stripId(rulerC);
       rulerC.style.width = PAGE_W + 'px';
 
       const taskSpacer = rulerC.querySelector('.gantt-ruler-task-spacer');
@@ -744,14 +744,14 @@ function exportPDF() {
     // Create all three panel clones before injecting annotations so heights
     // can be synchronised across panels in one pass.
     const taskC = ganttTaskList.cloneNode(true);
-    stripIds(taskC);
+    stripId(taskC);
     taskC.style.width = taskListW + 'px';
     taskC.style.minWidth = taskListW + 'px';
     taskC.style.flex = 'none';
     taskC.style.overflow = 'visible';
 
     const tlC = ganttTimeline.cloneNode(true);
-    stripIds(tlC);
+    stripId(tlC);
     tlC.style.overflow = 'visible';
     tlC.style.width = timelineTotalW + 'px';
     tlC.style.minWidth = timelineTotalW + 'px';
@@ -762,7 +762,7 @@ function exportPDF() {
     let hpC = null;
     if (ganttHoursPanel) {
       hpC = ganttHoursPanel.cloneNode(true);
-      stripIds(hpC);
+      stripId(hpC);
       hpC.style.width = hoursW + 'px';
       hpC.style.minWidth = hoursW + 'px';
       hpC.style.flex = 'none';
