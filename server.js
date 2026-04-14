@@ -197,8 +197,13 @@ CREATE TABLE IF NOT EXISTS gantt_milestones (
 
 // Migration: add scoped parent targets for milestones
 try {
-  db.exec(`ALTER TABLE gantt_milestones ADD COLUMN scope_parent_ids TEXT NOT NULL DEFAULT '[]'`);
-} catch (_) { /* column already exists – ignore */ }
+  const hasScopeParentIds = db.prepare(
+    `SELECT 1 FROM pragma_table_info('gantt_milestones') WHERE name='scope_parent_ids'`
+  ).get();
+  if (!hasScopeParentIds) {
+    db.exec(`ALTER TABLE gantt_milestones ADD COLUMN scope_parent_ids TEXT NOT NULL DEFAULT '[]'`);
+  }
+} catch (_) { /* ignore */ }
 
 // App settings table (key-value store for admin user IDs etc.)
 db.exec(`

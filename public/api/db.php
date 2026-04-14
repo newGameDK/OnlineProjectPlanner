@@ -217,8 +217,19 @@ CREATE TABLE IF NOT EXISTS gantt_milestones (
 
 // Migration: add scoped parent targets for milestones
 try {
-    $db->exec("ALTER TABLE gantt_milestones ADD COLUMN scope_parent_ids TEXT NOT NULL DEFAULT '[]'");
-} catch (Exception $e) { /* column already exists – ignore */ }
+    $s = $db->query("PRAGMA table_info(gantt_milestones)");
+    $cols = $s ? $s->fetchAll(PDO::FETCH_ASSOC) : [];
+    $hasScopeParentIds = false;
+    foreach ($cols as $col) {
+        if (($col['name'] ?? '') === 'scope_parent_ids') {
+            $hasScopeParentIds = true;
+            break;
+        }
+    }
+    if (!$hasScopeParentIds) {
+        $db->exec("ALTER TABLE gantt_milestones ADD COLUMN scope_parent_ids TEXT NOT NULL DEFAULT '[]'");
+    }
+} catch (Exception $e) { /* ignore */ }
 
 // Global undo history (not project-scoped; survives team/project deletion)
 $db->exec("
