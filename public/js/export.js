@@ -436,6 +436,112 @@ function injectPrintAnnotations(timelineEl, taskListEl, hoursPanelEl) {
   };
 }
 
+/**
+ * Recompute dependency arrow geometry for print/export DOMs after row heights
+ * are changed (for wrapped labels/callouts). Returns a cleanup function that
+ * restores original attributes/styles when called.
+ *
+ * @param {Element} timelineEl – .gantt-timeline element
+ */
+function realignDependencyArrowsForPrint(timelineEl) {
+  const svg = timelineEl ? timelineEl.querySelector('#depArrowsSvg') : null;
+  if (!svg) return function noop() {};
+
+  const deps = S().dependencies || [];
+  if (!deps.length) return function noop() {};
+
+  const depPaths = Array.from(svg.querySelectorAll('path.dep-arrow'));
+  const hitPaths = Array.from(svg.querySelectorAll('path.dep-arrow-hit'));
+  const delBtns  = Array.from(svg.querySelectorAll('.dep-delete-btn'));
+
+  const saved = [];
+  const saveAttr = (el, attr) => saved.push({ t: 'a', el, attr, v: el.getAttribute(attr) });
+  const saveStyle = (el, prop) => saved.push({ t: 's', el, prop, v: el.style[prop] });
+
+  // Hide interactive dependency helpers in print output.
+  hitPaths.forEach(el => {
+    saveStyle(el, 'display');
+    el.style.display = 'none';
+  });
+  delBtns.forEach(el => {
+    saveStyle(el, 'display');
+    el.style.display = 'none';
+  });
+
+  const rowsEl = timelineEl.querySelector('.gantt-timeline-rows');
+  if (rowsEl) {
+    saveStyle(svg, 'height');
+    svg.style.height = rowsEl.scrollHeight + 'px';
+  }
+
+  const MIN_BEZIER_CP = 24;
+  const barById = new Map();
+  const getBar = (id) => {
+    if (barById.has(id)) return barById.get(id);
+    const bar = timelineEl.querySelector('.gantt-bar-container[data-id="' + String(id) + '"]');
+    barById.set(id, bar || null);
+    return bar || null;
+  };
+
+  deps.forEach((dep, i) => {
+    const srcBar = getBar(dep.source_id);
+    const tgtBar = getBar(dep.target_id);
+    if (!srcBar || !tgtBar) return;
+
+    const srcRow = srcBar.closest('.gantt-row-bg');
+    const tgtRow = tgtBar.closest('.gantt-row-bg');
+    if (!srcRow || !tgtRow) return;
+
+    const srcLeft = parseFloat(srcBar.style.left) || 0;
+    const srcW    = parseFloat(srcBar.style.width) || srcBar.offsetWidth || 0;
+    const srcTop  = parseFloat(srcBar.style.top) || 0;
+    const srcH    = parseFloat(srcBar.style.height) || srcBar.offsetHeight || 0;
+
+    const tgtLeft = parseFloat(tgtBar.style.left) || 0;
+    const tgtTop  = parseFloat(tgtBar.style.top) || 0;
+    const tgtH    = parseFloat(tgtBar.style.height) || tgtBar.offsetHeight || 0;
+
+    const x1 = srcLeft + srcW;
+    const x2 = tgtLeft;
+    const y1 = srcRow.offsetTop + srcTop + (srcH / 2);
+    const y2 = tgtRow.offsetTop + tgtTop + (tgtH / 2);
+
+    const dx = Math.abs(x2 - x1);
+    const cpx = Math.max(dx * 0.25, MIN_BEZIER_CP);
+    const d = 'M ' + x1 + ' ' + y1 +
+              ' C ' + (x1 + cpx) + ' ' + y1 + ',' +
+              (x2 - cpx) + ' ' + y2 + ',' +
+              x2 + ' ' + y2;
+
+    if (depPaths[i]) {
+      saveAttr(depPaths[i], 'd');
+      depPaths[i].setAttribute('d', d);
+    }
+    if (hitPaths[i]) {
+      saveAttr(hitPaths[i], 'd');
+      hitPaths[i].setAttribute('d', d);
+    }
+    if (delBtns[i]) {
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      saveAttr(delBtns[i], 'transform');
+      delBtns[i].setAttribute('transform', 'translate(' + mx + ',' + my + ')');
+    }
+  });
+
+  return function cleanupDepPrintRealign() {
+    for (let i = saved.length - 1; i >= 0; i--) {
+      const s = saved[i];
+      if (s.t === 'a') {
+        if (s.v === null) s.el.removeAttribute(s.attr);
+        else s.el.setAttribute(s.attr, s.v);
+      } else {
+        s.el.style[s.prop] = s.v;
+      }
+    }
+  };
+}
+
 function exportPDF() {
   if (!S().currentProject) return alert('Open a project first.');
 
@@ -498,7 +604,9 @@ function exportPDF() {
   if (numPages <= 1) {
     // Single page – inject print annotations then print
     const restoreAnnotations = injectPrintAnnotations(ganttTimeline, ganttTaskList, ganttHoursPanel);
+    const restoreDepArrows   = realignDependencyArrowsForPrint(ganttTimeline);
     const afterPrint = () => {
+      restoreDepArrows();
       restoreAnnotations();
       cleanup();
       window.removeEventListener('afterprint', afterPrint);
@@ -579,6 +687,7 @@ function exportPDF() {
     // Inject print annotations (expands rows, adds callouts) on the clones.
     // No cleanup needed – clones are discarded after printing.
     injectPrintAnnotations(tlC, taskC, hpC);
+    realignDependencyArrowsForPrint(tlC);
 
     row.appendChild(taskC);
 
