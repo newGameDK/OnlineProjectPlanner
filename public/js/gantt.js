@@ -853,9 +853,18 @@
       const top = row.offsetTop;
       const offsetH = row.offsetHeight;
       const styleH = parseFloat(row.style.height);
-      const h = offsetH > 0 ? offsetH : ((Number.isFinite(styleH) && styleH > 0) ? styleH : ROW_H);
+      let h = ROW_H;
+      if (offsetH > 0) h = offsetH;
+      else if (Number.isFinite(styleH) && styleH > 0) h = styleH;
       timelineRowBounds.push({ index: i, top, bottom: top + h });
     });
+  }
+
+  function getTimelineRowBoundsByIndex(idx) {
+    const bounds = timelineRowBounds[idx];
+    if (bounds) return bounds;
+    const top = idx * ROW_H;
+    return { index: idx, top, bottom: top + ROW_H };
   }
 
   // Map a timeline-space Y coordinate to the corresponding visible row bounds.
@@ -872,7 +881,7 @@
     let lo = 0;
     let hi = timelineRowBounds.length - 1;
     while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
+      const mid = Math.floor((lo + hi) / 2);
       const row = timelineRowBounds[mid];
       if (yPx < row.top) hi = mid - 1;
       else if (yPx >= row.bottom) lo = mid + 1;
@@ -2803,8 +2812,10 @@
       const endDay   = Math.max(timelineSel.startDay, day);
       const startRow = Math.min(timelineSel.startRowIndex, rowIndex);
       const endRow   = Math.max(timelineSel.startRowIndex, rowIndex);
-      const startTop = timelineRowBounds[startRow] ? timelineRowBounds[startRow].top : (startRow * ROW_H);
-      const endBottom = timelineRowBounds[endRow] ? timelineRowBounds[endRow].bottom : ((endRow + 1) * ROW_H);
+      const startBounds = getTimelineRowBoundsByIndex(startRow);
+      const endBounds = getTimelineRowBoundsByIndex(endRow);
+      const startTop = startBounds.top;
+      const endBottom = endBounds.bottom;
 
       timelineSel.overlayEl.style.left   = (startDay * pxPerDay) + 'px';
       timelineSel.overlayEl.style.width  = ((endDay - startDay + 1) * pxPerDay) + 'px';
