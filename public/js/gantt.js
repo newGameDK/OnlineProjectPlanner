@@ -2153,7 +2153,8 @@
       ganttRuler.appendChild(marker);
 
       // ── Vertical dashed line segments ─────────────────────────────────────
-      const segments = scopedRanges || [{ top: 0, height: Math.max(1, ganttRows.scrollHeight || ganttRows.offsetHeight || 1) }];
+      const fullHeight = Math.max(1, ganttRows.scrollHeight || ganttRows.offsetHeight || 1);
+      const segments = scopedRanges || [{ top: 0, height: fullHeight }];
       segments.forEach(seg => {
         const line = document.createElement('div');
         line.className         = 'gantt-milestone-line';
@@ -3866,6 +3867,8 @@
         if (os && oe && ns && ne) {
           const deltaStart = daysBetween(os, ns);
           const deltaEnd   = daysBetween(oe, ne);
+          // Move detection: start and end shifted equally means the whole
+          // parent task moved; unequal deltas indicate resize-like edits.
           if (deltaStart !== 0 && deltaStart === deltaEnd) {
             await shiftDescendantDates(entry.id, deltaStart);
           }
