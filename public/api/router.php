@@ -112,6 +112,8 @@ if ($method === 'POST' || $method === 'PUT' || $method === 'PATCH') {
     }
 }
 
+const UNDO_REDO_GROUP_FETCH_LIMIT = 200;
+
 // -------------------------------------------------------------------------
 // Response helpers
 // -------------------------------------------------------------------------
@@ -142,16 +144,23 @@ function collect_gantt_descendants($db, $entryId) {
     return $ids;
 }
 
+/**
+ * Normalize an undo-group identifier from request/action payloads.
+ * Returns a trimmed non-empty string, or null when absent/invalid.
+ */
 function normalize_undo_group($value) {
     if (!is_string($value)) return null;
     $trimmed = trim($value);
     return $trimmed === '' ? null : $trimmed;
 }
 
+/**
+ * Restore a gantt entry row from a previously captured snapshot array.
+ */
 function apply_gantt_entry_snapshot($db, $e) {
     $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
     $s->execute([
-        array_key_exists('parent_id', $e) ? $e['parent_id'] : null,
+        $e['parent_id'] ?? null,
         $e['title'],
         $e['row_label'] ?? $e['title'],
         $e['row_height'] ?? 40,
@@ -1436,7 +1445,8 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
     $projectId = $seg2;
     if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
 
-    $s = $db->prepare('SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 200');
+    $undoLimit = (int) UNDO_REDO_GROUP_FETCH_LIMIT;
+    $s = $db->prepare("SELECT * FROM undo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT $undoLimit");
     $s->execute([$projectId, $userId]);
     $history = $s->fetchAll();
     if (empty($history)) json_out(['error' => 'Nothing to undo'], 400);
@@ -1483,17 +1493,18 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
             $e = $actionData['entry'];
             $entryId = $e['id'] ?? null;
             if (!$entryId) continue;
-            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
-            $s->execute([$entryId]);
-            $currentEntry = $s->fetch();
+            $currentStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $currentStmt->execute([$entryId]);
+            $currentEntry = $currentStmt->fetch();
             if ($currentEntry) {
                 $redoData = ['entry' => $currentEntry, 'group' => $undoGroup];
                 $s2 = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
                 $s2->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode($redoData)]);
             }
             apply_gantt_entry_snapshot($db, $e);
-            $s->execute([$entryId]);
-            $restored = $s->fetch();
+            $restoredStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $restoredStmt->execute([$entryId]);
+            $restored = $restoredStmt->fetch();
             if ($restored) $restoredEntries[] = $restored;
         }
         $result = ['undone' => 'update_gantt', 'entries' => $restoredEntries, 'entry' => $restoredEntries[0] ?? null];
@@ -1614,7 +1625,8 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
     $projectId = $seg2;
     if (!can_access_project($db, $projectId, $userId)) json_out(['error' => 'Forbidden'], 403);
 
-    $s = $db->prepare('SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT 200');
+    $redoLimit = (int) UNDO_REDO_GROUP_FETCH_LIMIT;
+    $s = $db->prepare("SELECT * FROM redo_history WHERE project_id=? AND user_id=? ORDER BY created_at DESC LIMIT $redoLimit");
     $s->execute([$projectId, $userId]);
     $redoHistory = $s->fetchAll();
     if (empty($redoHistory)) json_out(['error' => 'Nothing to redo'], 400);
@@ -1663,17 +1675,18 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
             $e = $redoData['entry'];
             $entryId = $e['id'] ?? null;
             if (!$entryId) continue;
-            $s = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
-            $s->execute([$entryId]);
-            $currentEntry = $s->fetch();
+            $currentStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $currentStmt->execute([$entryId]);
+            $currentEntry = $currentStmt->fetch();
             if ($currentEntry) {
                 $undoData = ['entry' => $currentEntry, 'group' => $redoGroup];
                 $s2 = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
                 $s2->execute([uuid_v4(), $projectId, $userId, 'update_gantt', json_encode($undoData)]);
             }
             apply_gantt_entry_snapshot($db, $e);
-            $s->execute([$entryId]);
-            $updated = $s->fetch();
+            $updatedStmt = $db->prepare('SELECT * FROM gantt_entries WHERE id=?');
+            $updatedStmt->execute([$entryId]);
+            $updated = $updatedStmt->fetch();
             if ($updated) $updatedEntries[] = $updated;
         }
         $result = ['redone' => 'update_gantt', 'entries' => $updatedEntries, 'entry' => $updatedEntries[0] ?? null];

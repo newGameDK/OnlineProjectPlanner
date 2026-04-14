@@ -53,6 +53,7 @@
   let pxPerDay = 28;
   let chartStart = null;
   let chartEnd   = null;
+  let undoGroupSeq = 0;
 
   // rowIndexMap: entryId -> rowIndex (rebuilt on each render)
   let rowIndexMap = {};
@@ -1215,9 +1216,7 @@
       name.className = 'gantt-task-name';
       name.textContent = getEntryRowLabel(entry);
       name.title = 'Row: ' + getEntryRowLabel(entry) + '\nTask: ' + entry.title + (entry.notes ? '\n\n' + entry.notes : '');
-      const fadeDenominator = Math.max(1, ROW_H - MIN_ROW_HEIGHT);
-      const titleOpacity = Math.max(0, Math.min(1, (effectiveRowHeight - MIN_ROW_HEIGHT) / fadeDenominator));
-      name.style.opacity = titleOpacity.toFixed(2);
+      name.style.opacity = calculateTaskTitleOpacity(effectiveRowHeight).toFixed(2);
       name.addEventListener('dblclick', async (e) => {
         e.stopPropagation();
         const newLabel = prompt('Edit row name', getEntryRowLabel(entry));
@@ -3299,11 +3298,24 @@
     containerEl.style.width = (widthDays * pxPerDay) + 'px';
   }
 
+  // Create a stable ID used to group related updates into one undo/redo action.
+  // Uses crypto.randomUUID when available, otherwise a high-resolution fallback.
   function makeUndoGroupId() {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') {
       return window.crypto.randomUUID();
     }
-    return 'undo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    undoGroupSeq += 1;
+    const hiRes = (window.performance && typeof window.performance.now === 'function')
+      ? Math.floor(window.performance.now() * 1000)
+      : 0;
+    return 'undo-' + Date.now().toString(36) + '-' + hiRes.toString(36) + '-' + undoGroupSeq.toString(36);
+  }
+
+  // Map row height to title opacity (0..1) so labels fade out at very small heights.
+  function calculateTaskTitleOpacity(rowHeight) {
+    // Fade title text between MIN_ROW_HEIGHT (fully hidden) and ROW_H (fully visible).
+    const fadeDenominator = Math.max(1, ROW_H - MIN_ROW_HEIGHT);
+    return Math.max(0, Math.min(1, (rowHeight - MIN_ROW_HEIGHT) / fadeDenominator));
   }
 
   async function shiftDescendantDates(entryId, deltaDays, options) {
