@@ -33,6 +33,9 @@
   const DEFAULT_TASK_COL_WIDTH = 260; // px default task column width
   const MIN_TASK_COL_WIDTH = 120;     // px minimum task column width when resizing
   const MAX_TASK_COL_WIDTH = 600;     // px maximum task column width when resizing
+  const MIN_ROW_HEIGHT = 28;          // px minimum per-row height
+  const MAX_ROW_HEIGHT = 500;         // px maximum per-row height
+  const Y_AXIS_SCALE_FACTOR = 1.04;   // wheel step for Y-axis compression/expansion
 
   // ─── state refs (injected from app.js) ───────────────────────────────────
   const S   = () => window.appState;
@@ -561,12 +564,41 @@
       _scrollSyncing = false;
     });
 
+    const adjustYAxisScale = (deltaY, clientY) => {
+      if (!deltaY) return;
+      const visible = visibleEntries();
+      if (!visible.length) return;
+      const factor = deltaY > 0 ? (1 / Y_AXIS_SCALE_FACTOR) : Y_AXIS_SCALE_FACTOR;
+      const rect = ganttTimeline.getBoundingClientRect();
+      const cursorY = Math.max(0, Math.min(rect.height, (clientY ?? (rect.top + rect.height / 2)) - rect.top));
+      const oldScrollHeight = Math.max(1, ganttTimeline.scrollHeight);
+      const anchorRatio = (ganttTimeline.scrollTop + cursorY) / oldScrollHeight;
+      let changed = false;
+      for (const entry of S().ganttEntries) {
+        if (rowIndexMap[entry.id] === undefined) continue;
+        const currentHeight = getEntryRowHeight(entry);
+        const nextHeight = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, Math.round(currentHeight * factor)));
+        if (nextHeight !== currentHeight) {
+          entry.row_height = nextHeight;
+          changed = true;
+        }
+      }
+      if (!changed) return;
+      render();
+      const newScrollHeight = Math.max(1, ganttTimeline.scrollHeight);
+      ganttTimeline.scrollTop = Math.max(0, anchorRatio * newScrollHeight - cursorY);
+    };
+
     // Scroll-wheel: horizontal two-finger swipe pans the timeline at 1/3 speed;
-    // vertical scroll zooms toward the cursor position. Both components are
-    // handled independently so a slightly diagonal swipe pans correctly instead
-    // of accidentally zooming.
+    // vertical scroll zooms toward the cursor position. Shift + wheel pans
+    // vertically (Y-axis).
     const wheelZoom = (e) => {
       e.preventDefault();
+      if (e.shiftKey && (e.deltaY !== 0 || e.deltaX !== 0)) {
+        const yDelta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+        ganttTimeline.scrollTop += yDelta / 3;
+        return;
+      }
       // Any horizontal component → pan the timeline at 1/3 speed
       if (e.deltaX !== 0) {
         ganttTimeline.scrollLeft += e.deltaX / 3;
@@ -595,6 +627,17 @@
     };
     ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
     if (ganttRuler) ganttRuler.addEventListener('wheel', wheelZoom, { passive: false });
+    const wheelYAxis = (e) => {
+      e.preventDefault();
+      if (e.shiftKey && (e.deltaY !== 0 || e.deltaX !== 0)) {
+        const yDelta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+        ganttTimeline.scrollTop += yDelta / 3;
+        return;
+      }
+      if (e.deltaY !== 0) adjustYAxisScale(e.deltaY, e.clientY);
+    };
+    ganttTaskList.addEventListener('wheel', wheelYAxis, { passive: false });
+    if (ganttHoursPanel) ganttHoursPanel.addEventListener('wheel', wheelYAxis, { passive: false });
     if (ganttRuler) ganttRuler.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const rect      = ganttRuler.getBoundingClientRect();
