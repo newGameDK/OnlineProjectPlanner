@@ -1127,11 +1127,22 @@ html.is-mobile .sidebar-backdrop.visible { display: block; }
   }
 
   /* Multi-page horizontal tiling */
-  body.print-gantt .print-multi-wrapper { display: block; }
-  body.print-gantt .print-page-section { overflow: hidden; }
+  body.print-gantt .print-multi-wrapper { display: block; width: 100%; }
+  body.print-gantt .print-page-section {
+    overflow: hidden;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   body.print-gantt .print-page-section + .print-page-section { page-break-before: always; }
   body.print-gantt .print-page-label {
     font-size: 8px; color: #999; text-align: right; padding: 0 4px 2px;
+  }
+  body.print-gantt .print-page-section .gantt-timeline,
+  body.print-gantt .print-page-section .gantt-timeline-ruler {
+    max-width: none !important;
+  }
+  body.print-gantt .print-page-section #depArrowsSvg {
+    overflow: visible !important;
   }
   .print-overlap-mark {
     position: absolute; top: 0; bottom: 0;
