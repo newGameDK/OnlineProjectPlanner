@@ -2181,10 +2181,14 @@
   function _initMilestoneScopeListInteractions() {
     const list = document.getElementById('msScopeList');
     if (!list) return;
+    const childrenByParentId = new Map();
+    list.querySelectorAll('.msScopeChildren').forEach(el => {
+      childrenByParentId.set(el.getAttribute('data-parent'), el);
+    });
     list.querySelectorAll('.msScopeToggle').forEach(btn => {
       btn.addEventListener('click', () => {
         const targetId = btn.getAttribute('data-target');
-        const childrenEl = list.querySelector('.msScopeChildren[data-parent="' + targetId + '"]');
+        const childrenEl = childrenByParentId.get(targetId);
         if (!childrenEl) return;
         const expanded = childrenEl.style.display !== 'none';
         childrenEl.style.display = expanded ? 'none' : 'block';
