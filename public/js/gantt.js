@@ -590,9 +590,9 @@
       ganttTimeline.scrollTop = Math.max(0, anchorRatio * newScrollHeight - cursorY);
     };
 
-    // Scroll-wheel: horizontal two-finger swipe pans the timeline at 1/3 speed;
-    // vertical scroll zooms toward the cursor position. Shift + wheel pans
-    // vertically (Y-axis).
+    // Scroll-wheel / two-finger pan: pan the timeline in both axes at 1/3 speed.
+    // Pinch-zoom (ctrl+wheel on trackpads) zooms toward the cursor position.
+    // Shift + wheel keeps explicit vertical panning behavior.
     const wheelZoom = (e) => {
       e.preventDefault();
       if (e.shiftKey && (e.deltaY !== 0 || e.deltaX !== 0)) {
@@ -600,12 +600,8 @@
         ganttTimeline.scrollTop += yDelta / 3;
         return;
       }
-      // Any horizontal component → pan the timeline at 1/3 speed
-      if (e.deltaX !== 0) {
-        ganttTimeline.scrollLeft += e.deltaX / 3;
-      }
-      // Vertical component only when the gesture is not primarily horizontal → zoom.
-      if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+      // Pinch zoom gesture (trackpads/browsers typically map it to ctrl+wheel).
+      if (e.ctrlKey && e.deltaY !== 0) {
         // Cursor position relative to the timeline content (in "day" units)
         const rect     = ganttTimeline.getBoundingClientRect();
         const cursorX  = e.clientX - rect.left;           // px within visible area
@@ -624,6 +620,14 @@
           ganttTimeline.scrollLeft = dayAtCursor * pxPerDay - cursorX;
           render();
         }
+        return;
+      }
+      // Two-finger pan / regular wheel panning
+      if (e.deltaX !== 0) {
+        ganttTimeline.scrollLeft += e.deltaX / 3;
+      }
+      if (e.deltaY !== 0) {
+        ganttTimeline.scrollTop += e.deltaY / 3;
       }
     };
     ganttTimeline.addEventListener('wheel', wheelZoom, { passive: false });
