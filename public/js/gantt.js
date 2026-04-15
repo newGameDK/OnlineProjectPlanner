@@ -647,7 +647,7 @@
       const dateStr   = toDateStr(addDays(chartStart, dayOffset));
       U().showContextMenu(e.pageX, e.pageY, [
         { icon: '\uD83D\uDEA9', label: 'Add milestone here (' + dateStr + ')',
-          action: () => showAddMilestoneModal(dateStr) },
+          action: () => showAddMilestoneModal(dateStr, null) },
       ]);
     });
     if (intensityBarWrapper) intensityBarWrapper.addEventListener('wheel', wheelZoom, { passive: false });
@@ -1012,7 +1012,7 @@
     }
 
     items.push({ icon: '\uD83D\uDEA9', label: 'Add milestone here (' + dateStr + ')',
-      action: () => showAddMilestoneModal(dateStr) });
+      action: () => showAddMilestoneModal(dateStr, timelineContextRowId) });
 
     items.push({ icon: '+', label: 'Add task here (' + dateStr + ')',
       action: () => showAddEntryModal(undefined, dateStr, toDateStr(addDays(clickDate, 7)), timelineContextRowId) });
@@ -2125,12 +2125,33 @@
           '<span style="padding-left:' + (depth * 12) + 'px">' + _esc(label) + '</span>' +
         '</label>'
       );
-      (childrenOf[entry.id] || []).forEach(child => pushEntry(child, depth + 1));
     };
 
+    // Keep subtasks collapsed in this picker by showing only top-level tasks.
     (childrenOf.__root__ || []).forEach(root => pushEntry(root, 0));
-    all.forEach(entry => pushEntry(entry, 0));
+
+    // Preserve legacy scope selections even if they are not top-level.
+    all.forEach(entry => {
+      if (selected.has(entry.id)) pushEntry(entry, 1);
+    });
     return rows.join('');
+  }
+
+  function _getMilestoneScopeDefaultParentId(contextEntryId) {
+    if (!contextEntryId) return null;
+    const byId = new Map((S().ganttEntries || []).map(entry => [entry.id, entry]));
+    let cursor = byId.get(contextEntryId);
+    if (!cursor) return null;
+
+    const seen = new Set([cursor.id]);
+    while (cursor.parent_id) {
+      if (seen.has(cursor.parent_id)) break;
+      const parent = byId.get(cursor.parent_id);
+      if (!parent) break;
+      seen.add(parent.id);
+      cursor = parent;
+    }
+    return cursor.id || null;
   }
 
   function _getSelectedMilestoneScopeIds() {
@@ -2249,8 +2270,9 @@
     });
   }
 
-  function showAddMilestoneModal(dateStr) {
-    const scopeHtml = _getMilestoneScopeOptionsHtml([]);
+  function showAddMilestoneModal(dateStr, contextEntryId) {
+    const defaultScopeParentId = _getMilestoneScopeDefaultParentId(contextEntryId);
+    const scopeHtml = _getMilestoneScopeOptionsHtml(defaultScopeParentId ? [defaultScopeParentId] : []);
     const html =
       '<label style="display:block;margin-bottom:10px">Date<br>' +
       '<input id="msDate" type="date" value="' + _esc(dateStr) + '" style="width:100%"></label>' +
