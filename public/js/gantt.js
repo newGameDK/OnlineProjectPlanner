@@ -2117,29 +2117,41 @@
     const pushEntry = (entry, depth) => {
       if (!entry || seen.has(entry.id)) return;
       seen.add(entry.id);
+      const childEntries = childrenOf[entry.id] || [];
+      const hasChildren = childEntries.length > 0;
       const checked = selected.has(entry.id) ? ' checked' : '';
       const label = getEntryRowLabel(entry) || entry.title || 'Untitled';
+      const entryIdEsc = _esc(entry.id);
       rows.push(
-        '<label style="display:block;margin:4px 0;font-size:13px;line-height:1.3">' +
-          '<input class="msScope" type="checkbox" value="' + _esc(entry.id) + '"' + checked + '> ' +
-          '<span style="padding-left:' + (depth * 12) + 'px">' + _esc(label) + '</span>' +
-        '</label>'
+        '<div style="margin:4px 0;padding-left:' + (depth * 12) + 'px;font-size:13px;line-height:1.3">' +
+          (hasChildren
+            ? '<button type="button" class="msScopeToggle" data-target="' + entryIdEsc + '" aria-expanded="false" style="width:18px;border:0;background:transparent;cursor:pointer;padding:0">▶</button>'
+            : '<span style="display:inline-block;width:18px"></span>') +
+          '<label style="cursor:pointer"><input class="msScope" type="checkbox" value="' + entryIdEsc + '"' + checked + '> ' + _esc(label) + '</label>' +
+        '</div>'
       );
+      if (!hasChildren) return;
+      rows.push('<div class="msScopeChildren" data-parent="' + entryIdEsc + '" style="display:none">');
+      childEntries.forEach(child => pushEntry(child, depth + 1));
+      rows.push('</div>');
     };
 
-    // Keep subtasks collapsed in this picker by showing only top-level tasks.
     (childrenOf.__root__ || []).forEach(root => pushEntry(root, 0));
-
-    // Preserve legacy scope selections even if they are not top-level.
-    all.forEach(entry => {
-      if (selected.has(entry.id)) pushEntry(entry, 1);
-    });
+    all.forEach(entry => pushEntry(entry, 0));
     return rows.join('');
   }
 
-  function _getMilestoneScopeDefaultParentId(contextEntryId) {
+  function _getMilestoneScopeDefaultIds(contextEntryId) {
     if (!contextEntryId) return null;
-    const byId = new Map((S().ganttEntries || []).map(entry => [entry.id, entry]));
+    const all = S().ganttEntries || [];
+    const byId = new Map(all.map(entry => [entry.id, entry]));
+    const childrenOf = {};
+    all.forEach(entry => {
+      if (!entry.parent_id) return;
+      if (!childrenOf[entry.parent_id]) childrenOf[entry.parent_id] = [];
+      childrenOf[entry.parent_id].push(entry);
+    });
+
     let cursor = byId.get(contextEntryId);
     if (!cursor) return null;
 
@@ -2151,7 +2163,35 @@
       seen.add(parent.id);
       cursor = parent;
     }
-    return cursor.id || null;
+    const root = cursor;
+    if (!root || !root.id) return null;
+
+    const selected = [];
+    const selectedSet = new Set();
+    const addWithDescendants = (entry) => {
+      if (!entry || selectedSet.has(entry.id)) return;
+      selectedSet.add(entry.id);
+      selected.push(entry.id);
+      (childrenOf[entry.id] || []).forEach(addWithDescendants);
+    };
+    addWithDescendants(root);
+    return selected.length ? selected : null;
+  }
+
+  function _initMilestoneScopeListInteractions() {
+    const list = document.getElementById('msScopeList');
+    if (!list) return;
+    list.querySelectorAll('.msScopeToggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-target');
+        const childrenEl = [...list.querySelectorAll('.msScopeChildren')].find(el => el.getAttribute('data-parent') === targetId);
+        if (!childrenEl) return;
+        const expanded = childrenEl.style.display !== 'none';
+        childrenEl.style.display = expanded ? 'none' : 'block';
+        btn.textContent = expanded ? '▶' : '▼';
+        btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      });
+    });
   }
 
   function _getSelectedMilestoneScopeIds() {
@@ -2164,16 +2204,31 @@
 
     const scopeSet = new Set(scopeIds);
     const byId = new Map((S().ganttEntries || []).map(e => [e.id, e]));
+    const hasSelectedDescendants = new Set();
+    scopeIds.forEach(id => {
+      let cursor = byId.get(id);
+      const seen = new Set();
+      while (cursor && cursor.parent_id) {
+        if (seen.has(cursor.parent_id)) break;
+        seen.add(cursor.parent_id);
+        hasSelectedDescendants.add(cursor.parent_id);
+        cursor = byId.get(cursor.parent_id);
+      }
+    });
     const rowIndexes = new Set();
 
     (S().ganttEntries || []).forEach(entry => {
       const rowIdx = rowIndexMap[entry.id];
       if (rowIdx === undefined) return;
+      if (scopeSet.has(entry.id)) {
+        rowIndexes.add(rowIdx);
+        return;
+      }
 
       let cursor = entry;
       const seen = new Set();
       while (cursor) {
-        if (scopeSet.has(cursor.id)) {
+        if (scopeSet.has(cursor.id) && !hasSelectedDescendants.has(cursor.id)) {
           rowIndexes.add(rowIdx);
           return;
         }
@@ -2271,8 +2326,8 @@
   }
 
   function showAddMilestoneModal(dateStr, contextEntryId) {
-    const defaultScopeParentId = _getMilestoneScopeDefaultParentId(contextEntryId);
-    const scopeHtml = _getMilestoneScopeOptionsHtml(defaultScopeParentId ? [defaultScopeParentId] : []);
+    const defaultScopeIds = _getMilestoneScopeDefaultIds(contextEntryId);
+    const scopeHtml = _getMilestoneScopeOptionsHtml(defaultScopeIds || []);
     const html =
       '<label style="display:block;margin-bottom:10px">Date<br>' +
       '<input id="msDate" type="date" value="' + _esc(dateStr) + '" style="width:100%"></label>' +
@@ -2301,6 +2356,7 @@
         U().closeModal();
       } catch (err) { alert('Save failed: ' + err.message); }
     });
+    _initMilestoneScopeListInteractions();
   }
 
   function showEditMilestoneModal(ms) {
@@ -2331,6 +2387,7 @@
         U().closeModal();
       } catch (err) { alert('Save failed: ' + err.message); }
     });
+    _initMilestoneScopeListInteractions();
   }
 
   async function deleteMilestone(id) {
