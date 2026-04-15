@@ -2125,7 +2125,7 @@
       rows.push(
         '<div style="margin:4px 0;padding-left:' + (depth * 12) + 'px;font-size:13px;line-height:1.3">' +
           (hasChildren
-            ? '<button type="button" class="msScopeToggle" data-target="' + entryIdEsc + '" aria-expanded="false" style="width:18px;border:0;background:transparent;cursor:pointer;padding:0">▶</button>'
+            ? '<button type="button" class="msScopeToggle" data-target="' + entryIdEsc + '" aria-label="Toggle subtasks for ' + _esc(label) + '" aria-expanded="false" style="width:18px;border:0;background:transparent;cursor:pointer;padding:0">▶</button>'
             : '<span style="display:inline-block;width:18px"></span>') +
           '<label style="cursor:pointer"><input class="msScope" type="checkbox" value="' + entryIdEsc + '"' + checked + '> ' + _esc(label) + '</label>' +
         '</div>'
@@ -2184,7 +2184,7 @@
     list.querySelectorAll('.msScopeToggle').forEach(btn => {
       btn.addEventListener('click', () => {
         const targetId = btn.getAttribute('data-target');
-        const childrenEl = [...list.querySelectorAll('.msScopeChildren')].find(el => el.getAttribute('data-parent') === targetId);
+        const childrenEl = list.querySelector('.msScopeChildren[data-parent="' + targetId + '"]');
         if (!childrenEl) return;
         const expanded = childrenEl.style.display !== 'none';
         childrenEl.style.display = expanded ? 'none' : 'block';
