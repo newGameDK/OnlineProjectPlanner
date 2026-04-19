@@ -409,6 +409,8 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .gantt-task-hours { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 .gantt-task-actions { display: none; gap: 2px; flex-shrink: 0; }
 .gantt-task-row:hover .gantt-task-actions { display: flex; }
+.gantt-hide-row-actions .gantt-task-row .gantt-task-actions,
+.gantt-hide-row-actions .gantt-task-row:hover .gantt-task-actions { display: none !important; }
 .gantt-task-action-btn {
   background: none; border: none; cursor: pointer; padding: 2px 4px; border-radius: 3px;
   font-size: 13px; color: var(--text-muted);

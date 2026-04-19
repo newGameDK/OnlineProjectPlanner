@@ -419,6 +419,21 @@ function setupEventListeners() {
     });
   })();
 
+  // Show/hide task row actions (admin setting)
+  (function initShowRowActionsSetting() {
+    const checkbox = document.getElementById('settingsShowRowActions');
+    if (!checkbox) return;
+    const saved = localStorage.getItem('ganttShowRowActions');
+    const show  = saved === null ? true : saved === 'true';
+    checkbox.checked = show;
+    document.body.classList.toggle('gantt-hide-row-actions', !show);
+    checkbox.addEventListener('change', () => {
+      const val = checkbox.checked;
+      localStorage.setItem('ganttShowRowActions', val);
+      document.body.classList.toggle('gantt-hide-row-actions', !val);
+    });
+  })();
+
   // New team
   document.getElementById('newTeamBtn').addEventListener('click', () => {
     openModal('New Team', `
