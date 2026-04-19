@@ -149,7 +149,10 @@
                   <div class="toolbar-dropdown-divider"></div>
                   <div class="toolbar-dropdown-section" style="flex-direction:column;align-items:flex-start;gap:2px">
                     <label class="toolbar-label" style="font-size:10px;color:var(--text-muted);margin-bottom:2px">Admin settings</label>
-                    <label class="toolbar-label">Snap aggressiveness: <span id="snapPxLabel">5</span>px</label>
+                    <label class="toolbar-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                      <input type="checkbox" id="settingsShowRowActions" checked> Show task row actions
+                    </label>
+                    <label class="toolbar-label" style="margin-top:6px">Snap aggressiveness: <span id="snapPxLabel">5</span>px</label>
                     <input type="range" id="snapPxSlider" min="0" max="30" value="5" step="1" style="width:100%;cursor:pointer">
                     <label class="toolbar-label" style="margin-top:6px">Node proximity: <span id="proximityPxLabel">60</span>px</label>
                     <input type="range" id="proximityPxSlider" min="10" max="200" value="60" step="5" style="width:100%;cursor:pointer">

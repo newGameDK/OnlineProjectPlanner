@@ -2288,7 +2288,10 @@
       if (scopedRanges && !scopedRanges.length) return;
 
       const x     = Math.round(daysBetween(chartStart, date) * pxPerDay);
-      const color = _safeColor(ms.color);
+      const linkedTodo = (S().todos || []).find(t => t.milestone_id === ms.id);
+      const isTodoDone = linkedTodo && linkedTodo.status === 'done';
+      const color = isTodoDone ? '#43a047' : _safeColor(ms.color);
+      const opacity = isTodoDone ? 0.5 : 1;
       const label = ms.label || '';
 
       // ── Vertical dashed line segments ─────────────────────────────────────
@@ -2302,6 +2305,7 @@
         line.style.height      = seg.height + 'px';
         line.style.bottom      = 'auto';
         line.style.borderLeftColor = color;
+        if (opacity < 1) line.style.opacity = opacity;
 
         // Hover: reuse shared bar tooltip
         line.addEventListener('mouseenter', (e) => {
@@ -2343,6 +2347,8 @@
       '<input id="msLabel" type="text" placeholder="e.g. Launch deadline" style="width:100%"></label>' +
       '<label style="display:block;margin-bottom:10px">Color<br>' +
       '<input id="msColor" type="color" value="#e53935"></label>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">' +
+      '<input id="msInTodo" type="checkbox"> Add to Todo list</label>' +
       '<label style="display:block">Show on parent tasks (and subtasks)<br>' +
       '<div id="msScopeList" style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface)">' +
       scopeHtml +
@@ -2352,6 +2358,7 @@
       const date  = document.getElementById('msDate').value;
       const label = document.getElementById('msLabel').value.trim();
       const color = _safeColor(document.getElementById('msColor').value);
+      const inTodo = document.getElementById('msInTodo').checked;
       const scope_parent_ids = _getSelectedMilestoneScopeIds();
       if (!date) return alert('Date is required');
       try {
@@ -2360,6 +2367,16 @@
         });
         if (!S().milestones) S().milestones = [];
         S().milestones.push(data.milestone);
+        if (inTodo) {
+          const todoData = await API('POST', '/api/todos', {
+            project_id: S().currentProject.id,
+            milestone_id: data.milestone.id,
+            title: label || 'Milestone: ' + date,
+            due_date: date,
+          });
+          S().todos.push(todoData.todo);
+          if (window.todoModule) window.todoModule.render();
+        }
         render();
         U().closeModal();
       } catch (err) { alert('Save failed: ' + err.message); }
@@ -2369,6 +2386,8 @@
 
   function showEditMilestoneModal(ms) {
     const scopeHtml = _getMilestoneScopeOptionsHtml(_parseMilestoneScopeIds(ms.scope_parent_ids));
+    const linkedTodo = (S().todos || []).find(t => t.milestone_id === ms.id);
+    const isInTodo = !!linkedTodo;
     const html =
       '<label style="display:block;margin-bottom:10px">Date<br>' +
       '<input id="msDate" type="date" value="' + _esc(ms.date) + '" style="width:100%"></label>' +
@@ -2376,6 +2395,8 @@
       '<input id="msLabel" type="text" value="' + _esc(ms.label || '') + '" style="width:100%"></label>' +
       '<label style="display:block;margin-bottom:10px">Color<br>' +
       '<input id="msColor" type="color" value="' + _esc(_safeColor(ms.color)) + '"></label>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">' +
+      '<input id="msInTodo" type="checkbox"' + (isInTodo ? ' checked' : '') + '> Add to Todo list</label>' +
       '<label style="display:block">Show on parent tasks (and subtasks)<br>' +
       '<div id="msScopeList" style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--surface)">' +
       scopeHtml +
@@ -2385,12 +2406,37 @@
       const date  = document.getElementById('msDate').value;
       const label = document.getElementById('msLabel').value.trim();
       const color = _safeColor(document.getElementById('msColor').value);
+      const inTodo = document.getElementById('msInTodo').checked;
       const scope_parent_ids = _getSelectedMilestoneScopeIds();
       if (!date) return alert('Date is required');
       try {
         const data = await API('PUT', '/api/milestones/' + ms.id, { date, label, color, scope_parent_ids });
         const idx = (S().milestones || []).findIndex(m => m.id === ms.id);
         if (idx !== -1) S().milestones[idx] = data.milestone;
+        // Handle todo link: add if newly checked, remove if unchecked
+        if (inTodo && !linkedTodo) {
+          const todoData = await API('POST', '/api/todos', {
+            project_id: S().currentProject.id,
+            milestone_id: ms.id,
+            title: label || 'Milestone: ' + date,
+            due_date: date,
+          });
+          S().todos.push(todoData.todo);
+          if (window.todoModule) window.todoModule.render();
+        } else if (!inTodo && linkedTodo) {
+          await API('DELETE', '/api/todos/' + linkedTodo.id);
+          S().todos = S().todos.filter(t => t.id !== linkedTodo.id);
+          if (window.todoModule) window.todoModule.render();
+        } else if (inTodo && linkedTodo) {
+          // Update the todo title/due_date to keep in sync
+          const updData = await API('PUT', '/api/todos/' + linkedTodo.id, {
+            title: label || 'Milestone: ' + date,
+            due_date: date,
+          });
+          const tIdx = S().todos.findIndex(t => t.id === linkedTodo.id);
+          if (tIdx !== -1) S().todos[tIdx] = updData.todo;
+          if (window.todoModule) window.todoModule.render();
+        }
         render();
         U().closeModal();
       } catch (err) { alert('Save failed: ' + err.message); }
@@ -4919,8 +4965,10 @@
     if (chartStart && inputStart) return;
 
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    let earliest = new Date(today), latest = new Date(today);
-    latest.setDate(latest.getDate() + 90);
+    const defaultStart = new Date(today);
+    defaultStart.setDate(defaultStart.getDate() - 7);
+    let latest = new Date(today);
+    latest.setDate(latest.getDate() + 100);
 
     // Include both visible entries and same-row entries in the range calculation
     const allRelevant = entries.slice();
@@ -4931,13 +4979,11 @@
     });
 
     allRelevant.forEach(e => {
-      const s = parseDate(e.start_date), en = parseDate(e.end_date);
-      if (s && s < earliest) earliest = s;
-      if (en && en > latest)  latest   = en;
+      const en = parseDate(e.end_date);
+      if (en && en > latest) latest = en;
     });
-    earliest.setDate(earliest.getDate() - 7);
     latest.setDate(latest.getDate() + 14);
-    chartStart = earliest;
+    chartStart = defaultStart;
     chartEnd   = latest;
   }
 

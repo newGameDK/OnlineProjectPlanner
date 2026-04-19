@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS todo_items (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   gantt_entry_id TEXT,
+  milestone_id TEXT,
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'todo',
@@ -194,6 +195,16 @@ CREATE TABLE IF NOT EXISTS gantt_milestones (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 `);
+
+// Migration: add milestone_id to todo_items
+try {
+  const hasMilestoneId = db.prepare(
+    `SELECT 1 FROM pragma_table_info('todo_items') WHERE name='milestone_id'`
+  ).get();
+  if (!hasMilestoneId) {
+    db.exec(`ALTER TABLE todo_items ADD COLUMN milestone_id TEXT`);
+  }
+} catch (_) { /* ignore */ }
 
 // Migration: add scoped parent targets for milestones
 try {
@@ -300,7 +311,7 @@ const stmts = {
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
 
   // Todo
-  createTodo: db.prepare(`INSERT INTO todo_items (id,project_id,gantt_entry_id,title,description,status,assignee_id,due_date,position,parent_id,priority,label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`),
+  createTodo: db.prepare(`INSERT INTO todo_items (id,project_id,gantt_entry_id,milestone_id,title,description,status,assignee_id,due_date,position,parent_id,priority,label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`),
   getTodo: db.prepare(`SELECT * FROM todo_items WHERE id=?`),
   getProjectTodos: db.prepare(`SELECT * FROM todo_items WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   updateTodo: db.prepare(`UPDATE todo_items SET title=?,description=?,status=?,assignee_id=?,due_date=?,position=?,parent_id=?,priority=?,label=?,updated_at=? WHERE id=?`),
@@ -979,12 +990,12 @@ app.get('/api/todos/:projectId', requireAuth, (req, res) => {
 });
 
 app.post('/api/todos', requireAuth, (req, res) => {
-  const { project_id, gantt_entry_id, title, description, status, assignee_id, due_date, position, parent_id, priority, label } = req.body;
+  const { project_id, gantt_entry_id, milestone_id, title, description, status, assignee_id, due_date, position, parent_id, priority, label } = req.body;
   if (!project_id || !title) return res.status(400).json({ error: 'Missing required fields' });
   if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
   const id = uuidv4();
-  stmts.createTodo.run(id, project_id, gantt_entry_id || null, title, description || '',
+  stmts.createTodo.run(id, project_id, gantt_entry_id || null, milestone_id || null, title, description || '',
     status || 'todo', assignee_id || null, due_date || null, position || 0,
     parent_id || null, priority || '', label || '');
   const todo = stmts.getTodo.get(id);
@@ -1234,7 +1245,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
     // Restore todos
     for (const t of (data.todos || [])) {
       try {
-        stmts.createTodo.run(t.id, t.project_id, t.gantt_entry_id || null, t.title,
+        stmts.createTodo.run(t.id, t.project_id, t.gantt_entry_id || null, t.milestone_id || null, t.title,
           t.description || '', t.status || 'todo', t.assignee_id || null, t.due_date || null, t.position || 0,
           t.parent_id || null, t.priority || '', t.label || '');
       } catch (_) { /* already exists */ }
@@ -1273,7 +1284,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
       }
       for (const td of (pd.todos || [])) {
         try {
-          stmts.createTodo.run(td.id, td.project_id, td.gantt_entry_id || null, td.title,
+          stmts.createTodo.run(td.id, td.project_id, td.gantt_entry_id || null, td.milestone_id || null, td.title,
             td.description || '', td.status || 'todo', td.assignee_id || null, td.due_date || null, td.position || 0,
             td.parent_id || null, td.priority || '', td.label || '');
         } catch (_) {}
@@ -1385,7 +1396,7 @@ app.post('/api/backup/import', requireAuth, (req, res) => {
         for (const t of (proj.todos || [])) {
           try {
             stmts.createTodo.run(
-              t.id, proj.id, t.gantt_entry_id || null, t.title,
+              t.id, proj.id, t.gantt_entry_id || null, t.milestone_id || null, t.title,
               t.description || '', t.status || 'todo',
               t.assignee_id || null, t.due_date || null, t.position || 0,
               t.parent_id || null, t.priority || '', t.label || ''
