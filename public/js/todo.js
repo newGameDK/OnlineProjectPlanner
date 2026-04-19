@@ -27,6 +27,9 @@
   let _dragDropReady     = false;
   let collapsedParents   = new Set(); // ids of collapsed parent tasks
 
+  // Per-column search queries
+  const columnSearches   = { todo: '', in_progress: '', done: '' };
+
   // Track the card id that is the current sub-task drop target (during drag)
   let _subTaskDropTarget = null;
 
@@ -53,12 +56,42 @@
       done:        sortTodos(todos.filter(t => t.status === 'done')),
     };
 
-    renderColumn('todoListTodo',        byStatus.todo);
-    renderColumn('todoListInProgress',  byStatus.in_progress);
-    renderColumn('todoListDone',        byStatus.done);
+    renderColumn('todoListTodo',        applyColumnSearch(byStatus.todo,        'todo'));
+    renderColumn('todoListInProgress',  applyColumnSearch(byStatus.in_progress, 'in_progress'));
+    renderColumn('todoListDone',        applyColumnSearch(byStatus.done,        'done'));
 
     renderLabelFilters();
     setupDragDrop();
+    setupColumnSearchListeners();
+  }
+
+  function applyColumnSearch(todos, status) {
+    const q = (columnSearches[status] || '').trim().toLowerCase();
+    if (!q) return todos;
+    return todos.filter(t =>
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q) ||
+      (t.label || '').toLowerCase().includes(q)
+    );
+  }
+
+  let _columnSearchListenersAttached = false;
+  function setupColumnSearchListeners() {
+    if (_columnSearchListenersAttached) return;
+    _columnSearchListenersAttached = true;
+    const map = {
+      todoSearchTodo:       'todo',
+      todoSearchInProgress: 'in_progress',
+      todoSearchDone:       'done',
+    };
+    Object.entries(map).forEach(([id, status]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        columnSearches[status] = el.value;
+        render();
+      });
+    });
   }
 
   function filteredTodos() {

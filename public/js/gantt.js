@@ -2547,25 +2547,38 @@
       barIndicator = ind;
     }
 
+    // Lock icon badge when dates are locked
+    if (entry.dates_locked) {
+      const lockBadge = document.createElement('span');
+      lockBadge.className   = 'gantt-bar-lock';
+      lockBadge.textContent = '\uD83D\uDD12'; // 🔒
+      lockBadge.title       = 'Dates locked – drag and resize disabled';
+      bar.appendChild(lockBadge);
+    }
+
     // ── Left resize handle ─────────────────────────────────────────────────
     const hLeft = document.createElement('div');
     hLeft.className = 'gantt-bar-handle left proximity-handle';
     hLeft.title     = 'Drag to change start date';
     hLeft.dataset.help = 'Drag left edge to change the start date';
-    hLeft.addEventListener('mousedown', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      startDrag(e, 'resize-left', entry, bar, container);
-    });
-    hLeft.addEventListener('touchstart', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      _lpTouchId = t.identifier;
-      startDrag(_touchProxy(t), 'resize-left', entry, bar, container);
-      document.addEventListener('touchmove',   _onBarTouchMove,  { passive: false });
-      document.addEventListener('touchend',    _onBarTouchEnd);
-      document.addEventListener('touchcancel', _onBarTouchEnd);
-    }, { passive: false });
+    if (entry.dates_locked) {
+      hLeft.style.display = 'none';
+    } else {
+      hLeft.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        startDrag(e, 'resize-left', entry, bar, container);
+      });
+      hLeft.addEventListener('touchstart', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        _lpTouchId = t.identifier;
+        startDrag(_touchProxy(t), 'resize-left', entry, bar, container);
+        document.addEventListener('touchmove',   _onBarTouchMove,  { passive: false });
+        document.addEventListener('touchend',    _onBarTouchEnd);
+        document.addEventListener('touchcancel', _onBarTouchEnd);
+      }, { passive: false });
+    }
     bar.appendChild(hLeft);
 
     // ── Right resize handle ────────────────────────────────────────────────
@@ -2573,20 +2586,24 @@
     hRight.className = 'gantt-bar-handle right proximity-handle';
     hRight.title     = 'Drag to change end date';
     hRight.dataset.help = 'Drag right edge to change the end date';
-    hRight.addEventListener('mousedown', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      startDrag(e, 'resize-right', entry, bar, container);
-    });
-    hRight.addEventListener('touchstart', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      _lpTouchId = t.identifier;
-      startDrag(_touchProxy(t), 'resize-right', entry, bar, container);
-      document.addEventListener('touchmove',   _onBarTouchMove,  { passive: false });
-      document.addEventListener('touchend',    _onBarTouchEnd);
-      document.addEventListener('touchcancel', _onBarTouchEnd);
-    }, { passive: false });
+    if (entry.dates_locked) {
+      hRight.style.display = 'none';
+    } else {
+      hRight.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        startDrag(e, 'resize-right', entry, bar, container);
+      });
+      hRight.addEventListener('touchstart', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        _lpTouchId = t.identifier;
+        startDrag(_touchProxy(t), 'resize-right', entry, bar, container);
+        document.addEventListener('touchmove',   _onBarTouchMove,  { passive: false });
+        document.addEventListener('touchend',    _onBarTouchEnd);
+        document.addEventListener('touchcancel', _onBarTouchEnd);
+      }, { passive: false });
+    }
     bar.appendChild(hRight);
 
     // ── Input node (left edge of bar – receives dependency arrows) ─────────
@@ -2831,6 +2848,7 @@
   }
 
   function startDrag(e, type, entry, barEl, containerEl) {
+    if (entry.dates_locked) return; // dates are locked – prevent drag / resize
     drag.active      = true;
     drag.type        = type;
     drag.entryId     = entry.id;
@@ -4253,6 +4271,9 @@
         '<div class="form-group" style="flex:1"><label>End Date</label>' +
           '<input type="date" id="feEnd" value="' + (entry.end_date || '') + '"></div>' +
       '</div>' +
+      '<div class="form-group">' +
+        '<label><input type="checkbox" id="feDatesLocked" ' + (entry.dates_locked ? 'checked' : '') + '> 🔒 Lock dates (prevent drag / resize)</label>' +
+      '</div>' +
       '<div class="form-group"><label>Hours Estimate</label>' +
         '<input type="number" id="feHours" value="' + (entry.hours_set ? (entry.hours_estimate || 0) : '') + '" min="0" step="0.5" placeholder="0">' +
         childHoursHtml +
@@ -4306,6 +4327,7 @@
       color_variation: parseInt((document.getElementById('feColorVar') && document.getElementById('feColorVar').value)) || 0,
       notes:           (document.getElementById('feNotes') && document.getElementById('feNotes').value) || '',
       folder_url:      folderUrl,
+      dates_locked:    !!(document.getElementById('feDatesLocked') && document.getElementById('feDatesLocked').checked),
     };
   }
 
