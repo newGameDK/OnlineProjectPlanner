@@ -798,7 +798,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
     folder_url !== undefined ? folder_url : existing.folder_url,
     subtract_hours !== undefined ? (subtract_hours ? 1 : 0) : existing.subtract_hours,
     same_row !== undefined ? (same_row || null) : existing.same_row,
-    dates_locked !== undefined ? (dates_locked ? 1 : 0) : (existing.dates_locked ?? 0),
+    dates_locked !== undefined ? (dates_locked ? 1 : 0) : existing.dates_locked,
     now(),
     existing.id
   );
