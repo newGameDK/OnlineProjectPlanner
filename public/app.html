@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>OnlineProjectPlanner</title>
-  <link rel="stylesheet" href="css/style.css?v=1.1.45">
+  <link rel="stylesheet" href="css/style.css?v=1.1.47">
   <script>if(localStorage.getItem('ganttDarkMode')==='true')document.documentElement.classList.add('dark-mode');</script>
 </head>
 <body class="app-page">
@@ -259,14 +259,17 @@
           <div id="todoColumns" class="todo-columns">
             <div class="todo-column" data-status="todo">
               <div class="todo-column-header">To Do</div>
+              <input type="search" class="todo-column-search" id="todoSearchTodo" placeholder="Search…" autocomplete="off">
               <div class="todo-list" id="todoListTodo"></div>
             </div>
             <div class="todo-column" data-status="in_progress">
               <div class="todo-column-header">In Progress</div>
+              <input type="search" class="todo-column-search" id="todoSearchInProgress" placeholder="Search…" autocomplete="off">
               <div class="todo-list" id="todoListInProgress"></div>
             </div>
             <div class="todo-column" data-status="done">
               <div class="todo-column-header">Done</div>
+              <input type="search" class="todo-column-search" id="todoSearchDone" placeholder="Search…" autocomplete="off">
               <div class="todo-list" id="todoListDone"></div>
             </div>
           </div>
@@ -308,7 +311,7 @@
   <script src="js/sync.js?v=1.1.45"></script>
   <script src="js/share-modal.js?v=1.1.45"></script>
   <script src="js/sounds.js?v=1.1.45"></script>
-  <script src="js/gantt.js?v=1.1.45"></script>
-  <script src="js/todo.js?v=1.1.46"></script>
+  <script src="js/gantt.js?v=1.1.47"></script>
+  <script src="js/todo.js?v=1.1.47"></script>
 </body>
 </html>

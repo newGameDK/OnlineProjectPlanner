@@ -171,6 +171,11 @@ try {
   db.exec(`ALTER TABLE gantt_entries ADD COLUMN row_only INTEGER NOT NULL DEFAULT 0`);
 } catch (_) { /* column already exists – ignore */ }
 
+// Migration: add dates_locked to gantt_entries
+try {
+  db.exec(`ALTER TABLE gantt_entries ADD COLUMN dates_locked INTEGER NOT NULL DEFAULT 0`);
+} catch (_) { /* column already exists – ignore */ }
+
 // Migration: add parent_id, priority, label to todo_items
 try {
   db.exec(`ALTER TABLE todo_items ADD COLUMN parent_id TEXT`);
@@ -305,7 +310,7 @@ const stmts = {
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
-  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`),
+  updateGantt: db.prepare(`UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,dates_locked=?,updated_at=? WHERE id=?`),
   updateGanttSubtractHours: db.prepare(`UPDATE gantt_entries SET subtract_hours=? WHERE id=?`),
   deleteGantt: db.prepare(`DELETE FROM gantt_entries WHERE id=?`),
   getGanttUpdatedAfter: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? AND updated_at>? ORDER BY updated_at ASC`),
@@ -777,7 +782,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
   stmts.clearRedoForProject.run(existing.project_id, req.session.userId);
   stmts.addUndo.run(uuidv4(), existing.project_id, req.session.userId, 'update_gantt', JSON.stringify({ entry: existing }));
 
-  const { title, row_label, row_height, row_only, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours, same_row } = req.body;
+  const { title, row_label, row_height, row_only, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url, subtract_hours, same_row, dates_locked } = req.body;
   stmts.updateGantt.run(
     newParentId,
     title ?? existing.title,
@@ -793,6 +798,7 @@ app.put('/api/gantt/:id', requireAuth, (req, res) => {
     folder_url !== undefined ? folder_url : existing.folder_url,
     subtract_hours !== undefined ? (subtract_hours ? 1 : 0) : existing.subtract_hours,
     same_row !== undefined ? (same_row || null) : existing.same_row,
+    dates_locked !== undefined ? (dates_locked ? 1 : 0) : existing.dates_locked,
     now(),
     existing.id
   );
