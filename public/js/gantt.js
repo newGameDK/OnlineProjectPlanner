@@ -2548,7 +2548,7 @@
     }
 
     // Lock icon badge when dates are locked
-    if (entry.dates_locked) {
+    if (+entry.dates_locked) {
       const lockBadge = document.createElement('span');
       lockBadge.className   = 'gantt-bar-lock';
       lockBadge.textContent = '\uD83D\uDD12'; // 🔒
@@ -2561,7 +2561,7 @@
     hLeft.className = 'gantt-bar-handle left proximity-handle';
     hLeft.title     = 'Drag to change start date';
     hLeft.dataset.help = 'Drag left edge to change the start date';
-    if (entry.dates_locked) {
+    if (+entry.dates_locked) {
       hLeft.style.display = 'none';
     } else {
       hLeft.addEventListener('mousedown', (e) => {
@@ -2586,7 +2586,7 @@
     hRight.className = 'gantt-bar-handle right proximity-handle';
     hRight.title     = 'Drag to change end date';
     hRight.dataset.help = 'Drag right edge to change the end date';
-    if (entry.dates_locked) {
+    if (+entry.dates_locked) {
       hRight.style.display = 'none';
     } else {
       hRight.addEventListener('mousedown', (e) => {
@@ -2848,7 +2848,7 @@
   }
 
   function startDrag(e, type, entry, barEl, containerEl) {
-    if (entry.dates_locked) return; // dates are locked – prevent drag / resize
+    if (+entry.dates_locked) return; // dates are locked – prevent drag / resize
     drag.active      = true;
     drag.type        = type;
     drag.entryId     = entry.id;
@@ -3497,7 +3497,7 @@
     collectDesc(entryId);
 
     for (const child of descendants) {
-      if (child.dates_locked) continue; // skip locked children
+      if (+child.dates_locked) continue; // skip locked children
       const cs = parseDate(child.start_date);
       const ce = parseDate(child.end_date);
       if (!cs || !ce) continue;
@@ -4385,11 +4385,11 @@
     const sameRowTargets = S().ganttEntries.filter(e => e.same_row === entry.id);
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
-      { icon: entry.dates_locked ? '\uD83D\uDD12' : '\uD83D\uDD13',
-        label: entry.dates_locked ? 'Unlock dates' : 'Lock dates',
+      { icon: +entry.dates_locked ? '\uD83D\uDD12' : '\uD83D\uDD13',
+        label: +entry.dates_locked ? 'Unlock dates' : 'Lock dates',
         action: async () => {
           try {
-            const data = await API('PUT', '/api/gantt/' + entry.id, { dates_locked: !entry.dates_locked });
+            const data = await API('PUT', '/api/gantt/' + entry.id, { dates_locked: !(+entry.dates_locked) });
             const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
             if (idx !== -1) S().ganttEntries[idx] = data.entry;
             render();
@@ -4865,7 +4865,7 @@
     const opts = options || {};
     const parent = S().ganttEntries.find(e => e.id === entry.parent_id);
     if (!parent) return;
-    if (parent.dates_locked) return; // skip expanding a locked parent
+    if (+parent.dates_locked) return; // skip expanding a locked parent
     let changed = false;
     let newStart = parent.start_date;
     let newEnd   = parent.end_date;
