@@ -2290,7 +2290,7 @@
       const x     = Math.round(daysBetween(chartStart, date) * pxPerDay);
       const linkedTodo = (S().todos || []).find(t => t.milestone_id === ms.id);
       const isTodoDone = linkedTodo && linkedTodo.status === 'done';
-      const isCompleted = !!ms.completed || isTodoDone;
+      const isCompleted = ms.completed == 1 || isTodoDone;
       const color = isCompleted ? '#43a047' : _safeColor(ms.color);
       const opacity = isCompleted ? 0.5 : 1;
       const label = ms.label || '';
@@ -2397,7 +2397,7 @@
     const scopeHtml = _getMilestoneScopeOptionsHtml(_parseMilestoneScopeIds(ms.scope_parent_ids));
     const linkedTodo = (S().todos || []).find(t => t.milestone_id === ms.id);
     const isInTodo = !!linkedTodo;
-    const isCompleted = !!ms.completed || (linkedTodo && linkedTodo.status === 'done');
+    const isCompleted = ms.completed == 1 || (linkedTodo && linkedTodo.status === 'done');
     const html =
       '<label style="display:block;margin-bottom:10px">Date<br>' +
       '<input id="msDate" type="date" value="' + _esc(ms.date) + '" style="width:100%"></label>' +
