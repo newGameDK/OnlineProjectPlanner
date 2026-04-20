@@ -306,7 +306,7 @@ const stmts = {
   getProjectByShareToken: db.prepare(`SELECT * FROM projects WHERE share_token=?`),
 
   // Gantt
-  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url,dates_locked) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
@@ -743,7 +743,7 @@ app.post('/api/gantt', requireAuth, (req, res) => {
     row_height !== undefined ? (parseInt(row_height, 10) || 40) : 40,
     row_only ? 1 : 0,
     start_date, end_date,
-    hours_estimate || 0, color_variation || 0, req.session.userId, position || 0, notes || '', folder_url || '');
+    hours_estimate || 0, color_variation || 0, req.session.userId, position || 0, notes || '', folder_url || '', 0);
 
   const entry = stmts.getGantt.get(id);
   const teamId = projectTeamId(project_id);
@@ -1098,7 +1098,7 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
         stmts.createGantt.run(d.id, d.project_id, d.parent_id, d.title,
           d.row_label ?? d.title ?? '', d.row_height ?? 40, d.row_only ?? 0,
           d.start_date, d.end_date, d.hours_estimate, d.color_variation,
-          d.user_id, d.position, d.notes, d.folder_url || '');
+          d.user_id, d.position, d.notes, d.folder_url || '', d.dates_locked ?? 0);
       } catch (_) { /* already exists */ }
       const restored = stmts.getGantt.get(d.id);
       if (restored) broadcastToTeam(teamId, { type: 'gantt_created', entry: restored });
@@ -1146,7 +1146,7 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
       stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
         e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
         e.start_date, e.end_date, e.hours_estimate, e.color_variation,
-        e.user_id, e.position, e.notes, e.folder_url || '');
+        e.user_id, e.position, e.notes, e.folder_url || '', e.dates_locked ?? 0);
     } catch (_) { /* already exists */ }
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
@@ -1245,7 +1245,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
         stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
           e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
           e.start_date, e.end_date, e.hours_estimate, e.color_variation,
-          e.user_id, e.position, e.notes, e.folder_url || '');
+          e.user_id, e.position, e.notes, e.folder_url || '', e.dates_locked ?? 0);
       } catch (_) { /* already exists */ }
     }
     // Restore todos
@@ -1285,7 +1285,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
           stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
             e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
             e.start_date, e.end_date, e.hours_estimate, e.color_variation,
-            e.user_id, e.position, e.notes, e.folder_url || '');
+            e.user_id, e.position, e.notes, e.folder_url || '', e.dates_locked ?? 0);
         } catch (_) {}
       }
       for (const td of (pd.todos || [])) {
@@ -1386,7 +1386,7 @@ app.post('/api/backup/import', requireAuth, (req, res) => {
               e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
               e.start_date, e.end_date, e.hours_estimate || 0,
               e.color_variation || 0, userId, e.position || 0,
-              e.notes || '', e.folder_url || ''
+              e.notes || '', e.folder_url || '', e.dates_locked ?? 0
             );
             if (e.subtract_hours) {
               stmts.updateGanttSubtractHours.run(e.subtract_hours ? 1 : 0, e.id);
