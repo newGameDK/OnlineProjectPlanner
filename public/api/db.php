@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS gantt_entries (
   folder_url TEXT NOT NULL DEFAULT '',
   subtract_hours INTEGER NOT NULL DEFAULT 0,
   same_row TEXT DEFAULT NULL,
+  dates_locked INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -228,6 +229,22 @@ try {
     }
     if (!$hasScopeParentIds) {
         $db->exec("ALTER TABLE gantt_milestones ADD COLUMN scope_parent_ids TEXT NOT NULL DEFAULT '[]'");
+    }
+} catch (Exception $e) { /* ignore */ }
+
+// Migration: add dates_locked to gantt_entries (prevents drag/resize when set)
+try {
+    $s = $db->query("PRAGMA table_info(gantt_entries)");
+    $cols = $s ? $s->fetchAll(PDO::FETCH_ASSOC) : [];
+    $hasDatesLocked = false;
+    foreach ($cols as $col) {
+        if (($col['name'] ?? '') === 'dates_locked') {
+            $hasDatesLocked = true;
+            break;
+        }
+    }
+    if (!$hasDatesLocked) {
+        $db->exec("ALTER TABLE gantt_entries ADD COLUMN dates_locked INTEGER NOT NULL DEFAULT 0");
     }
 } catch (Exception $e) { /* ignore */ }
 
