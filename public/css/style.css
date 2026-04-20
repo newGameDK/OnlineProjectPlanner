@@ -592,13 +592,6 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 /* =====================================================================
    Milestones / Deadline markers
    ===================================================================== */
-/* Diamond marker in the ruler */
-.gantt-milestone-marker {
-  position: absolute; bottom: 0; transform: translate(-50%, 50%);
-  width: 11px; height: 11px;
-  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-  z-index: 6; pointer-events: none;
-}
 /* Vertical dashed line spanning all rows */
 .gantt-milestone-line {
   position: absolute; top: 0; bottom: 0;
@@ -758,6 +751,10 @@ html, body { height: 100%; font-family: var(--font); font-size: 14px; color: var
 .todo-card-label {
   font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
   color: #fff; white-space: nowrap; letter-spacing: .3px;
+}
+.todo-card-milestone {
+  font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
+  color: #fff; white-space: nowrap; letter-spacing: .3px; opacity: .9;
 }
 
 /* =====================================================================
