@@ -2290,9 +2290,18 @@
       const x     = Math.round(daysBetween(chartStart, date) * pxPerDay);
       const linkedTodo = (S().todos || []).find(t => t.milestone_id === ms.id);
       const isTodoDone = linkedTodo && linkedTodo.status === 'done';
-      const color = isTodoDone ? '#43a047' : _safeColor(ms.color);
-      const opacity = isTodoDone ? 0.5 : 1;
+      const isCompleted = !!ms.completed || isTodoDone;
+      const color = isCompleted ? '#43a047' : _safeColor(ms.color);
+      const opacity = isCompleted ? 0.5 : 1;
       const label = ms.label || '';
+
+      // ── Diamond marker in the ruler ────────────────────────────────────────
+      const marker = document.createElement('div');
+      marker.className      = 'gantt-milestone-marker';
+      marker.style.left     = x + 'px';
+      marker.style.background = color;
+      if (opacity < 1) marker.style.opacity = opacity;
+      ganttRuler.appendChild(marker);
 
       // ── Vertical dashed line segments ─────────────────────────────────────
       const fullHeight = Math.max(1, ganttRows.scrollHeight || ganttRows.offsetHeight || 1);
@@ -2388,6 +2397,7 @@
     const scopeHtml = _getMilestoneScopeOptionsHtml(_parseMilestoneScopeIds(ms.scope_parent_ids));
     const linkedTodo = (S().todos || []).find(t => t.milestone_id === ms.id);
     const isInTodo = !!linkedTodo;
+    const isCompleted = !!ms.completed || (linkedTodo && linkedTodo.status === 'done');
     const html =
       '<label style="display:block;margin-bottom:10px">Date<br>' +
       '<input id="msDate" type="date" value="' + _esc(ms.date) + '" style="width:100%"></label>' +
@@ -2395,6 +2405,8 @@
       '<input id="msLabel" type="text" value="' + _esc(ms.label || '') + '" style="width:100%"></label>' +
       '<label style="display:block;margin-bottom:10px">Color<br>' +
       '<input id="msColor" type="color" value="' + _esc(_safeColor(ms.color)) + '"></label>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">' +
+      '<input id="msCompleted" type="checkbox"' + (isCompleted ? ' checked' : '') + '> Mark as completed</label>' +
       '<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">' +
       '<input id="msInTodo" type="checkbox"' + (isInTodo ? ' checked' : '') + '> Add to Todo list</label>' +
       '<label style="display:block">Show on parent tasks (and subtasks)<br>' +
@@ -2406,11 +2418,12 @@
       const date  = document.getElementById('msDate').value;
       const label = document.getElementById('msLabel').value.trim();
       const color = _safeColor(document.getElementById('msColor').value);
+      const completed = document.getElementById('msCompleted').checked ? 1 : 0;
       const inTodo = document.getElementById('msInTodo').checked;
       const scope_parent_ids = _getSelectedMilestoneScopeIds();
       if (!date) return alert('Date is required');
       try {
-        const data = await API('PUT', '/api/milestones/' + ms.id, { date, label, color, scope_parent_ids });
+        const data = await API('PUT', '/api/milestones/' + ms.id, { date, label, color, completed, scope_parent_ids });
         const idx = (S().milestones || []).findIndex(m => m.id === ms.id);
         if (idx !== -1) S().milestones[idx] = data.milestone;
         // Handle todo link: add if newly checked, remove if unchecked

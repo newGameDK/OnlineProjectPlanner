@@ -1272,8 +1272,9 @@ if ($seg1 === 'milestones') {
 
         $id = uuid_v4();
         $scopeParentIds = sanitize_milestone_scope_parent_ids($body['scope_parent_ids'] ?? []);
-        $s = $db->prepare('INSERT INTO gantt_milestones (id,project_id,date,label,color,scope_parent_ids) VALUES (?,?,?,?,?,?)');
-        $s->execute([$id, $project_id, $date, $body['label'] ?? '', $body['color'] ?? '#e53935', $scopeParentIds]);
+        $completed = isset($body['completed']) ? (int)(bool)$body['completed'] : 0;
+        $s = $db->prepare('INSERT INTO gantt_milestones (id,project_id,date,label,color,scope_parent_ids,completed) VALUES (?,?,?,?,?,?,?)');
+        $s->execute([$id, $project_id, $date, $body['label'] ?? '', $body['color'] ?? '#e53935', $scopeParentIds, $completed]);
 
         $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
         $s->execute([$id]);
@@ -1309,9 +1310,12 @@ if ($seg1 === 'milestones') {
             $newScopeParentIds = array_key_exists('scope_parent_ids', $body)
                 ? sanitize_milestone_scope_parent_ids($body['scope_parent_ids'])
                 : ($existing['scope_parent_ids'] ?? json_encode([]));
+            $newCompleted = array_key_exists('completed', $body)
+                ? (int)(bool)$body['completed']
+                : (int)($existing['completed'] ?? 0);
 
-            $s = $db->prepare('UPDATE gantt_milestones SET date=?,label=?,color=?,scope_parent_ids=? WHERE id=?');
-            $s->execute([$newDate, $newLabel, $newColor, $newScopeParentIds, $milestoneId]);
+            $s = $db->prepare('UPDATE gantt_milestones SET date=?,label=?,color=?,scope_parent_ids=?,completed=? WHERE id=?');
+            $s->execute([$newDate, $newLabel, $newColor, $newScopeParentIds, $newCompleted, $milestoneId]);
 
             $s = $db->prepare('SELECT * FROM gantt_milestones WHERE id=?');
             $s->execute([$milestoneId]);
