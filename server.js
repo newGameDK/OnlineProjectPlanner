@@ -1078,8 +1078,8 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     if (currentEntry) {
       stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'update_gantt', JSON.stringify({ entry: currentEntry }));
     }
-    db.prepare(`UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`)
-      .run(e.title, e.row_label ?? e.title, e.row_height ?? 40, e.row_only ?? 0, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, now(), e.id);
+    db.prepare(`UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,dates_locked=?,updated_at=? WHERE id=?`)
+      .run(e.title, e.row_label ?? e.title, e.row_height ?? 40, e.row_only ?? 0, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, e.dates_locked ?? 0, now(), e.id);
     const entry = stmts.getGantt.get(e.id);
     const teamId = projectTeamId(req.params.projectId);
     if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
@@ -1161,8 +1161,8 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
     if (currentEntry) {
       // Save current state as undo so user can undo this redo
       stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'update_gantt', JSON.stringify({ entry: currentEntry }));
-      db.prepare(`UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?`)
-        .run(e.title, e.row_label ?? e.title, e.row_height ?? 40, e.row_only ?? 0, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, now(), e.id);
+      db.prepare(`UPDATE gantt_entries SET title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,dates_locked=?,updated_at=? WHERE id=?`)
+        .run(e.title, e.row_label ?? e.title, e.row_height ?? 40, e.row_only ?? 0, e.start_date, e.end_date, e.hours_estimate, e.color_variation, e.position, e.notes, e.folder_url || '', e.subtract_hours || 0, e.same_row || null, e.dates_locked ?? 0, now(), e.id);
       const entry = stmts.getGantt.get(e.id);
       const teamId = projectTeamId(req.params.projectId);
       if (entry) broadcastToTeam(teamId, { type: 'gantt_updated', entry });
