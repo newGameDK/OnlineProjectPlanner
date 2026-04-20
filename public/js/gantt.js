@@ -4271,9 +4271,6 @@
         '<div class="form-group" style="flex:1"><label>End Date</label>' +
           '<input type="date" id="feEnd" value="' + (entry.end_date || '') + '"></div>' +
       '</div>' +
-      '<div class="form-group">' +
-        '<label><input type="checkbox" id="feDatesLocked" ' + (entry.dates_locked ? 'checked' : '') + '> 🔒 Lock dates (prevent drag / resize)</label>' +
-      '</div>' +
       '<div class="form-group"><label>Hours Estimate</label>' +
         '<input type="number" id="feHours" value="' + (entry.hours_set ? (entry.hours_estimate || 0) : '') + '" min="0" step="0.5" placeholder="0">' +
         childHoursHtml +
@@ -4327,7 +4324,6 @@
       color_variation: parseInt((document.getElementById('feColorVar') && document.getElementById('feColorVar').value)) || 0,
       notes:           (document.getElementById('feNotes') && document.getElementById('feNotes').value) || '',
       folder_url:      folderUrl,
-      dates_locked:    !!(document.getElementById('feDatesLocked') && document.getElementById('feDatesLocked').checked),
     };
   }
 
@@ -4388,6 +4384,19 @@
     const sameRowTargets = S().ganttEntries.filter(e => e.same_row === entry.id);
     U().showContextMenu(x, y, [
       { icon: '\u270F', label: 'Edit',                 action: () => showEditEntryModal(entry) },
+      { icon: entry.dates_locked ? '\uD83D\uDD12' : '\uD83D\uDD13',
+        label: entry.dates_locked ? 'Unlock dates' : 'Lock dates',
+        action: async () => {
+          try {
+            const data = await API('PUT', '/api/gantt/' + entry.id, { dates_locked: !entry.dates_locked });
+            const idx = S().ganttEntries.findIndex(e => e.id === entry.id);
+            if (idx !== -1) S().ganttEntries[idx] = data.entry;
+            render();
+          } catch (err) {
+            alert('Failed to update lock: ' + err.message);
+          }
+        },
+      },
       { icon: '+',      label: 'Add sub-task',          action: () => showAddEntryModal(entry.id) },
       { icon: '≡',      label: 'Add task in this row',   action: () => showAddEntryModal(undefined, entry.start_date, entry.end_date, entry.id) },
       hasChildren
