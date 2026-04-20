@@ -3497,6 +3497,7 @@
     collectDesc(entryId);
 
     for (const child of descendants) {
+      if (child.dates_locked) continue; // skip locked children
       const cs = parseDate(child.start_date);
       const ce = parseDate(child.end_date);
       if (!cs || !ce) continue;
@@ -4864,6 +4865,7 @@
     const opts = options || {};
     const parent = S().ganttEntries.find(e => e.id === entry.parent_id);
     if (!parent) return;
+    if (parent.dates_locked) return; // skip expanding a locked parent
     let changed = false;
     let newStart = parent.start_date;
     let newEnd   = parent.end_date;
