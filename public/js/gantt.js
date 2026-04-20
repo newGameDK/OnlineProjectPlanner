@@ -1025,7 +1025,7 @@
 
     if (clipboardData) {
       items.push({ icon: '📋', label: 'Paste task here',
-        action: () => pasteEntries(dateStr) });
+        action: () => pasteEntries(dateStr, null, timelineContextRowId) });
     }
 
     // ── Quick settings submenu ─────────────────────────────────────────────
@@ -4607,18 +4607,24 @@
    *   Pass null to preserve the original dates of all pasted entries unchanged.
    * @param {object|null} afterEntry - If provided, pasted root entries become siblings of this
    *   entry, inserted immediately after it in the sort order.
+   * @param {string|number|null} sameRowId - If provided, root pasted entries are placed into this
+   *   row (same_row is set to this ID and parent_id is taken from that row entry).
    */
-  async function pasteEntries(pasteStartDate, afterEntry = null) {
+  async function pasteEntries(pasteStartDate, afterEntry = null, sameRowId = null) {
     if (!clipboardData || !S().currentProject) return;
     const { entries, rootIds, cut } = clipboardData;
     const idMap = {}; // old id → new id
     const newRootIds = []; // new IDs of pasted root entries, for reorder-after
     const sameRowUpdates = []; // { newId, oldSameRow } – applied after all entries are created
 
+    // When pasting into a specific row, use that row's parent as the parent for root entries
+    const sameRowEntry = sameRowId ? S().ganttEntries.find(e => e.id == sameRowId) : null;
     // When pasting below a specific row, use that row's parent as the parent for root entries
     const pasteParentId = afterEntry !== null
       ? (afterEntry.parent_id !== undefined ? afterEntry.parent_id : null)
-      : currentParentId;
+      : sameRowEntry !== null
+        ? (sameRowEntry.parent_id !== undefined ? sameRowEntry.parent_id : currentParentId)
+        : currentParentId;
 
     // Calculate a single shared dayOffset from the earliest start across ALL roots so that
     // relative temporal positions between pasted entries are preserved (e.g. same-row groups).
@@ -4690,6 +4696,7 @@
           const data = await API('POST', '/api/gantt', {
             project_id:      S().currentProject.id,
             parent_id:       newParentId,
+            same_row:        (e.id === rootId && sameRowId) ? sameRowId : undefined,
             title:           e.title,
             row_label:       e.row_label,
             row_height:      e.row_height,
