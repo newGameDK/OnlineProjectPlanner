@@ -158,7 +158,7 @@ function normalize_undo_group($value) {
  * Restore a gantt entry row from a previously captured snapshot array.
  */
 function apply_gantt_entry_snapshot($db, $e) {
-    $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+    $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,dates_locked=?,updated_at=? WHERE id=?');
     $s->execute([
         $e['parent_id'] ?? null,
         $e['title'],
@@ -175,6 +175,7 @@ function apply_gantt_entry_snapshot($db, $e) {
         $e['folder_url'] ?? '',
         $e['subtract_hours'] ?? 0,
         $e['same_row'] ?? null,
+        $e['dates_locked'] ?? 0,
         now_ms(),
         $e['id']
     ]);
@@ -960,7 +961,7 @@ if ($seg1 === 'gantt') {
                 $s->execute([uuid_v4(), $existing['project_id'], $userId, 'update_gantt', json_encode($undoData)]);
             }
 
-            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,updated_at=? WHERE id=?');
+            $s = $db->prepare('UPDATE gantt_entries SET parent_id=?,title=?,row_label=?,row_height=?,row_only=?,start_date=?,end_date=?,hours_estimate=?,hours_set=?,color_variation=?,position=?,notes=?,folder_url=?,subtract_hours=?,same_row=?,dates_locked=?,updated_at=? WHERE id=?');
             $s->execute([
                 $newParentId,
                 $body['title'] ?? $existing['title'],
@@ -977,6 +978,7 @@ if ($seg1 === 'gantt') {
                 array_key_exists('folder_url', $body) ? $body['folder_url'] : $existing['folder_url'],
                 array_key_exists('subtract_hours', $body) ? ($body['subtract_hours'] ? 1 : 0) : ($existing['subtract_hours'] ?? 0),
                 array_key_exists('same_row', $body) ? ($body['same_row'] ?: null) : $existing['same_row'],
+                array_key_exists('dates_locked', $body) ? ($body['dates_locked'] ? 1 : 0) : ($existing['dates_locked'] ?? 0),
                 now_ms(),
                 $ganttId
             ]);
