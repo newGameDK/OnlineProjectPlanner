@@ -306,7 +306,7 @@ const stmts = {
   getProjectByShareToken: db.prepare(`SELECT * FROM projects WHERE share_token=?`),
 
   // Gantt
-  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+  createGantt: db.prepare(`INSERT INTO gantt_entries (id,project_id,parent_id,same_row,title,row_label,row_height,row_only,start_date,end_date,hours_estimate,color_variation,user_id,position,notes,folder_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
   getGantt: db.prepare(`SELECT * FROM gantt_entries WHERE id=?`),
   getProjectGantt: db.prepare(`SELECT * FROM gantt_entries WHERE project_id=? ORDER BY position ASC, created_at ASC`),
   getChildGantt: db.prepare(`SELECT * FROM gantt_entries WHERE parent_id=? ORDER BY position ASC, created_at ASC`),
@@ -733,12 +733,12 @@ app.get('/api/gantt/:projectId', requireAuth, (req, res) => {
 });
 
 app.post('/api/gantt', requireAuth, (req, res) => {
-  const { project_id, parent_id, title, row_label, row_height, row_only, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
+  const { project_id, parent_id, same_row, title, row_label, row_height, row_only, start_date, end_date, hours_estimate, color_variation, position, notes, folder_url } = req.body;
   if (!project_id || !title || !start_date || !end_date) return res.status(400).json({ error: 'Missing required fields' });
   if (!canAccessProject(project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
 
   const id = uuidv4();
-  stmts.createGantt.run(id, project_id, parent_id || null, title,
+  stmts.createGantt.run(id, project_id, parent_id || null, same_row || null, title,
     row_label !== undefined ? row_label : (title || ''),
     row_height !== undefined ? (parseInt(row_height, 10) || 40) : 40,
     row_only ? 1 : 0,
@@ -1095,7 +1095,7 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     const toRestore = [e, ...descendants];
     toRestore.forEach(d => {
       try {
-        stmts.createGantt.run(d.id, d.project_id, d.parent_id, d.title,
+        stmts.createGantt.run(d.id, d.project_id, d.parent_id, d.same_row || null, d.title,
           d.row_label ?? d.title ?? '', d.row_height ?? 40, d.row_only ?? 0,
           d.start_date, d.end_date, d.hours_estimate, d.color_variation,
           d.user_id, d.position, d.notes, d.folder_url || '');
@@ -1143,7 +1143,7 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
     // Redo: recreate the entry that was originally created then undone
     const e = data.entry;
     try {
-      stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
+      stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.same_row || null, e.title,
         e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
         e.start_date, e.end_date, e.hours_estimate, e.color_variation,
         e.user_id, e.position, e.notes, e.folder_url || '');
@@ -1242,7 +1242,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
     // Restore gantt entries
     for (const e of (data.entries || [])) {
       try {
-        stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
+        stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.same_row || null, e.title,
           e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
           e.start_date, e.end_date, e.hours_estimate, e.color_variation,
           e.user_id, e.position, e.notes, e.folder_url || '');
@@ -1282,7 +1282,7 @@ app.post('/api/undo-global', requireAuth, (req, res) => {
       } catch (_) { /* already exists */ }
       for (const e of (pd.entries || [])) {
         try {
-          stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.title,
+          stmts.createGantt.run(e.id, e.project_id, e.parent_id, e.same_row || null, e.title,
             e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
             e.start_date, e.end_date, e.hours_estimate, e.color_variation,
             e.user_id, e.position, e.notes, e.folder_url || '');
@@ -1382,7 +1382,7 @@ app.post('/api/backup/import', requireAuth, (req, res) => {
         for (const e of (proj.entries || [])) {
           try {
             stmts.createGantt.run(
-              e.id, proj.id, e.parent_id || null, e.title,
+              e.id, proj.id, e.parent_id || null, e.same_row || null, e.title,
               e.row_label ?? e.title ?? '', e.row_height ?? 40, e.row_only ?? 0,
               e.start_date, e.end_date, e.hours_estimate || 0,
               e.color_variation || 0, userId, e.position || 0,
