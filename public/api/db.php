@@ -232,6 +232,22 @@ try {
     }
 } catch (Exception $e) { /* ignore */ }
 
+// Migration: add completed to gantt_milestones
+try {
+    $s = $db->query("PRAGMA table_info(gantt_milestones)");
+    $cols = $s ? $s->fetchAll(PDO::FETCH_ASSOC) : [];
+    $hasCompleted = false;
+    foreach ($cols as $col) {
+        if (($col['name'] ?? '') === 'completed') {
+            $hasCompleted = true;
+            break;
+        }
+    }
+    if (!$hasCompleted) {
+        $db->exec("ALTER TABLE gantt_milestones ADD COLUMN completed INTEGER NOT NULL DEFAULT 0");
+    }
+} catch (Exception $e) { /* ignore */ }
+
 // Migration: add dates_locked to gantt_entries (prevents drag/resize when set)
 try {
     $s = $db->query("PRAGMA table_info(gantt_entries)");
