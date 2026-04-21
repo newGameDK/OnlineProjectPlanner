@@ -363,6 +363,15 @@
       labelHtml = `<span class="todo-card-label" style="background:${color}" title="Label: ${U().escHtml(todo.label)}">${U().escHtml(todo.label)}</span>`;
     }
 
+    // Milestone badge
+    let milestoneHtml = '';
+    if (todo.milestone_id) {
+      const ms = (S().milestones || []).find(m => m.id === todo.milestone_id);
+      const msColor = ms ? ms.color || '#e53935' : '#e53935';
+      const msLabel = ms ? (ms.label || ms.date || 'Milestone') : 'Milestone';
+      milestoneHtml = `<span class="todo-card-milestone" style="background:${U().escHtml(msColor)}" title="Milestone: ${U().escHtml(msLabel)}">🏁 ${U().escHtml(msLabel)}</span>`;
+    }
+
     // Collapse/expand button for parent tasks (Mechanism 1)
     let collapseBtn = '';
     if (isParent) {
@@ -387,6 +396,7 @@
         <span class="todo-card-tag">${statusLabel(todo.status)}</span>
         ${priorityHtml}
         ${labelHtml}
+        ${milestoneHtml}
         ${dueLabel}
         ${ganttLabel}
         ${assigneeHtml}
@@ -463,6 +473,7 @@
       const idx = S().todos.findIndex(t => t.id === dragged.id);
       if (idx !== -1) S().todos[idx] = data.todo;
       render();
+      if (data.todo.milestone_id && data.todo.status !== dragged.status) window.ganttModule?.renderMilestones();
     });
 
     card.addEventListener('contextmenu', (e) => {
@@ -551,6 +562,7 @@
         if (idx !== -1) S().todos[idx] = data.todo;
         if (updates.status === 'done') window.soundsModule?.play('task_done');
         render();
+        if (data.todo.milestone_id && updates.status) window.ganttModule?.renderMilestones();
       });
     });
   }
@@ -590,6 +602,7 @@
       const idx = S().todos.findIndex(t => t.id === todo.id);
       if (idx !== -1) S().todos[idx] = data.todo;
       render();
+      if (data.todo.milestone_id && vals.status !== todo.status) window.ganttModule?.renderMilestones();
       U().closeModal();
     });
   }
@@ -688,6 +701,7 @@
     if (idx !== -1) S().todos[idx] = data.todo;
     if (status === 'done') window.soundsModule?.play('task_done');
     render();
+    if (data.todo.milestone_id) window.ganttModule?.renderMilestones();
   }
 
   async function unparentTodo(todo) {

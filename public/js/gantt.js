@@ -496,7 +496,7 @@
     return result;
   }
 
-  window.ganttModule = { init, render, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx, getExportableEntries };
+  window.ganttModule = { init, render, renderMilestones, showAddEntryModal, copySelected, pasteAtDate, zoomIn, zoomOut, editSelected, setSnapPx, setSnapEnabled, setProximityPx, getExportableEntries };
 
   // ── Help mode toggle (attached once, outside init) ────────────────────────
   (function attachHelpToggle() {
@@ -2276,8 +2276,7 @@
     // Ensure ganttRows is a positioned container for the absolute milestone lines
     ganttRows.style.position = 'relative';
 
-    // Remove stale milestone elements from ruler and rows
-    ganttRuler.querySelectorAll('.gantt-milestone-marker').forEach(el => el.remove());
+    // Remove stale milestone elements from rows
     ganttRows.querySelectorAll('.gantt-milestone-line').forEach(el => el.remove());
 
     const milestones = S().milestones || [];
@@ -2294,14 +2293,6 @@
       const color = isCompleted ? '#43a047' : _safeColor(ms.color);
       const opacity = isCompleted ? 0.5 : 1;
       const label = ms.label || '';
-
-      // ── Diamond marker in the ruler ────────────────────────────────────────
-      const marker = document.createElement('div');
-      marker.className      = 'gantt-milestone-marker';
-      marker.style.left     = x + 'px';
-      marker.style.background = color;
-      if (opacity < 1) marker.style.opacity = opacity;
-      ganttRuler.appendChild(marker);
 
       // ── Vertical dashed line segments ─────────────────────────────────────
       const fullHeight = Math.max(1, ganttRows.scrollHeight || ganttRows.offsetHeight || 1);
