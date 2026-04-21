@@ -2286,7 +2286,10 @@
       const scopedRanges = _getMilestoneScopedRanges(ms.scope_parent_ids);
       if (scopedRanges && !scopedRanges.length) return;
 
-      const x     = Math.round(daysBetween(chartStart, date) * pxPerDay);
+      // Add 5 to compensate for the CSS translateX(-5px) on .gantt-milestone-line,
+      // so the visible border-left lands exactly on the date column boundary and
+      // aligns with the right edge of a task bar whose end_date matches this date.
+      const x     = Math.round(daysBetween(chartStart, date) * pxPerDay) + 5;
       const linkedTodo = (S().todos || []).find(t => t.milestone_id === ms.id);
       const isTodoDone = linkedTodo && linkedTodo.status === 'done';
       const isCompleted = ms.completed == 1 || isTodoDone;
