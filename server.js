@@ -919,6 +919,8 @@ app.post('/api/dependencies', requireAuth, (req, res) => {
   const dep = stmts.getDep.get(id);
   const teamId = projectTeamId(project_id);
   broadcastToTeam(teamId, { type: 'dep_created', dep });
+  stmts.clearRedoForProject.run(project_id, req.session.userId);
+  stmts.addUndo.run(uuidv4(), project_id, req.session.userId, 'create_dep', JSON.stringify({ dep }));
   res.json({ dep });
 });
 
@@ -926,6 +928,8 @@ app.delete('/api/dependencies/:id', requireAuth, (req, res) => {
   const dep = stmts.getDep.get(req.params.id);
   if (!dep) return res.status(404).json({ error: 'Not found' });
   if (!canAccessProject(dep.project_id, req.session.userId)) return res.status(403).json({ error: 'Forbidden' });
+  stmts.clearRedoForProject.run(dep.project_id, req.session.userId);
+  stmts.addUndo.run(uuidv4(), dep.project_id, req.session.userId, 'delete_dep', JSON.stringify({ dep }));
   stmts.deleteDep.run(dep.id);
   const teamId = projectTeamId(dep.project_id);
   broadcastToTeam(teamId, { type: 'dep_deleted', dep_id: dep.id, project_id: dep.project_id });
@@ -1120,6 +1124,23 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
     const entries = oldPositions.map(p => stmts.getGantt.get(p.id)).filter(Boolean);
     entries.forEach(entry => broadcastToTeam(teamId, { type: 'gantt_updated', entry }));
     result = { undone: 'reorder_gantt', entries };
+  } else if (action.action_type === 'create_dep') {
+    // Undo creating a dep = delete it; save to redo so it can be recreated
+    const { dep } = data;
+    stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'create_dep', JSON.stringify({ dep }));
+    stmts.deleteDep.run(dep.id);
+    const teamId = projectTeamId(req.params.projectId);
+    broadcastToTeam(teamId, { type: 'dep_deleted', dep_id: dep.id, project_id: req.params.projectId });
+    result = { undone: 'create_dep', dep_id: dep.id };
+  } else if (action.action_type === 'delete_dep') {
+    // Undo deleting a dep = recreate it; save to redo so it can be deleted again
+    const { dep } = data;
+    stmts.createDep.run(dep.id, dep.project_id, dep.source_id, dep.target_id);
+    const restored = stmts.getDep.get(dep.id);
+    stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_dep', JSON.stringify({ dep: restored || dep }));
+    const teamId = projectTeamId(req.params.projectId);
+    if (restored) broadcastToTeam(teamId, { type: 'dep_created', dep: restored });
+    result = { undone: 'delete_dep', dep: restored || dep };
   }
 
   res.json(result);
@@ -1214,6 +1235,26 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
     const entries = redoPositions.map(p => stmts.getGantt.get(p.id)).filter(Boolean);
     entries.forEach(entry => broadcastToTeam(teamId, { type: 'gantt_updated', entry }));
     result = { redone: 'reorder_gantt', entries };
+  } else if (redoAction.action_type === 'create_dep') {
+    // Redo creating dep = recreate it; save to undo so it can be deleted again
+    const { dep } = data;
+    stmts.createDep.run(dep.id, dep.project_id, dep.source_id, dep.target_id);
+    const restored = stmts.getDep.get(dep.id);
+    stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'create_dep', JSON.stringify({ dep: restored || dep }));
+    const teamId = projectTeamId(req.params.projectId);
+    if (restored) broadcastToTeam(teamId, { type: 'dep_created', dep: restored });
+    result = { redone: 'create_dep', dep: restored || dep };
+  } else if (redoAction.action_type === 'delete_dep') {
+    // Redo deleting dep = delete it again; save to undo so it can be restored
+    const { dep } = data;
+    const existing = stmts.getDep.get(dep.id);
+    if (existing) {
+      stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_dep', JSON.stringify({ dep: existing }));
+      stmts.deleteDep.run(dep.id);
+      const teamId = projectTeamId(req.params.projectId);
+      broadcastToTeam(teamId, { type: 'dep_deleted', dep_id: dep.id, project_id: req.params.projectId });
+    }
+    result = { redone: 'delete_dep', dep_id: dep.id };
   }
 
   res.json(result);

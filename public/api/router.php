@@ -1223,7 +1223,15 @@ if ($seg1 === 'dependencies') {
 
         $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE id=?');
         $s->execute([$id]);
-        json_out(['dep' => $s->fetch()]);
+        $dep = $s->fetch();
+
+        // Save undo; clear stale redo history
+        $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+        $s->execute([$project_id, $userId]);
+        $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $project_id, $userId, 'create_dep', json_encode(['dep' => $dep])]);
+
+        json_out(['dep' => $dep]);
     }
 
     if ($seg2) {
@@ -1248,6 +1256,12 @@ if ($seg1 === 'dependencies') {
             $dep = $s->fetch();
             if (!$dep) json_out(['error' => 'Not found'], 404);
             if (!can_access_project($db, $dep['project_id'], $userId)) json_out(['error' => 'Forbidden'], 403);
+
+            // Save undo; clear stale redo history
+            $s = $db->prepare('DELETE FROM redo_history WHERE project_id=? AND user_id=?');
+            $s->execute([$dep['project_id'], $userId]);
+            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $dep['project_id'], $userId, 'delete_dep', json_encode(['dep' => $dep])]);
 
             $s = $db->prepare('DELETE FROM gantt_dependencies WHERE id=?');
             $s->execute([$depId]);
@@ -1617,6 +1631,25 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
         }
 
         $result = ['undone' => 'paste_gantt', 'deleted_ids' => $entryIds];
+    } elseif ($action['action_type'] === 'create_dep') {
+        // Undo creating a dep = delete it; save to redo so it can be recreated
+        $dep = $data['dep'];
+        $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'create_dep', json_encode(['dep' => $dep])]);
+        $s = $db->prepare('DELETE FROM gantt_dependencies WHERE id=?');
+        $s->execute([$dep['id']]);
+        $result = ['undone' => 'create_dep', 'dep_id' => $dep['id']];
+    } elseif ($action['action_type'] === 'delete_dep') {
+        // Undo deleting a dep = recreate it; save to redo so it can be deleted again
+        $dep = $data['dep'];
+        $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)');
+        $s->execute([$dep['id'], $dep['project_id'], $dep['source_id'], $dep['target_id']]);
+        $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE id=?');
+        $s->execute([$dep['id']]);
+        $restored = $s->fetch() ?: $dep;
+        $s = $db->prepare('INSERT INTO redo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'delete_dep', json_encode(['dep' => $restored])]);
+        $result = ['undone' => 'delete_dep', 'dep' => $restored];
     }
 
     json_out($result);
@@ -1791,6 +1824,30 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
             json_encode(['entries' => $entries, 'old_positions' => $oldPositions])]);
 
         $result = ['redone' => 'paste_gantt', 'entry_ids' => array_column($entries, 'id')];
+    } elseif ($redoAction['action_type'] === 'create_dep') {
+        // Redo creating dep = recreate it; save to undo so it can be deleted again
+        $dep = $data['dep'];
+        $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)');
+        $s->execute([$dep['id'], $dep['project_id'], $dep['source_id'], $dep['target_id']]);
+        $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE id=?');
+        $s->execute([$dep['id']]);
+        $restored = $s->fetch() ?: $dep;
+        $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+        $s->execute([uuid_v4(), $projectId, $userId, 'create_dep', json_encode(['dep' => $restored])]);
+        $result = ['redone' => 'create_dep', 'dep' => $restored];
+    } elseif ($redoAction['action_type'] === 'delete_dep') {
+        // Redo deleting dep = delete it again; save to undo so it can be restored
+        $dep = $data['dep'];
+        $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE id=?');
+        $s->execute([$dep['id']]);
+        $existing = $s->fetch();
+        if ($existing) {
+            $s = $db->prepare('INSERT INTO undo_history (id,project_id,user_id,action_type,action_data) VALUES (?,?,?,?,?)');
+            $s->execute([uuid_v4(), $projectId, $userId, 'delete_dep', json_encode(['dep' => $existing])]);
+            $s = $db->prepare('DELETE FROM gantt_dependencies WHERE id=?');
+            $s->execute([$dep['id']]);
+        }
+        $result = ['redone' => 'delete_dep', 'dep_id' => $dep['id']];
     }
 
     json_out($result);

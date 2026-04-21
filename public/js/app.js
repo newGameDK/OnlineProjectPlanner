@@ -664,9 +664,16 @@ async function performUndo() {
     if (state.currentProject) {
       // Try project-scoped gantt undo first
       try {
-        await api('POST', `/api/undo/${state.currentProject.id}`);
+        const undoResult = await api('POST', `/api/undo/${state.currentProject.id}`);
         const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
         state.ganttEntries = gdata.entries;
+        if (undoResult.undone === 'create_dep') {
+          state.dependencies = state.dependencies.filter(d => d.id !== undoResult.dep_id);
+        } else if (undoResult.undone === 'delete_dep' && undoResult.dep) {
+          if (!state.dependencies.some(d => d.id === undoResult.dep.id)) {
+            state.dependencies.push(undoResult.dep);
+          }
+        }
         window.ganttModule?.render();
         updateUndoRedoBtns();
         return;
@@ -703,9 +710,16 @@ async function performUndo() {
 async function performRedo() {
   if (!state.currentProject) return;
   try {
-    await api('POST', `/api/redo/${state.currentProject.id}`);
+    const redoResult = await api('POST', `/api/redo/${state.currentProject.id}`);
     const gdata = await api('GET', `/api/gantt/${state.currentProject.id}`);
     state.ganttEntries = gdata.entries;
+    if (redoResult.redone === 'create_dep' && redoResult.dep) {
+      if (!state.dependencies.some(d => d.id === redoResult.dep.id)) {
+        state.dependencies.push(redoResult.dep);
+      }
+    } else if (redoResult.redone === 'delete_dep') {
+      state.dependencies = state.dependencies.filter(d => d.id !== redoResult.dep_id);
+    }
     window.ganttModule?.render();
     updateUndoRedoBtns();
   } catch (e) {
