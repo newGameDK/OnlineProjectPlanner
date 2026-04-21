@@ -2830,20 +2830,38 @@
     return rawPx;
   }
 
-  // Returns the pixel position of the nearest task edge within snapPx of rawPx,
-  // or null if no edge is close enough.
+  // Returns the pixel position of the nearest snap target within snapPx of rawPx,
+  // or null if no target is close enough.
+  // Milestones are prioritised: if any milestone is within snapPx, the closest
+  // milestone wins even if a task edge is nearer.
   function nearestSnapTarget(rawPx) {
+    if (!chartStart) return null;
+
+    // ── 1. Check milestones first ─────────────────────────────────────────────
+    let msBestPx   = null;
+    let msBestDist = snapPx + 1;
+    const milestones = S().milestones || [];
+    for (let i = 0; i < milestones.length; i++) {
+      const ms = milestones[i];
+      const date = parseDate(ms.date);
+      if (!date) continue;
+      const msPx = daysBetween(chartStart, date) * pxPerDay;
+      const d    = Math.abs(rawPx - msPx);
+      if (d < msBestDist) { msBestDist = d; msBestPx = msPx; }
+    }
+    if (msBestPx !== null) return { px: msBestPx, entryId: null };
+
+    // ── 2. Fall back to task edges ────────────────────────────────────────────
     let bestPx      = null;
     let bestEntryId = null;
-    // bestDist starts at snapPx+1 so only edges strictly within snapPx qualify
-    let bestDist = snapPx + 1;
+    let bestDist    = snapPx + 1;
     const entries = S().ganttEntries;
     for (let i = 0; i < entries.length; i++) {
       const en = entries[i];
       if (en.id === drag.entryId) continue;
       const startDate = parseDate(en.start_date);
       const endDate   = parseDate(en.end_date);
-      if (!startDate || !endDate || !chartStart) continue;
+      if (!startDate || !endDate) continue;
       const startPx = daysBetween(chartStart, startDate) * pxPerDay;
       const endPx   = daysBetween(chartStart, endDate)   * pxPerDay;
       const dS = Math.abs(rawPx - startPx);
