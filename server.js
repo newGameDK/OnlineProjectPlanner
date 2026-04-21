@@ -1135,7 +1135,7 @@ app.post('/api/undo/:projectId', requireAuth, (req, res) => {
   } else if (action.action_type === 'delete_dep') {
     // Undo deleting a dep = recreate it; save to redo so it can be deleted again
     const { dep } = data;
-    try { stmts.createDep.run(dep.id, dep.project_id, dep.source_id, dep.target_id); } catch (_) { /* already exists */ }
+    stmts.createDep.run(dep.id, dep.project_id, dep.source_id, dep.target_id);
     const restored = stmts.getDep.get(dep.id);
     stmts.addRedo.run(uuidv4(), req.params.projectId, req.session.userId, 'delete_dep', JSON.stringify({ dep: restored || dep }));
     const teamId = projectTeamId(req.params.projectId);
@@ -1238,7 +1238,7 @@ app.post('/api/redo/:projectId', requireAuth, (req, res) => {
   } else if (redoAction.action_type === 'create_dep') {
     // Redo creating dep = recreate it; save to undo so it can be deleted again
     const { dep } = data;
-    try { stmts.createDep.run(dep.id, dep.project_id, dep.source_id, dep.target_id); } catch (_) { /* already exists */ }
+    stmts.createDep.run(dep.id, dep.project_id, dep.source_id, dep.target_id);
     const restored = stmts.getDep.get(dep.id);
     stmts.addUndo.run(uuidv4(), req.params.projectId, req.session.userId, 'create_dep', JSON.stringify({ dep: restored || dep }));
     const teamId = projectTeamId(req.params.projectId);

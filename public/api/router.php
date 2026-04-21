@@ -1642,10 +1642,8 @@ if ($seg1 === 'undo' && $seg2 && $method === 'POST') {
     } elseif ($action['action_type'] === 'delete_dep') {
         // Undo deleting a dep = recreate it; save to redo so it can be deleted again
         $dep = $data['dep'];
-        try {
-            $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)');
-            $s->execute([$dep['id'], $dep['project_id'], $dep['source_id'], $dep['target_id']]);
-        } catch (Exception $ex) { /* already exists */ }
+        $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)');
+        $s->execute([$dep['id'], $dep['project_id'], $dep['source_id'], $dep['target_id']]);
         $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE id=?');
         $s->execute([$dep['id']]);
         $restored = $s->fetch() ?: $dep;
@@ -1829,10 +1827,8 @@ if ($seg1 === 'redo' && $seg2 && $method === 'POST') {
     } elseif ($redoAction['action_type'] === 'create_dep') {
         // Redo creating dep = recreate it; save to undo so it can be deleted again
         $dep = $data['dep'];
-        try {
-            $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)');
-            $s->execute([$dep['id'], $dep['project_id'], $dep['source_id'], $dep['target_id']]);
-        } catch (Exception $ex) { /* already exists */ }
+        $s = $db->prepare('INSERT OR IGNORE INTO gantt_dependencies (id,project_id,source_id,target_id) VALUES (?,?,?,?)');
+        $s->execute([$dep['id'], $dep['project_id'], $dep['source_id'], $dep['target_id']]);
         $s = $db->prepare('SELECT * FROM gantt_dependencies WHERE id=?');
         $s->execute([$dep['id']]);
         $restored = $s->fetch() ?: $dep;
