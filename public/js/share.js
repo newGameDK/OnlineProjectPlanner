@@ -7,7 +7,7 @@
 // No authentication required. No editing capabilities.
 // ==========================================================================
 
-// ─── Color helpers (mirrored from app.js) ────────────────────────────────
+// ─── Color helpers (must match color-utils.js) ───────────────────────────
 function hexToRgb(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
@@ -45,11 +45,18 @@ function hslToHex(h, s, l) {
   }
   return '#' + [r, g, b].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
 }
+// Generate 10 hue-spread color variations (matches color-utils.js in the main app).
 function generateColorVariations(hex) {
   const [r, g, b] = hexToRgb(hex);
-  const hsl = rgbToHsl(r, g, b);
-  const lightnesses = [0.85, 0.75, 0.65, 0.55, 0.45, hsl[2], 0.35, 0.28, 0.22, 0.15];
-  return lightnesses.map(l => hslToHex(hsl[0], hsl[1], Math.max(0.1, Math.min(0.95, l))));
+  const [h, s] = rgbToHsl(r, g, b);
+  const baseSat = Math.max(0.6, Math.min(0.8, s || 0.65));
+  const baseLit = 0.5;
+  const vars = [];
+  for (let i = 0; i < 10; i++) {
+    const hue = (h + i / 10) % 1.0;
+    vars.push(hslToHex(hue, baseSat, baseLit));
+  }
+  return vars;
 }
 function getUserColor(userId, variation, members) {
   const member = members.find(m => m.id === userId);
@@ -61,6 +68,10 @@ function lightenColor(hex, amount) {
   const [r, g, b] = hexToRgb(hex);
   const [h, s, l] = rgbToHsl(r, g, b);
   return hslToHex(h, s, Math.min(0.92, l + amount));
+}
+function isColorDark(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.45;
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────
@@ -102,6 +113,11 @@ const S = {
 // Chart state
 const ROW_H    = 40;
 const MIN_DAYS = 1;
+
+function getEntryRowHeight(entry) {
+  const h = parseInt(entry && entry.row_height, 10);
+  return Number.isFinite(h) ? Math.max(28, Math.min(500, h)) : ROW_H;
+}
 let scale      = 'week';
 let pxPerDay   = 28;
 let chartStart = null;
@@ -109,6 +125,7 @@ let chartEnd   = null;
 let parentStack     = [];
 let currentParentId = null;
 let rowIndexMap     = {};
+let rowYMap         = {};
 
 // DOM references
 let ganttTaskList, ganttRows, ganttRuler, ganttBreadcrumb,
@@ -225,6 +242,20 @@ function render() {
     }
   });
 
+  // Build cumulative Y-center map (accounts for variable row heights)
+  rowYMap = {};
+  let cumulativeY = 0;
+  entries.forEach(e => {
+    const h = getEntryRowHeight(e);
+    rowYMap[e.id] = cumulativeY + h / 2;
+    cumulativeY += h;
+  });
+  S.entries.forEach(e => {
+    if (e.same_row && rowYMap[e.same_row] !== undefined) {
+      rowYMap[e.id] = rowYMap[e.same_row];
+    }
+  });
+
   renderTaskList(entries);
   renderRuler(timelineW, totalDays);
   renderRowsAndBars(entries, timelineW);
@@ -243,16 +274,19 @@ function renderTaskList(entries) {
     const depth = entry._depth || 0;
     const color = depth > 0 ? lightenColor(baseColor, depth * 0.15) : baseColor;
 
+    const rowHeight = getEntryRowHeight(entry);
     const row = document.createElement('div');
     row.className  = 'gantt-task-row';
     row.dataset.id = entry.id;
+    row.style.height = rowHeight + 'px';
 
     // Expand indicator
     const exp = document.createElement('span');
     if (hasChildren) {
       exp.className   = 'gantt-task-expand';
       exp.textContent = '\u25B6';
-      exp.title       = 'Double-click bar to open sub-chart';
+      exp.title       = 'Click to open sub-tasks';
+      exp.addEventListener('click', (e) => { e.stopPropagation(); drillDown(entry); });
     } else {
       exp.style.cssText = 'width:16px;display:inline-block;flex-shrink:0';
     }
@@ -351,19 +385,23 @@ function renderRowsAndBars(entries, timelineW) {
   ganttRows.innerHTML   = '';
 
   entries.forEach(entry => {
+    const entryRowHeight = getEntryRowHeight(entry);
     const rowBg = document.createElement('div');
     rowBg.className    = 'gantt-row-bg';
-    rowBg.style.height = ROW_H + 'px';
+    rowBg.style.height = entryRowHeight + 'px';
     rowBg.dataset.id   = entry.id;
     rowBg.addEventListener('dblclick', () => drillDown(entry));
 
-    const bar = buildBar(entry);
-    if (bar) rowBg.appendChild(bar);
+    if (!entry.row_only) {
+      const bar = buildBar(entry, entryRowHeight);
+      if (bar) rowBg.appendChild(bar);
+    }
 
     // Also render bars for entries that share this row (same_row === entry.id)
     const sameRowEntries = S.entries.filter(e => e.same_row === entry.id);
     sameRowEntries.forEach(srEntry => {
-      const srBar = buildBar(srEntry);
+      if (srEntry.row_only) return;
+      const srBar = buildBar(srEntry, entryRowHeight);
       if (srBar) rowBg.appendChild(srBar);
     });
 
@@ -371,7 +409,7 @@ function renderRowsAndBars(entries, timelineW) {
   });
 }
 
-function buildBar(entry) {
+function buildBar(entry, rowHeight) {
   const start = parseDate(entry.start_date);
   const end   = parseDate(entry.end_date);
   if (!start || !end || start > chartEnd || end < chartStart) return null;
@@ -385,15 +423,19 @@ function buildBar(entry) {
   const depth       = entry._depth || 0;
   const color       = depth > 0 ? lightenColor(baseColor, depth * 0.15) : baseColor;
   const hasChildren = S.entries.some(e => e.parent_id === entry.id);
+  const rh          = rowHeight || ROW_H;
+  const barPad      = Math.max(4, Math.round(rh * 0.1));
 
   const container = document.createElement('div');
   container.className     = 'gantt-bar-container';
-  container.style.cssText = 'left:' + left + 'px;width:' + width + 'px;';
+  container.style.cssText = 'left:' + left + 'px;width:' + width + 'px;' +
+                            'top:' + barPad + 'px;height:' + Math.max(16, rh - barPad * 2) + 'px;';
 
   const bar = document.createElement('div');
   bar.className        = 'gantt-bar';
   bar.style.background = color;
   bar.style.width      = '100%';
+  if (isColorDark(color)) bar.style.color = '#fff';
   bar.title = entry.title + '\n' + entry.start_date + ' \u2192 ' + entry.end_date +
               (entry.hours_estimate ? '\n' + entry.hours_estimate + 'h estimated' : '');
 
@@ -474,8 +516,8 @@ function renderDependencyArrows(entries) {
 
     const x1 = Math.max(0, daysBetween(chartStart, parseDate(srcEntry.end_date)))   * pxPerDay;
     const x2 = Math.max(0, daysBetween(chartStart, parseDate(tgtEntry.start_date))) * pxPerDay;
-    const y1  = srcIdx * ROW_H + ROW_H / 2;
-    const y2  = tgtIdx * ROW_H + ROW_H / 2;
+    const y1  = rowYMap[dep.source_id] !== undefined ? rowYMap[dep.source_id] : (srcIdx * ROW_H + ROW_H / 2);
+    const y2  = rowYMap[dep.target_id] !== undefined ? rowYMap[dep.target_id] : (tgtIdx * ROW_H + ROW_H / 2);
 
     const dx  = Math.abs(x2 - x1);
     const cpx = Math.max(dx * 0.5, 30);
@@ -504,7 +546,8 @@ function renderHoursPanel(entries) {
   entries.forEach(entry => {
     const total = calcTotalHours(entry.id);
     const row   = document.createElement('div');
-    row.className = 'gantt-hours-row' + (total > 0 ? ' has-hours' : '');
+    row.className   = 'gantt-hours-row' + (total > 0 ? ' has-hours' : '');
+    row.style.height = getEntryRowHeight(entry) + 'px';
     row.textContent = total > 0 ? fmtH(total) : '\u2014';
     row.title = total > 0 ? fmtH(total) + ' total (incl. sub-tasks)' : 'No hours estimated';
     ganttHoursPanel.appendChild(row);
@@ -512,58 +555,32 @@ function renderHoursPanel(entries) {
 
   const header = document.getElementById('ganttHoursHeader');
   if (header) {
-    const t = entries.reduce((sum, e) => sum + calcViewTotal(e.id), 0);
+    const t = entries.reduce((sum, e) => sum + calcTotalHours(e.id), 0);
     header.textContent = t > 0 ? fmtH(t) : 'Total h';
   }
 }
 
-function calcTotalHours(entryId) {
-  const entry = S.entries.find(e => e.id === entryId);
-  if (!entry) return 0;
-  const children = S.entries.filter(e => e.parent_id === entryId);
-  if (children.length === 0) return entry.hours_estimate || 0;
-  let childSum = 0;
-  children.forEach(c => { childSum += calcTotalHours(c.id); });
-  const own = entry.hours_estimate || 0;
-  if (own > 0) return Math.max(0, own - childSum);
-  return childSum;
-}
+function calcTotalHours(entryId, _visited) {
+  if (!_visited) _visited = new Set();
+  if (_visited.has(entryId)) return 0;
+  _visited.add(entryId);
 
-/**
- * Total hours for an entire tree (parent budget or child sum, whichever is
- * larger). Used for the header total so the number reflects the full project
- * scope instead of only the remaining budget.  When a parent has no budget
- * (hours_estimate is 0 or null) the child sum is returned.
- */
-function calcTreeTotal(entryId) {
   const entry = S.entries.find(e => e.id === entryId);
   if (!entry) return 0;
-  const children = S.entries.filter(e => e.parent_id === entryId);
-  if (children.length === 0) return entry.hours_estimate || 0;
-  let childSum = 0;
-  children.forEach(c => { childSum += calcTreeTotal(c.id); });
-  return Math.max(entry.hours_estimate || 0, childSum);
-}
 
-/**
- * Like calcTreeTotal but also includes orphaned same-row entries.
- * When a subtask is shared onto its parent's row, parent_id is cleared.
- * This re-attributes those entries through the same_row link so the header
- * total correctly reflects all hours.
- */
-function calcViewTotal(entryId) {
-  const entry = S.entries.find(e => e.id === entryId);
-  if (!entry) return 0;
-  const children = S.entries.filter(e => e.parent_id === entryId);
-  const sameRowOrphans = S.entries.filter(e =>
-    e.same_row === entryId && e.parent_id !== entryId &&
-    (!e.parent_id || e.parent_id === currentParentId)
-  );
-  const allChildren = children.concat(sameRowOrphans);
-  if (allChildren.length === 0) return entry.hours_estimate || 0;
-  let childSum = 0;
-  allChildren.forEach(c => { childSum += calcViewTotal(c.id); });
-  return Math.max(entry.hours_estimate || 0, childSum);
+  let total = +(entry.hours_estimate) || 0;
+
+  // Add hours from entries sharing this row
+  S.entries
+    .filter(e => e.same_row === entryId)
+    .forEach(e => { total += calcTotalHours(e.id, _visited); });
+
+  // Add hours from child entries (subtasks)
+  S.entries
+    .filter(e => e.parent_id === entryId)
+    .forEach(e => { total += calcTotalHours(e.id, _visited); });
+
+  return total;
 }
 
 function fmtH(h) { return Number.isInteger(h) ? h + 'h' : h.toFixed(1) + 'h'; }
