@@ -410,7 +410,6 @@ function renderRowsAndBars(entries, timelineW) {
 }
 
 function buildBar(entry, rowHeight) {
-  if (+entry.row_only) return null;
   const start = parseDate(entry.start_date);
   const end   = parseDate(entry.end_date);
   if (!start || !end || start > chartEnd || end < chartStart) return null;
@@ -556,7 +555,7 @@ function renderHoursPanel(entries) {
 
   const header = document.getElementById('ganttHoursHeader');
   if (header) {
-    const t = entries.reduce((sum, e) => sum + calcViewTotal(e.id), 0);
+    const t = entries.reduce((sum, e) => sum + calcTotalHours(e.id), 0);
     header.textContent = t > 0 ? fmtH(t) : 'Total h';
   }
 }
@@ -583,9 +582,6 @@ function calcTotalHours(entryId, _visited) {
 
   return total;
 }
-
-function calcTreeTotal(entryId) { return calcTotalHours(entryId); }
-function calcViewTotal(entryId)  { return calcTotalHours(entryId); }
 
 function fmtH(h) { return Number.isInteger(h) ? h + 'h' : h.toFixed(1) + 'h'; }
 
